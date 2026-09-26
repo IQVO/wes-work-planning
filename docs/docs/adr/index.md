@@ -53,8 +53,9 @@ no scheduler).
 | [0016](./0016-remove-rest-mcp-static-bearer-auth.md) | Remove the REST + MCP static-bearer auth layer (fleet decision reversed) | Accepted |
 | [0017](./0017-travel-distance-lookup-on-commit-shift-plan.md) | Read facility-layout's travel graph once, at shift-plan-commit time, to enrich `PathPlan` | Accepted |
 | [0018](./0018-path-capacity-changed.md) | Publish per-path, per-CPT remaining admission capacity as `PathCapacityChanged`, correlated by CPT cutoff timestamp | Accepted |
-| [0019](./0019-labor-plan-committed-shift-plan-reconciliation.md) | Reconcile our committed `PathPlan` against Workforce's `LaborPlanObserved`, triggered on either side's commit | Proposed |
-| [0020](./0020-flowfed-path-observed-throughput-signal.md) | FlowFed paths stay `Known=false` permanently; an observed-throughput signal is proposed alongside, not instead | Proposed |
+| [0019](./0019-labor-plan-committed-shift-plan-reconciliation.md) | Reconcile our committed `PathPlan` against Workforce's `LaborPlanObserved`, triggered on either side's commit | Accepted |
+| [0020](./0020-flowfed-path-observed-throughput-signal.md) | FlowFed paths stay `Known=false` permanently; an observed-throughput signal is proposed alongside, not instead | Accepted |
+| [0021](./0021-cloudevents-envelope-migration.md) | Migrate `warehouse.work-planning.events` to a CloudEvents 1.0 structured envelope via a dual-read/dual-write bake period; companion to fulfillment-execution's own envelope-migration ADR | Proposed |
 
 ## The template
 

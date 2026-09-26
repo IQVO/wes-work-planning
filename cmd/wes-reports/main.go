@@ -19,6 +19,7 @@ import (
 	inboundhttp "github.com/claudioed/wes-work-planning/internal/adapters/inbound/http"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/analyticsstore"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/telemetry"
+	"github.com/claudioed/wes-work-planning/internal/bootretry"
 )
 
 // errMissingAnalyticsURL is returned when ANALYTICS_DATABASE_URL is unset.
@@ -71,6 +72,19 @@ func run() error {
 		return err
 	}
 	defer pool.Close()
+	// Retried, because in this fleet EVERY injected pod's first outbound
+	// TCP dial is reset ~10s after the app starts (Istio native
+	// sidecars; see internal/bootretry's package doc comment).
+	// analyticsstore.NewReadOnlyPool does not itself dial, so without
+	// this retried Ping the reset would surface inside the first real
+	// request rather than at boot.
+	bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer bootCancel()
+	if err := bootretry.Retry(bootCtx, logger, "ping analytics postgres", func() error {
+		return pool.Ping(bootCtx)
+	}); err != nil {
+		return err
+	}
 	if err := analyticsstore.RecordPoolStats(pool); err != nil {
 		logger.Error("analytics pgxpool metrics unavailable", "error", err)
 	}

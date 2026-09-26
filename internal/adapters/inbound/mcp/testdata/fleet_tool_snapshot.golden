@@ -1,0 +1,7 @@
+inventory-storage	check_availability
+inventory-storage	get_bin_occupancy
+inventory-storage	revoke_reservation
+wes-work-planning	get_backlog_telemetry
+wes-work-planning	get_rebalance_recommendation
+wes-work-planning	get_release_throughput_report
+wes-work-planning	release_next_work

@@ -135,6 +135,13 @@ pathCatalogue:
   # When set, content above is ignored and no ConfigMap is created here.
   existingConfigMap: ""
 
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 2
+  failureThreshold: 30
+
 livenessProbe:
   httpGet:
     path: /healthz

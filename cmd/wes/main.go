@@ -31,6 +31,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/traveldistance"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
+	"github.com/claudioed/wes-work-planning/internal/bootretry"
 )
 
 // serviceName is this service's identity in OTel resource attributes and
@@ -80,9 +81,19 @@ func run() error {
 		if kafkaBrokers == "" {
 			return fmt.Errorf("PATH_CATALOGUE_SOURCE=kafka requires KAFKA_BROKERS to be set")
 		}
+		// Retried: this fleet's Istio native sidecars reset EVERY
+		// injected pod's first outbound TCP dial ~10s after the app
+		// starts, and NewConsumer's newTargetOffsets dials the broker
+		// directly before anything else runs. A single attempt turns
+		// that known, transient reset into CrashLoopBackOff exactly
+		// like the equivalent, unretried Postgres dial below did (see
+		// internal/bootretry's package doc comment).
 		var err error
-		kafkaCatalogue, err = kafkacatalog.NewConsumer(context.Background(), brokerList(kafkaBrokers), logger)
-		if err != nil {
+		if err = bootretry.Retry(context.Background(), logger, "connect to the process-path catalogue topic", func() error {
+			var dialErr error
+			kafkaCatalogue, dialErr = kafkacatalog.NewConsumer(context.Background(), brokerList(kafkaBrokers), logger)
+			return dialErr
+		}); err != nil {
 			return fmt.Errorf("failed to start the Kafka-sourced process-path catalogue: %w", err)
 		}
 		logger.Info("process-path catalogue source configured", "source", "kafka", "topic", kafkacatalog.Topic)
@@ -174,7 +185,17 @@ func run() error {
 		// `relation "charge_forecasts" does not exist`. Migrating before
 		// the pool is opened matches what fulfillment-execution's and
 		// workforce-management's OLTP binaries already do.
-		if err := postgres.Migrate(databaseURL, migrationsPath); err != nil {
+		// Retried, because in this fleet EVERY injected pod's first
+		// outbound TCP dial is reset ~10s after the app starts (Istio
+		// native sidecars; see internal/bootretry's package doc
+		// comment). A single attempt turns that known, transient
+		// condition into CrashLoopBackOff before this service ever
+		// gets far enough to serve its own health probe.
+		bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer bootCancel()
+		if err := bootretry.Retry(bootCtx, logger, "run migrations", func() error {
+			return postgres.Migrate(databaseURL, migrationsPath)
+		}); err != nil {
 			return err
 		}
 
@@ -183,6 +204,17 @@ func run() error {
 
 		pool, err := postgres.Connect(ctx, databaseURL)
 		if err != nil {
+			return err
+		}
+		// pgxpool.NewWithConfig does not itself dial or establish a
+		// connection, so without this retried Ping the first-dial
+		// reset would surface inside the first real request rather
+		// than at boot — turning a transient sidecar warm-up into an
+		// intermittent 500 instead of a bounded startup retry.
+		if err := bootretry.Retry(bootCtx, logger, "ping postgres", func() error {
+			return pool.Ping(bootCtx)
+		}); err != nil {
+			pool.Close()
 			return err
 		}
 		defer pool.Close()

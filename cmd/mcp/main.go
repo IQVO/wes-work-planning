@@ -24,6 +24,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
+	"github.com/claudioed/wes-work-planning/internal/bootretry"
 )
 
 // serviceName is this server's identity in OTel resource attributes and
@@ -85,6 +86,20 @@ func run() error {
 
 		pool, err := postgres.Connect(ctx, databaseURL)
 		if err != nil {
+			return err
+		}
+		// Retried, because in this fleet EVERY injected pod's first
+		// outbound TCP dial is reset ~10s after the app starts (Istio
+		// native sidecars; see internal/bootretry's package doc
+		// comment), and pgxpool.NewWithConfig above does not itself
+		// dial. Without this, that reset would surface inside the
+		// first real request rather than at boot.
+		bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer bootCancel()
+		if err := bootretry.Retry(bootCtx, logger, "ping postgres", func() error {
+			return pool.Ping(bootCtx)
+		}); err != nil {
+			pool.Close()
 			return err
 		}
 		defer pool.Close()

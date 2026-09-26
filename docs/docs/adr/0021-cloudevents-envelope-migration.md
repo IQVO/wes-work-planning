@@ -10,9 +10,8 @@ description: Migrate warehouse.work-planning.events and warehouse.fulfillment.ev
 
 ## Status
 
-**Proposed. Companion to fulfillment-execution ADR TBD-0027 (to be confirmed
-once that repo's PR is open — update this line to the real number before
-either PR is accepted). Neither is meaningful without the other.**
+**Proposed. Companion to fulfillment-execution ADR-0027. Neither is
+meaningful without the other.**
 
 This ADR requires the user's explicit acceptance (flipping this Status line
 to `Accepted`) before Phase 2 implementation work — described below — may

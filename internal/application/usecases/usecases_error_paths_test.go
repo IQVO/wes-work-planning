@@ -651,6 +651,38 @@ func TestRecordCompletion_PublishError(t *testing.T) {
 	}
 }
 
+// TestRecordCompletion_PoolLookupErrorFailsScope proves the distinction
+// between the two pool-side outcomes on RecordCompletion: a MISSING pool
+// (ports.ErrNotFound) is best-effort skipped, but a pool lookup that
+// FAILS for another reason (store down, timeout) is not swallowed — it
+// fails the whole scope so the completion is retried atomically, keeping
+// the WorkUnit save and its WIP-slot free consistent.
+func TestRecordCompletion_PoolLookupErrorFailsScope(t *testing.T) {
+	f := newFixture()
+	pathId, _ := shared.NewPathId("pick-a")
+	cpt := shared.NewCPT(f.clock.Now().Add(time.Hour))
+	unit, err := workunit.NewWorkUnit("wu-1", pathId, cpt, "ref-1")
+	if err != nil {
+		t.Fatalf("unexpected error building fixture: %v", err)
+	}
+	if err := unit.Release(f.clock.Now()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := f.workUnits.Save(context.Background(), unit); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantErr := errors.New("pool store unavailable")
+	uc := usecases.NewRecordCompletion(f.workUnits, findErrWorkPoolRepo{err: wantErr}, f.publisher, f.clock)
+
+	if _, err := uc.Execute(context.Background(), usecases.RecordCompletionRequest{WorkUnitId: "wu-1"}); !errors.Is(err, wantErr) {
+		t.Fatalf("got err %v, want %v (a failing pool lookup must fail the scope)", err, wantErr)
+	}
+	if len(f.publisher.Events()) != 0 {
+		t.Fatalf("got %d events, want 0 (nothing published on a failed scope)", len(f.publisher.Events()))
+	}
+}
+
 func releaseFixtureUnit(t *testing.T, f fixture, pathId shared.PathId) {
 	t.Helper()
 	cpt := shared.NewCPT(f.clock.Now().Add(time.Hour))

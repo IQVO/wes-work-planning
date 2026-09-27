@@ -58,6 +58,12 @@ type Handlers struct {
 	// existing convention for every other optional Postgres-backed
 	// capability (UnitOfWork, the outbox relay).
 	IdempotencyPool *pgxpool.Pool
+
+	// Readiness backs GET /readyz (graceful shutdown hardening):
+	// flipped to not-ready as the FIRST step of shutdown, in cmd/wes,
+	// before anything else stops. A nil Readiness (the Handlers zero
+	// value, every existing test) always reports ready.
+	Readiness *Readiness
 }
 
 func pathIdParam(r *http.Request) (shared.PathId, error) {

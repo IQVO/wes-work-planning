@@ -32,6 +32,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 	"github.com/claudioed/wes-work-planning/internal/bootretry"
+	"github.com/claudioed/wes-work-planning/internal/resilience"
 )
 
 // serviceName is this service's identity in OTel resource attributes and
@@ -241,8 +242,16 @@ func run() error {
 
 	var publisher ports.EventPublisher
 	var relay *postgres.OutboxRelay
-	classifications := buildClassificationLookup(getenv("PRODUCT_CLASSIFICATION_MODE", "permissive"), os.Getenv("INVENTORY_STORAGE_BASE_URL"), logger)
-	travelDistances := buildTravelDistanceLookup(getenv("TRAVEL_DISTANCE_MODE", "permissive"), os.Getenv("FACILITY_LAYOUT_BASE_URL"), logger)
+
+	// Circuit-breaker state gauge (ADR-0023) shared by both breaker
+	// clients below — a metrics-registration failure disables the
+	// GAUGE only (nil recorder is a documented no-op), never boot.
+	breakerMetrics, err := telemetry.NewCircuitBreakerMetrics()
+	if err != nil {
+		logger.Warn("circuit breaker metrics not registered; continuing without them", "error", err)
+	}
+	classifications := buildClassificationLookup(getenv("PRODUCT_CLASSIFICATION_MODE", "permissive"), os.Getenv("INVENTORY_STORAGE_BASE_URL"), breakerMetrics, logger)
+	travelDistances := buildTravelDistanceLookup(getenv("TRAVEL_DISTANCE_MODE", "permissive"), os.Getenv("FACILITY_LAYOUT_BASE_URL"), breakerMetrics, logger)
 	switch eventPublisherKind {
 	case "kafka":
 		if kafkaBrokers == "" {
@@ -304,6 +313,10 @@ func run() error {
 		// the in-memory configuration (pgPool nil), matching every other
 		// optional Postgres-backed capability's convention here.
 		IdempotencyPool: pgPool,
+		// Readiness backs GET /readyz (ADR-0023 §graceful shutdown) --
+		// flipped to not-ready as the FIRST step of the shutdown
+		// sequence below, before anything else stops.
+		Readiness: &inboundhttp.Readiness{},
 	}
 
 	router := inboundhttp.NewRouter(handlers, otelServiceName, logger)
@@ -366,6 +379,12 @@ func run() error {
 		return err
 	case <-sigCh:
 		logger.Info("shutting down")
+		// Flip readiness to not-ready FIRST (ADR-0023 §graceful
+		// shutdown), before anything else stops, so a Kubernetes
+		// readinessProbe polling /readyz has a window to observe the
+		// flip and stop routing NEW traffic to this pod before the
+		// listener is closed below.
+		handlers.Readiness.SetNotReady()
 		cancelConsumer()
 		if consumer != nil {
 			_ = consumer.Close()
@@ -485,13 +504,16 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 // (http|permissive), defaulting to "permissive" so existing tests, CI and
 // deployments that do not set the env var are unaffected — mirroring
 // inventory-storage's own LOCATION_LOOKUP_MODE=http|permissive pattern (see
-// ADR-0009). "http" requires INVENTORY_STORAGE_BASE_URL.
-func buildClassificationLookup(mode, inventoryStorageBaseURL string, logger *slog.Logger) ports.ProductClassificationLookup {
+// ADR-0009). "http" requires INVENTORY_STORAGE_BASE_URL. In "http" mode the
+// client is wrapped with a per-dependency circuit breaker + jittered retry
+// (ADR-0023); recorder may be nil (breaker metrics unavailable), a
+// documented no-op.
+func buildClassificationLookup(mode, inventoryStorageBaseURL string, recorder resilience.StateRecorder, logger *slog.Logger) ports.ProductClassificationLookup {
 	if !strings.EqualFold(mode, "http") {
 		return productclassification.NewPermissiveLookup()
 	}
 	logger.Info("product classification lookup configured", "mode", "http", "inventory_storage_base_url", inventoryStorageBaseURL)
-	return productclassification.NewClient(inventoryStorageBaseURL, nil)
+	return productclassification.NewBreakerClient(productclassification.NewClient(inventoryStorageBaseURL, nil), recorder)
 }
 
 // buildTravelDistanceLookup selects the outbound ports.TravelDistanceLookup
@@ -499,11 +521,14 @@ func buildClassificationLookup(mode, inventoryStorageBaseURL string, logger *slo
 // "permissive" so existing tests, CI and deployments that do not set the
 // env var are unaffected — mirroring buildClassificationLookup's own
 // PRODUCT_CLASSIFICATION_MODE pattern exactly (see ADR-0017, Phase B3).
-// "http" requires FACILITY_LAYOUT_BASE_URL.
-func buildTravelDistanceLookup(mode, facilityLayoutBaseURL string, logger *slog.Logger) ports.TravelDistanceLookup {
+// "http" requires FACILITY_LAYOUT_BASE_URL. In "http" mode the client is
+// wrapped with a per-dependency circuit breaker + jittered retry
+// (ADR-0023); recorder may be nil (breaker metrics unavailable), a
+// documented no-op.
+func buildTravelDistanceLookup(mode, facilityLayoutBaseURL string, recorder resilience.StateRecorder, logger *slog.Logger) ports.TravelDistanceLookup {
 	if !strings.EqualFold(mode, "http") {
 		return traveldistance.NewPermissiveLookup()
 	}
 	logger.Info("travel distance lookup configured", "mode", "http", "facility_layout_base_url", facilityLayoutBaseURL)
-	return traveldistance.NewClient(facilityLayoutBaseURL, nil)
+	return traveldistance.NewBreakerClient(traveldistance.NewClient(facilityLayoutBaseURL, nil), recorder)
 }

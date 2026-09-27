@@ -62,18 +62,34 @@ type classificationResponse struct {
 	TemperatureClass string   `json:"temperatureClass"`
 }
 
-// GetClassification calls inventory-storage's product-classification
-// endpoint for sku.
+// GetClassification calls fetch and normalizes ANY problem (transport
+// error, unexpected status) to the fail-open Known=false/nil contract
+// this port has always had (ADR-0009) — used by every caller that is
+// not the retrying BreakerClient (see breaker.go), so this type keeps
+// behaving exactly as before if a caller constructs it directly instead
+// of through NewBreakerClient.
+func (c *Client) GetClassification(ctx context.Context, sku string) (productclassificationview.ProductClassificationView, error) {
+	view, err := c.fetch(ctx, sku)
+	if err != nil {
+		return productclassificationview.ProductClassificationView{SKU: sku, Known: false}, nil
+	}
+	return view, nil
+}
+
+// fetch calls inventory-storage's product-classification endpoint for
+// sku, WITHOUT swallowing any error into the fail-open contract —
+// BreakerClient.retryingFetch (breaker.go) needs to tell "this SKU has
+// no classification" (404, a real answer) apart from "the request
+// itself failed" (a transport error, an unexpected status — a
+// candidate for retry), which GetClassification's own swallowed
+// contract cannot express.
 //
 //   - A 404 is treated as Known=false (fail-open / permissive): that SKU
-//     has no registered classification yet.
-//   - Any transport error or non-2xx/404 status returns an error, which the
-//     caller normalizes to the same permissive Known=false behaviour rather
-//     than blocking release — see ADR-0009's fail-open rationale (unlike
-//     inventory-storage's own StowStock placement check, an unclassified or
-//     unavailable lookup here never blocks releasing work, it only omits
-//     the derived hint).
-func (c *Client) GetClassification(ctx context.Context, sku string) (productclassificationview.ProductClassificationView, error) {
+//     has no registered classification yet. This is a real answer, not
+//     a failure — it returns nil error same as a 200 does.
+//   - Any transport error or non-2xx/404 status returns a genuine,
+//     un-swallowed error.
+func (c *Client) fetch(ctx context.Context, sku string) (productclassificationview.ProductClassificationView, error) {
 	endpoint := fmt.Sprintf("%s/products/%s/classification", c.baseURL, url.PathEscape(sku))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

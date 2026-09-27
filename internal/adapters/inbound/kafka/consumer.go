@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	kafkago "github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -148,6 +149,23 @@ func decodeFulfillmentEnvelope(raw []byte) (envelope.Envelope, error) {
 	}, nil
 }
 
+// dlqTopicSuffix names the dead-letter topic a poison message is
+// published to, relative to its OWN source topic (never a fixed
+// constant): each of the four consumed topics gets its own
+// "<topic>.dlq" — mirroring order-management's RepromiseConsumer DLQ
+// design (ADR-0025 there) so an isolated integration-test topic
+// automatically gets its own isolated DLQ topic for free.
+const dlqTopicSuffix = ".dlq"
+
+// maxHandlerAttempts bounds a handler's in-process retry before a
+// message is dead-lettered: 1 initial attempt plus up to 2 retries.
+const maxHandlerAttempts = 3
+
+const (
+	retryInitialInterval = 100 * time.Millisecond
+	retryMaxInterval     = 2 * time.Second
+)
+
 // Consumer consumes warehouse.workforce.events, warehouse.inventory.events,
 // warehouse.fulfillment.events, and warehouse.order-management.events. The
 // first two are projected into the labor-plan-view and inventory-view read
@@ -162,13 +180,21 @@ type Consumer struct {
 	inventoryReader       *kafkago.Reader
 	fulfillmentReader     *kafkago.Reader
 	orderManagementReader *kafkago.Reader
-	observeLabor          *usecases.ObserveLaborPlan
-	observeInventory      *usecases.ObserveInventoryChange
-	recordCompletion      *usecases.RecordCompletion
-	enqueueWorkUnit       *usecases.EnqueueWorkUnit
-	processed             ports.ProcessedEventRepo
-	catalogue             ports.PathCatalogue
-	logger                *slog.Logger
+	// dlqWriters holds one *kafkago.Writer per consumed topic
+	// (topic -> writer), each publishing to that topic's own
+	// "<topic>.dlq" — see dlqPublish's doc comment. Keyed by the
+	// SOURCE topic name (reader.Config().Topic), not a fixed index,
+	// so handleMessage/handleFulfillmentMessage can look up the right
+	// writer generically regardless of which reader the message came
+	// from.
+	dlqWriters       map[string]*kafkago.Writer
+	observeLabor     *usecases.ObserveLaborPlan
+	observeInventory *usecases.ObserveInventoryChange
+	recordCompletion *usecases.RecordCompletion
+	enqueueWorkUnit  *usecases.EnqueueWorkUnit
+	processed        ports.ProcessedEventRepo
+	catalogue        ports.PathCatalogue
+	logger           *slog.Logger
 }
 
 func NewConsumer(brokers []string, groupID string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, recordCompletion *usecases.RecordCompletion, enqueueWorkUnit *usecases.EnqueueWorkUnit, processed ports.ProcessedEventRepo, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
@@ -186,6 +212,14 @@ func NewConsumerForFulfillmentTopic(brokers []string, groupID string, fulfillmen
 }
 
 func newConsumer(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, recordCompletion *usecases.RecordCompletion, enqueueWorkUnit *usecases.EnqueueWorkUnit, processed ports.ProcessedEventRepo, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
+	topics := []string{envelope.TopicWorkforceEvents, envelope.TopicInventoryEvents, fulfillmentTopic, envelope.TopicOrderManagementEvents}
+	dlqWriters := make(map[string]*kafkago.Writer, len(topics))
+	for _, topic := range topics {
+		dlqWriters[topic] = &kafkago.Writer{
+			Addr:  kafkago.TCP(brokers...),
+			Topic: topic + dlqTopicSuffix,
+		}
+	}
 	return &Consumer{
 		workforceReader: kafkago.NewReader(kafkago.ReaderConfig{
 			Brokers: brokers,
@@ -207,6 +241,7 @@ func newConsumer(brokers []string, groupID string, fulfillmentTopic string, obse
 			GroupID: groupID,
 			Topic:   envelope.TopicOrderManagementEvents,
 		}),
+		dlqWriters:       dlqWriters,
 		observeLabor:     observeLabor,
 		observeInventory: observeInventory,
 		recordCompletion: recordCompletion,
@@ -222,7 +257,11 @@ func (c *Consumer) Close() error {
 	err2 := c.inventoryReader.Close()
 	err3 := c.fulfillmentReader.Close()
 	err4 := c.orderManagementReader.Close()
-	return errors.Join(err1, err2, err3, err4)
+	errs := []error{err1, err2, err3, err4}
+	for _, w := range c.dlqWriters {
+		errs = append(errs, w.Close())
+	}
+	return errors.Join(errs...)
 }
 
 // Run consumes all four topics until ctx is cancelled.
@@ -308,12 +347,14 @@ func (c *Consumer) handleFulfillmentMessage(ctx context.Context, reader *kafkago
 		attribute.String("messaging.message.source", env.Source),
 	)
 
-	if err := handle(msgCtx, env); err != nil {
+	if err := c.handleWithRetry(msgCtx, handle, env); err != nil {
 		recordSpanError(span, err)
-		c.log(msgCtx, "skipping kafka event",
-			"topic", topic, "event_id", env.EventId, "event_type", env.EventType, "error", err)
-		_ = reader.CommitMessages(ctx, msg)
-		return nil
+		c.log(msgCtx, "exhausted retries, sending to dead-letter topic",
+			"topic", topic, "dlq_topic", topic+dlqTopicSuffix,
+			"event_id", env.EventId, "event_type", env.EventType, "attempts", maxHandlerAttempts, "error", err)
+		if dlqErr := c.dlqPublish(ctx, topic, msg, err); dlqErr != nil {
+			return fmt.Errorf("kafka: publish to dead-letter topic: %w", dlqErr)
+		}
 	}
 
 	if err := reader.CommitMessages(ctx, msg); err != nil {
@@ -326,9 +367,18 @@ func (c *Consumer) handleFulfillmentMessage(ctx context.Context, reader *kafkago
 // handleMessage processes one fetched message inside a
 // "kafka.consume <topic>" span whose parent is the producing service's
 // publish span, recovered from the message's W3C trace-context headers.
-// Unparseable or unhandleable messages are logged and committed rather than
-// redelivered forever; only a commit failure aborts the consume loop, which
-// is the error this returns.
+// An unparseable message is logged and committed immediately (never
+// redelivered — retrying a decode failure can never succeed). An
+// unhandleable message (a genuine infrastructure error from the use
+// case, e.g. a Postgres hiccup) is retried in-process with jittered
+// backoff up to maxHandlerAttempts total attempts — a transient blip
+// heals itself without ever reaching the DLQ. Only once ALL attempts
+// are exhausted is the raw message published, byte-for-byte, to
+// "<topic>.dlq" with error-context headers, and the offset is committed
+// anyway: one poison message must never block every other event behind
+// it on this partition (mirrors order-management's RepromiseConsumer
+// DLQ design, ADR-0025 there). Only a commit failure or a DLQ publish
+// failure aborts the consume loop, which is the error this returns.
 func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, msg kafkago.Message, handle func(context.Context, envelope.Envelope) error) error {
 	topic := reader.Config().Topic
 
@@ -352,12 +402,14 @@ func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, ms
 		attribute.String("messaging.message.source", env.Source),
 	)
 
-	if err := handle(msgCtx, env); err != nil {
+	if err := c.handleWithRetry(msgCtx, handle, env); err != nil {
 		recordSpanError(span, err)
-		c.log(msgCtx, "skipping kafka event",
-			"topic", topic, "event_id", env.EventId, "event_type", env.EventType, "error", err)
-		_ = reader.CommitMessages(ctx, msg)
-		return nil
+		c.log(msgCtx, "exhausted retries, sending to dead-letter topic",
+			"topic", topic, "dlq_topic", topic+dlqTopicSuffix,
+			"event_id", env.EventId, "event_type", env.EventType, "attempts", maxHandlerAttempts, "error", err)
+		if dlqErr := c.dlqPublish(ctx, topic, msg, err); dlqErr != nil {
+			return fmt.Errorf("kafka: publish to dead-letter topic: %w", dlqErr)
+		}
 	}
 
 	if err := reader.CommitMessages(ctx, msg); err != nil {
@@ -365,6 +417,47 @@ func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, ms
 		return err
 	}
 	return nil
+}
+
+// handleWithRetry retries handle up to maxHandlerAttempts times with
+// jittered exponential backoff, bounded by ctx's own
+// deadline/cancellation — mirrors order-management's
+// RepromiseConsumer.handleWithRetry (ADR-0025).
+func (c *Consumer) handleWithRetry(ctx context.Context, handle func(context.Context, envelope.Envelope) error, env envelope.Envelope) error {
+	policy := backoff.NewExponentialBackOff(
+		backoff.WithInitialInterval(retryInitialInterval),
+		backoff.WithMaxInterval(retryMaxInterval),
+	)
+	bounded := backoff.WithContext(backoff.WithMaxRetries(policy, maxHandlerAttempts-1), ctx)
+
+	return backoff.Retry(func() error {
+		return handle(ctx, env)
+	}, bounded)
+}
+
+// dlqPublish writes the raw, unmodified message payload plus error
+// context (as headers, so the raw body stays byte-identical for a
+// manual replay tool) to topic's dead-letter topic. A topic with no
+// registered writer (should never happen in production — every
+// constructor seeds dlqWriters for every topic it reads) is a
+// documented no-op rather than a nil-pointer panic, mirroring this
+// fleet's nil-optional-dependency convention.
+func (c *Consumer) dlqPublish(ctx context.Context, topic string, msg kafkago.Message, cause error) error {
+	writer, ok := c.dlqWriters[topic]
+	if !ok || writer == nil {
+		return nil
+	}
+	headers := append([]kafkago.Header{}, msg.Headers...)
+	headers = append(headers,
+		kafkago.Header{Key: "x-dlq-source-topic", Value: []byte(topic)},
+		kafkago.Header{Key: "x-dlq-error", Value: []byte(cause.Error())},
+		kafkago.Header{Key: "x-dlq-failed-at", Value: []byte(time.Now().UTC().Format(time.RFC3339))},
+	)
+	return writer.WriteMessages(ctx, kafkago.Message{
+		Key:     msg.Key,
+		Value:   msg.Value,
+		Headers: headers,
+	})
 }
 
 // recordSpanError marks span as failed without changing any control flow.

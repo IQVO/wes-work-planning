@@ -3,20 +3,16 @@ id: 0021-cloudevents-envelope-migration
 title: ADR-0021 — CloudEvents 1.0 envelope migration for the integration topics
 sidebar_label: 0021 · CloudEvents envelope migration
 sidebar_position: 21
-description: Migrate warehouse.work-planning.events and warehouse.fulfillment.events from the flat platform envelope to a CloudEvents 1.0 structured envelope, via a dual-read/dual-write bake period, with zero consumer-facing breakage.
+description: Migrate warehouse.work-planning.events and warehouse.fulfillment.events from the flat platform envelope to a CloudEvents 1.0 structured envelope, via a dual-read/dual-write bake period, with zero consumer-facing breakage. (Accepted)
 ---
 
 # ADR-0021 — CloudEvents 1.0 envelope migration for the integration topics
 
 ## Status
 
-**Proposed. Companion to fulfillment-execution ADR-0027. Neither is
-meaningful without the other.**
-
-This ADR requires the user's explicit acceptance (flipping this Status line
-to `Accepted`) before Phase 2 implementation work — described below — may
-start in any of the five consuming packages. Do not treat "PR opened" as
-acceptance.
+**Accepted** (2026-09-26). Companion to fulfillment-execution ADR-0027.
+Implementation (Phase 2+) follows in subsequent PRs, per the phase
+sequence below.
 
 ## Context
 

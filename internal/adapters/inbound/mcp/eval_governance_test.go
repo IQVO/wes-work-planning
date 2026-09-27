@@ -129,6 +129,24 @@ func evalSurfaceTools(t *testing.T) []*sdk.Tool {
 	return tools
 }
 
+// assertStringPropertyConstrained flips the first string property of s to
+// a number and requires the resolved schema to reject it. Tools without
+// string properties skip this leg. (float64, not json.Number — the
+// validator type-checks Go kinds, and json.Number is a string kind.)
+func assertStringPropertyConstrained(t *testing.T, resolved *jsonschema.Resolved, s *jsonschema.Schema) {
+	t.Helper()
+	for name, prop := range s.Properties {
+		if !hasType(prop, "string") {
+			continue
+		}
+		wrong := map[string]any{name: float64(42)}
+		if err := resolved.Validate(wrong); err == nil {
+			t.Fatalf("schema accepts a numeric %q — it does not constrain model input", name)
+		}
+		break
+	}
+}
+
 // TestEval_InputSchemasResolveAndConstrain proves, per advertised tool:
 // (1) the input schema resolves (structurally valid, no dangling refs),
 // (2) a schema-shaped arguments object validates cleanly, and
@@ -151,20 +169,7 @@ func TestEval_InputSchemasResolveAndConstrain(t *testing.T) {
 				t.Fatalf("schema rejects its own shape of arguments (%v): %v", valid, err)
 			}
 
-			// Flip the first string property to a number; the schema must
-			// reject it. Tools without string properties skip this leg.
-			// (float64, not json.Number — the validator type-checks Go
-			// kinds, and json.Number is a string kind.)
-			for name, prop := range s.Properties {
-				if !hasType(prop, "string") {
-					continue
-				}
-				wrong := map[string]any{name: float64(42)}
-				if err := resolved.Validate(wrong); err == nil {
-					t.Fatalf("schema accepts a numeric %q — it does not constrain model input", name)
-				}
-				break
-			}
+			assertStringPropertyConstrained(t, resolved, s)
 		})
 	}
 }

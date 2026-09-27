@@ -46,140 +46,198 @@ func TestCPT(t *testing.T) {
 	})
 }
 
-func TestEvents(t *testing.T) {
+// The per-event-type tests below were split out of one TestEvents function:
+// each event's constructor/field assertions stand on their own now, but
+// every case and assertion is unchanged.
+
+func TestChargeForecastReceivedEvent(t *testing.T) {
 	pathId, err := NewPathId("pick-a")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	at := time.Now()
 
-	t.Run("ChargeForecastReceived", func(t *testing.T) {
-		ev := NewChargeForecastReceived(pathId, at)
-		if ev.EventName() != "ChargeForecastReceived" {
-			t.Fatalf("got %s, want ChargeForecastReceived", ev.EventName())
-		}
-		if !ev.OccurredAt().Equal(at) {
-			t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
-		}
-		if !ev.PathId.Equals(pathId) {
-			t.Fatalf("got %v, want %v", ev.PathId, pathId)
-		}
-	})
+	ev := NewChargeForecastReceived(pathId, at)
+	if ev.EventName() != "ChargeForecastReceived" {
+		t.Fatalf("got %s, want ChargeForecastReceived", ev.EventName())
+	}
+	if !ev.OccurredAt().Equal(at) {
+		t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
+	}
+	if !ev.PathId.Equals(pathId) {
+		t.Fatalf("got %v, want %v", ev.PathId, pathId)
+	}
+}
 
-	t.Run("ShiftPlanCommitted", func(t *testing.T) {
-		ev := NewShiftPlanCommitted(pathId, at)
-		if ev.EventName() != "ShiftPlanCommitted" {
-			t.Fatalf("got %s, want ShiftPlanCommitted", ev.EventName())
-		}
-		if !ev.OccurredAt().Equal(at) {
-			t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
-		}
-		if !ev.PathId.Equals(pathId) {
-			t.Fatalf("got %v, want %v", ev.PathId, pathId)
-		}
-	})
+func TestShiftPlanCommittedEvent(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	at := time.Now()
 
-	t.Run("WorkUnitCreated", func(t *testing.T) {
-		ev := NewWorkUnitCreated("wu-1", pathId, at)
-		if ev.EventName() != "WorkUnitCreated" {
-			t.Fatalf("got %s, want WorkUnitCreated", ev.EventName())
-		}
-		if !ev.OccurredAt().Equal(at) {
-			t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
-		}
-		if ev.WorkUnitId != "wu-1" {
-			t.Fatalf("got %s, want wu-1", ev.WorkUnitId)
-		}
-		if !ev.PathId.Equals(pathId) {
-			t.Fatalf("got %v, want %v", ev.PathId, pathId)
-		}
-	})
+	ev := NewShiftPlanCommitted(pathId, at)
+	if ev.EventName() != "ShiftPlanCommitted" {
+		t.Fatalf("got %s, want ShiftPlanCommitted", ev.EventName())
+	}
+	if !ev.OccurredAt().Equal(at) {
+		t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
+	}
+	if !ev.PathId.Equals(pathId) {
+		t.Fatalf("got %v, want %v", ev.PathId, pathId)
+	}
+}
 
-	t.Run("WorkReleased", func(t *testing.T) {
-		ev := NewWorkReleased("wu-2", pathId, at)
-		if ev.EventName() != "WorkReleased" {
-			t.Fatalf("got %s, want WorkReleased", ev.EventName())
-		}
-		if !ev.OccurredAt().Equal(at) {
-			t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
-		}
-		if ev.WorkUnitId != "wu-2" {
-			t.Fatalf("got %s, want wu-2", ev.WorkUnitId)
-		}
-		if !ev.PathId.Equals(pathId) {
-			t.Fatalf("got %v, want %v", ev.PathId, pathId)
-		}
-	})
+func TestWorkUnitCreatedEvent(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	at := time.Now()
 
-	t.Run("BacklogThresholdBreached", func(t *testing.T) {
-		ev := NewBacklogThresholdBreached(pathId, at)
-		if ev.EventName() != "BacklogThresholdBreached" {
-			t.Fatalf("got %s, want BacklogThresholdBreached", ev.EventName())
-		}
-		if !ev.OccurredAt().Equal(at) {
-			t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
-		}
-		if !ev.PathId.Equals(pathId) {
-			t.Fatalf("got %v, want %v", ev.PathId, pathId)
-		}
-	})
+	ev := NewWorkUnitCreated("wu-1", pathId, at)
+	if ev.EventName() != "WorkUnitCreated" {
+		t.Fatalf("got %s, want WorkUnitCreated", ev.EventName())
+	}
+	if !ev.OccurredAt().Equal(at) {
+		t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
+	}
+	if ev.WorkUnitId != "wu-1" {
+		t.Fatalf("got %s, want wu-1", ev.WorkUnitId)
+	}
+	if !ev.PathId.Equals(pathId) {
+		t.Fatalf("got %v, want %v", ev.PathId, pathId)
+	}
+}
 
-	t.Run("RateDeviationDetected", func(t *testing.T) {
-		ev := NewRateDeviationDetected(pathId, at)
-		if ev.EventName() != "RateDeviationDetected" {
-			t.Fatalf("got %s, want RateDeviationDetected", ev.EventName())
-		}
-		if !ev.OccurredAt().Equal(at) {
-			t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
-		}
-		if !ev.PathId.Equals(pathId) {
-			t.Fatalf("got %v, want %v", ev.PathId, pathId)
-		}
-	})
+func TestWorkReleasedEvent(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	at := time.Now()
 
-	t.Run("PathThrottled", func(t *testing.T) {
-		ev := NewPathThrottled(pathId, at)
-		if ev.EventName() != "PathThrottled" {
-			t.Fatalf("got %s, want PathThrottled", ev.EventName())
-		}
-		if !ev.OccurredAt().Equal(at) {
-			t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
-		}
-		if !ev.PathId.Equals(pathId) {
-			t.Fatalf("got %v, want %v", ev.PathId, pathId)
-		}
-	})
+	ev := NewWorkReleased("wu-2", pathId, at)
+	if ev.EventName() != "WorkReleased" {
+		t.Fatalf("got %s, want WorkReleased", ev.EventName())
+	}
+	if !ev.OccurredAt().Equal(at) {
+		t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
+	}
+	if ev.WorkUnitId != "wu-2" {
+		t.Fatalf("got %s, want wu-2", ev.WorkUnitId)
+	}
+	if !ev.PathId.Equals(pathId) {
+		t.Fatalf("got %v, want %v", ev.PathId, pathId)
+	}
+}
 
-	t.Run("LaborReassignmentFlagged", func(t *testing.T) {
-		ev := NewLaborReassignmentFlagged(pathId, at)
-		if ev.EventName() != "LaborReassignmentFlagged" {
-			t.Fatalf("got %s, want LaborReassignmentFlagged", ev.EventName())
-		}
-		if !ev.OccurredAt().Equal(at) {
-			t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
-		}
-		if !ev.PathId.Equals(pathId) {
-			t.Fatalf("got %v, want %v", ev.PathId, pathId)
-		}
-	})
+func TestBacklogThresholdBreachedEvent(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	at := time.Now()
 
-	t.Run("WorkUnitCompleted", func(t *testing.T) {
-		ev := NewWorkUnitCompleted("wu-3", pathId, at)
-		if ev.EventName() != "WorkUnitCompleted" {
-			t.Fatalf("got %s, want WorkUnitCompleted", ev.EventName())
-		}
-		if !ev.OccurredAt().Equal(at) {
-			t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
-		}
-		if ev.WorkUnitId != "wu-3" {
-			t.Fatalf("got %s, want wu-3", ev.WorkUnitId)
-		}
-		if !ev.PathId.Equals(pathId) {
-			t.Fatalf("got %v, want %v", ev.PathId, pathId)
-		}
-	})
+	ev := NewBacklogThresholdBreached(pathId, at)
+	if ev.EventName() != "BacklogThresholdBreached" {
+		t.Fatalf("got %s, want BacklogThresholdBreached", ev.EventName())
+	}
+	if !ev.OccurredAt().Equal(at) {
+		t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
+	}
+	if !ev.PathId.Equals(pathId) {
+		t.Fatalf("got %v, want %v", ev.PathId, pathId)
+	}
+}
 
-	t.Run("PathCapacityChanged known", func(t *testing.T) {
+func TestRateDeviationDetectedEvent(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	at := time.Now()
+
+	ev := NewRateDeviationDetected(pathId, at)
+	if ev.EventName() != "RateDeviationDetected" {
+		t.Fatalf("got %s, want RateDeviationDetected", ev.EventName())
+	}
+	if !ev.OccurredAt().Equal(at) {
+		t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
+	}
+	if !ev.PathId.Equals(pathId) {
+		t.Fatalf("got %v, want %v", ev.PathId, pathId)
+	}
+}
+
+func TestPathThrottledEvent(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	at := time.Now()
+
+	ev := NewPathThrottled(pathId, at)
+	if ev.EventName() != "PathThrottled" {
+		t.Fatalf("got %s, want PathThrottled", ev.EventName())
+	}
+	if !ev.OccurredAt().Equal(at) {
+		t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
+	}
+	if !ev.PathId.Equals(pathId) {
+		t.Fatalf("got %v, want %v", ev.PathId, pathId)
+	}
+}
+
+func TestLaborReassignmentFlaggedEvent(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	at := time.Now()
+
+	ev := NewLaborReassignmentFlagged(pathId, at)
+	if ev.EventName() != "LaborReassignmentFlagged" {
+		t.Fatalf("got %s, want LaborReassignmentFlagged", ev.EventName())
+	}
+	if !ev.OccurredAt().Equal(at) {
+		t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
+	}
+	if !ev.PathId.Equals(pathId) {
+		t.Fatalf("got %v, want %v", ev.PathId, pathId)
+	}
+}
+
+func TestWorkUnitCompletedEvent(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	at := time.Now()
+
+	ev := NewWorkUnitCompleted("wu-3", pathId, at)
+	if ev.EventName() != "WorkUnitCompleted" {
+		t.Fatalf("got %s, want WorkUnitCompleted", ev.EventName())
+	}
+	if !ev.OccurredAt().Equal(at) {
+		t.Fatalf("got %v, want %v", ev.OccurredAt(), at)
+	}
+	if ev.WorkUnitId != "wu-3" {
+		t.Fatalf("got %s, want wu-3", ev.WorkUnitId)
+	}
+	if !ev.PathId.Equals(pathId) {
+		t.Fatalf("got %v, want %v", ev.PathId, pathId)
+	}
+}
+
+func TestPathCapacityChangedEvent(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	at := time.Now()
+
+	t.Run("known", func(t *testing.T) {
 		cutoff := at.Add(2 * time.Hour)
 		ev := NewPathCapacityChanged(pathId, cutoff, 42, true, at)
 		if ev.EventName() != "PathCapacityChanged" {
@@ -202,7 +260,7 @@ func TestEvents(t *testing.T) {
 		}
 	})
 
-	t.Run("PathCapacityChanged unknown", func(t *testing.T) {
+	t.Run("unknown", func(t *testing.T) {
 		cutoff := at.Add(time.Hour)
 		ev := NewPathCapacityChanged(pathId, cutoff, 0, false, at)
 		if ev.Known {
@@ -334,7 +392,9 @@ func TestRate(t *testing.T) {
 	})
 }
 
-func TestStationCount(t *testing.T) {
+// TestStationCount_New covers the NewStationCount constructor's validity
+// rules (the comparison behaviours live in TestStationCount_Comparisons).
+func TestStationCount_New(t *testing.T) {
 	t.Run("NewStationCount valid", func(t *testing.T) {
 		s, err := NewStationCount(3)
 		if err != nil {
@@ -368,7 +428,11 @@ func TestStationCount(t *testing.T) {
 			t.Fatalf("got %d, want 0", s.Value())
 		}
 	})
+}
 
+// TestStationCount_Comparisons covers the LessThan/GreaterThan ordering
+// behaviour (the constructor's validity rules live in TestStationCount_New).
+func TestStationCount_Comparisons(t *testing.T) {
 	t.Run("LessThan true", func(t *testing.T) {
 		s1, _ := NewStationCount(2)
 		s2, _ := NewStationCount(5)

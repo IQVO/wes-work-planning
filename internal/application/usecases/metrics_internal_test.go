@@ -26,6 +26,40 @@ func setGlobalMeterProvider(t *testing.T, mp metric.MeterProvider) {
 	t.Cleanup(func() { otel.SetMeterProvider(prev) })
 }
 
+// sumDataPointFor returns the value of the datapoint tagged attr=want, if
+// sum carries one.
+func sumDataPointFor(sum metricdata.Sum[int64], attr attribute.Key, want string) (int64, bool) {
+	for _, dp := range sum.DataPoints {
+		if v, ok := dp.Attributes.Value(attr); ok && v.String() == want {
+			return dp.Value, true
+		}
+	}
+	return 0, false
+}
+
+// counterValueFor finds the named int64 counter's datapoint tagged
+// attr=want in collected, failing the test when that metric exists but is
+// not an int64 counter. found reports whether the datapoint exists at
+// all.
+func counterValueFor(t *testing.T, collected metricdata.ResourceMetrics, name string, attr attribute.Key, want string) (value int64, found bool) {
+	t.Helper()
+	for _, scope := range collected.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("%s is a %T, want an int64 counter", m.Name, m.Data)
+			}
+			if v, ok := sumDataPointFor(sum, attr, want); ok {
+				return v, true
+			}
+		}
+	}
+	return 0, false
+}
+
 // TestNewInt64Counter_ValidInstrumentReturnsRecordingCounter proves the
 // happy path hands back the real SDK counter: Add calls land in the
 // reader with the business attribute attached, so metric collection can
@@ -49,28 +83,12 @@ func TestNewInt64Counter_ValidInstrumentReturnsRecordingCounter(t *testing.T) {
 		t.Fatalf("collecting metrics: %v", err)
 	}
 
-	found := false
-	for _, scope := range collected.ScopeMetrics {
-		for _, m := range scope.Metrics {
-			if m.Name != validCounterName {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[int64])
-			if !ok {
-				t.Fatalf("%s is a %T, want an int64 counter", m.Name, m.Data)
-			}
-			for _, dp := range sum.DataPoints {
-				if v, ok := dp.Attributes.Value(attribute.Key(AttrPathId)); ok && v.String() == "pick-a" {
-					found = true
-					if dp.Value != 2 {
-						t.Fatalf("%s{%s=pick-a} = %d, want 2", validCounterName, AttrPathId, dp.Value)
-					}
-				}
-			}
-		}
-	}
+	value, found := counterValueFor(t, collected, validCounterName, attribute.Key(AttrPathId), "pick-a")
 	if !found {
 		t.Fatalf("no %s datapoint for %s=pick-a in %v", validCounterName, AttrPathId, collected.ScopeMetrics)
+	}
+	if value != 2 {
+		t.Fatalf("%s{%s=pick-a} = %d, want 2", validCounterName, AttrPathId, value)
 	}
 }
 

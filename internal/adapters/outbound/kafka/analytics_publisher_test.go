@@ -38,18 +38,63 @@ func mustPathId(t *testing.T, s string) shared.PathId {
 	return p
 }
 
+// analyticsCase is one row of TestAnalyticsPublisher_EmitsEnvelopePerEvent's
+// table.
+type analyticsCase struct {
+	name     string
+	event    shared.DomainEvent
+	wantType string
+	wantKey  string
+	wantPath string
+	wantUnit string // "" when the event carries no work_unit_id
+}
+
+// assertAnalyticsMessage decodes one written message and asserts the
+// analytics wire form: the envelope's fixed fields plus the data payload's
+// path/work-unit identity.
+func assertAnalyticsMessage(t *testing.T, key, value []byte, tt analyticsCase, at time.Time) {
+	t.Helper()
+	if string(key) != tt.wantKey {
+		t.Errorf("key = %q, want %q", key, tt.wantKey)
+	}
+
+	var env analyticsEnv
+	if err := json.Unmarshal(value, &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if env.EventType != tt.wantType {
+		t.Errorf("event_type = %q, want %q", env.EventType, tt.wantType)
+	}
+	if env.Source != "wes-work-planning" {
+		t.Errorf("source = %q, want wes-work-planning", env.Source)
+	}
+	if env.SchemaVersion != 1 {
+		t.Errorf("schema_version = %d, want 1", env.SchemaVersion)
+	}
+	if env.EventId == "" {
+		t.Error("event_id is empty")
+	}
+	if !env.OccurredAt.Equal(at) {
+		t.Errorf("occurred_at = %v, want %v", env.OccurredAt, at)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatalf("decode data: %v", err)
+	}
+	if data["path_id"] != tt.wantPath {
+		t.Errorf("data.path_id = %v, want %q", data["path_id"], tt.wantPath)
+	}
+	if tt.wantUnit != "" && data["work_unit_id"] != tt.wantUnit {
+		t.Errorf("data.work_unit_id = %v, want %q", data["work_unit_id"], tt.wantUnit)
+	}
+}
+
 func TestAnalyticsPublisher_EmitsEnvelopePerEvent(t *testing.T) {
 	at := time.Date(2026, 5, 1, 8, 0, 0, 0, time.UTC)
 	pathId := mustPathId(t, "pick-zone-a")
 
-	tests := []struct {
-		name     string
-		event    shared.DomainEvent
-		wantType string
-		wantKey  string
-		wantPath string
-		wantUnit string // "" when the event carries no work_unit_id
-	}{
+	tests := []analyticsCase{
 		{"work released", shared.NewWorkReleased("wu-1", pathId, at), "WorkReleased", "wu-1", "pick-zone-a", "wu-1"},
 		{"work completed", shared.NewWorkUnitCompleted("wu-2", pathId, at), "WorkUnitCompleted", "wu-2", "pick-zone-a", "wu-2"},
 		{"work created", shared.NewWorkUnitCreated("wu-3", pathId, at), "WorkUnitCreated", "wu-3", "pick-zone-a", "wu-3"},
@@ -73,41 +118,7 @@ func TestAnalyticsPublisher_EmitsEnvelopePerEvent(t *testing.T) {
 			if len(w.msgs) != 1 {
 				t.Fatalf("messages = %d, want 1", len(w.msgs))
 			}
-			msg := w.msgs[0]
-			if string(msg.Key) != tt.wantKey {
-				t.Errorf("key = %q, want %q", msg.Key, tt.wantKey)
-			}
-
-			var env analyticsEnv
-			if err := json.Unmarshal(msg.Value, &env); err != nil {
-				t.Fatalf("decode envelope: %v", err)
-			}
-			if env.EventType != tt.wantType {
-				t.Errorf("event_type = %q, want %q", env.EventType, tt.wantType)
-			}
-			if env.Source != "wes-work-planning" {
-				t.Errorf("source = %q, want wes-work-planning", env.Source)
-			}
-			if env.SchemaVersion != 1 {
-				t.Errorf("schema_version = %d, want 1", env.SchemaVersion)
-			}
-			if env.EventId == "" {
-				t.Error("event_id is empty")
-			}
-			if !env.OccurredAt.Equal(at) {
-				t.Errorf("occurred_at = %v, want %v", env.OccurredAt, at)
-			}
-
-			var data map[string]any
-			if err := json.Unmarshal(env.Data, &data); err != nil {
-				t.Fatalf("decode data: %v", err)
-			}
-			if data["path_id"] != tt.wantPath {
-				t.Errorf("data.path_id = %v, want %q", data["path_id"], tt.wantPath)
-			}
-			if tt.wantUnit != "" && data["work_unit_id"] != tt.wantUnit {
-				t.Errorf("data.work_unit_id = %v, want %q", data["work_unit_id"], tt.wantUnit)
-			}
+			assertAnalyticsMessage(t, w.msgs[0].Key, w.msgs[0].Value, tt, at)
 		})
 	}
 }

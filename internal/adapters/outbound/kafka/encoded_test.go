@@ -58,6 +58,35 @@ func TestPublisher_Encode_ProducesIntegrationWireForm(t *testing.T) {
 		t.Fatalf("got %d encoded, want 1", len(encoded))
 	}
 	e := encoded[0]
+
+	var env envelope.Envelope
+	if err := json.Unmarshal(e.Value, &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatalf("unmarshal data: %v", err)
+	}
+
+	t.Run("routes to the integration topic keyed by event id", func(t *testing.T) {
+		assertEncodedRouting(t, e)
+	})
+
+	t.Run("wraps the shared integration envelope", func(t *testing.T) {
+		assertEncodedEnvelope(t, env, at)
+	})
+
+	t.Run("enriches the WorkReleased data at encode time", func(t *testing.T) {
+		assertEncodedEnrichment(t, data)
+	})
+
+	t.Run("injects the active span's trace headers", func(t *testing.T) {
+		assertEncodedTraceHeaders(t, e)
+	})
+}
+
+func assertEncodedRouting(t *testing.T, e outboundkafka.Encoded) {
+	t.Helper()
 	if e.Topic != envelope.TopicWorkPlanningEvents {
 		t.Fatalf("topic = %q, want %q", e.Topic, envelope.TopicWorkPlanningEvents)
 	}
@@ -67,22 +96,26 @@ func TestPublisher_Encode_ProducesIntegrationWireForm(t *testing.T) {
 	if string(e.Key) != "evt-enc" {
 		t.Fatalf("key = %q, want the event id", e.Key)
 	}
-	var env envelope.Envelope
-	if err := json.Unmarshal(e.Value, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
-	}
+}
+
+func assertEncodedEnvelope(t *testing.T, env envelope.Envelope, at time.Time) {
+	t.Helper()
 	if env.EventId != "evt-enc" || env.EventType != "WorkReleased" || env.Source != envelope.Source || !env.OccurredAt.Equal(at) {
 		t.Fatalf("unexpected envelope %+v", env)
 	}
-	var data map[string]any
-	if err := json.Unmarshal(env.Data, &data); err != nil {
-		t.Fatalf("unmarshal data: %v", err)
-	}
+}
+
+func assertEncodedEnrichment(t *testing.T, data map[string]any) {
+	t.Helper()
 	// The enrichment that READS the work-unit repo happened at encode
 	// time — that is the property the outbox relies on.
 	if data["ref"] != "ref-1" || data["gift_wrap"] != true || data["work_unit_id"] != "wu-enc" {
 		t.Fatalf("unexpected enriched data %v", data)
 	}
+}
+
+func assertEncodedTraceHeaders(t *testing.T, e outboundkafka.Encoded) {
+	t.Helper()
 	if _, ok := headerValue(e.Headers, "traceparent"); !ok {
 		t.Fatalf("expected a traceparent header when a span is active, got %v", e.Headers)
 	}

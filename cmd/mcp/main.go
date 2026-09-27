@@ -63,84 +63,89 @@ func run() error {
 		}
 	}()
 
-	httpAddr := getenv("MCP_ADDR", ":8090")
-	databaseURL := os.Getenv("DATABASE_URL")
+	pools, workUnits, closeRepos, err := wireRepositories(logger, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		return err
+	}
+	defer closeRepos()
 
-	clock := memory.SystemClock{}
+	server := inboundmcp.NewServer(newMCPServerDeps(logger, pools, workUnits))
 
-	var (
-		pools     ports.WorkPoolRepo
-		workUnits ports.WorkUnitRepo
-	)
-
-	// Select in-memory vs Postgres exactly as cmd/wes does. The MCP adapter
-	// only needs the work-pool and work-unit repositories for its read/write
-	// use cases.
-	if databaseURL == "" {
-		logger.Info("database url not configured; using in-memory adapters")
-		pools = memory.NewWorkPoolRepo()
-		workUnits = memory.NewWorkUnitRepo()
-	} else {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		pool, err := postgres.Connect(ctx, databaseURL)
-		if err != nil {
-			return err
-		}
-		// Retried, because in this fleet EVERY injected pod's first
-		// outbound TCP dial is reset ~10s after the app starts (Istio
-		// native sidecars; see internal/bootretry's package doc
-		// comment), and pgxpool.NewWithConfig above does not itself
-		// dial. Without this, that reset would surface inside the
-		// first real request rather than at boot.
-		bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer bootCancel()
-		if err := bootretry.Retry(bootCtx, logger, "ping postgres", func() error {
-			return pool.Ping(bootCtx)
-		}); err != nil {
-			pool.Close()
-			return err
-		}
-		defer pool.Close()
-
-		pools = postgres.NewWorkPoolRepo(pool)
-		workUnits = postgres.NewWorkUnitRepo(pool)
+	srv := &http.Server{
+		Addr:              getenv("MCP_ADDR", ":8090"),
+		Handler:           newRouter(inboundmcp.Handler(server)),
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	// The MCP adapter reuses the SAME use cases the HTTP adapter uses:
-	// SampleBacklog and RebalanceDecision (read) and ReleaseNextWork (write).
-	// Those use cases need a publisher and clock; the MCP server is not the
-	// platform's primary event publisher (cmd/wes is), so it logs any event it
-	// raises rather than publishing to Kafka.
+	return serveMCP(logger, srv)
+}
+
+// wireRepositories selects the in-memory or Postgres work-pool/work-unit
+// repositories exactly as cmd/wes does: in-memory unless DATABASE_URL is
+// set. The returned close func releases the Postgres pool (a no-op for
+// the in-memory adapters) and must be deferred by the caller.
+func wireRepositories(logger *slog.Logger, databaseURL string) (pools ports.WorkPoolRepo, workUnits ports.WorkUnitRepo, closeRepos func(), err error) {
+	if databaseURL == "" {
+		logger.Info("database url not configured; using in-memory adapters")
+		return memory.NewWorkPoolRepo(), memory.NewWorkUnitRepo(), func() {}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := postgres.Connect(ctx, databaseURL)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// Retried, because in this fleet EVERY injected pod's first
+	// outbound TCP dial is reset ~10s after the app starts (Istio
+	// native sidecars; see internal/bootretry's package doc
+	// comment), and pgxpool.NewWithConfig above does not itself
+	// dial. Without this, that reset would surface inside the
+	// first real request rather than at boot.
+	bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer bootCancel()
+	if err := bootretry.Retry(bootCtx, logger, "ping postgres", func() error {
+		return pool.Ping(bootCtx)
+	}); err != nil {
+		pool.Close()
+		return nil, nil, nil, err
+	}
+	return postgres.NewWorkPoolRepo(pool), postgres.NewWorkUnitRepo(pool), pool.Close, nil
+}
+
+// newMCPServerDeps wires the MCP adapter's Deps over the SAME use cases
+// the HTTP adapter uses: SampleBacklog and RebalanceDecision (read) and
+// ReleaseNextWork (write). Those use cases need a publisher and clock;
+// the MCP server is not the platform's primary event publisher (cmd/wes
+// is), so it logs any event it raises rather than publishing to Kafka.
+//
+// When the wes-reports REST service is reachable, this also exposes the
+// curated, read-only "Release Throughput & Backlog Health" report tool. It
+// calls that REST surface rather than opening the analytical database
+// directly, so no process touches a datastore it does not own (ADR-0011).
+// Absent REPORTS_BASE_URL the tool is simply not registered.
+func newMCPServerDeps(logger *slog.Logger, pools ports.WorkPoolRepo, workUnits ports.WorkUnitRepo) inboundmcp.Deps {
+	clock := memory.SystemClock{}
 	publisher := events.NewLogPublisher(logger)
 	deps := inboundmcp.Deps{
 		SampleBacklog:     usecases.NewSampleBacklog(pools, publisher, clock),
 		RebalanceDecision: usecases.NewRebalanceDecision(pools, publisher, clock),
 		ReleaseNextWork:   usecases.NewReleaseNextWork(pools, workUnits, publisher, clock),
 	}
-	// When the wes-reports REST service is reachable, expose the curated,
-	// read-only "Release Throughput & Backlog Health" report tool. It calls
-	// that REST surface rather than opening the analytical database directly,
-	// so no process touches a datastore it does not own (ADR-0011). Absent
-	// REPORTS_BASE_URL the tool is simply not registered.
 	if reportsBaseURL := os.Getenv("REPORTS_BASE_URL"); reportsBaseURL != "" {
 		logger.Info("release throughput report tool enabled", "reports_base_url", reportsBaseURL)
 		deps.Reports = inboundmcp.NewReportsRESTClient(reportsBaseURL, nil)
 	}
-	server := inboundmcp.NewServer(deps)
+	return deps
+}
 
-	handler := inboundmcp.Handler(server)
-
-	srv := &http.Server{
-		Addr:              httpAddr,
-		Handler:           newRouter(handler),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
+// serveMCP runs srv until SIGINT/SIGTERM or a listen error, returning the
+// listen error or the graceful-shutdown result respectively.
+func serveMCP(logger *slog.Logger, srv *http.Server) error {
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("mcp server listening (Streamable HTTP)", "addr", httpAddr)
+		logger.Info("mcp server listening (Streamable HTTP)", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}

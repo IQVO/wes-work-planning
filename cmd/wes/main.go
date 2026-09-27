@@ -54,6 +54,15 @@ func run() error {
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
 	eventPublisherKind := getenv("EVENT_PUBLISHER", "log")
+	// EVENT_ENVELOPE_MODE selects the integration-topic wire shape(s) the
+	// outbound Publisher's Encode produces (ADR-0021): "flat" (default,
+	// unset -- today's byte-identical envelope), "cloudevents" (the new
+	// CloudEvents 1.0 shape), or "dual" (both, two physical messages per
+	// event). Unset/unrecognized values fall back to "flat" -- zero
+	// behavior change unless this is explicitly set, mirroring this
+	// fleet's PRODUCT_CLASSIFICATION_MODE/PATH_CATALOGUE_SOURCE
+	// convention.
+	envelopeMode := outboundkafka.ParseEnvelopeMode(getenv("EVENT_ENVELOPE_MODE", "flat"))
 	otelServiceName := getenv("OTEL_SERVICE_NAME", serviceName)
 
 	// The process-path catalogue's SOURCE is selectable, defaulting to
@@ -245,8 +254,9 @@ func run() error {
 		// domain event onto the dedicated analytics topic
 		// (warehouse.wes.analytics) that feeds the "Release Throughput &
 		// Backlog Health" data product (ADR-0011).
-		integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID)
+		integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID, outboundkafka.WithEnvelopeMode(envelopeMode))
 		defer func() { _ = integrationPublisher.Close() }()
+		logger.Info("event envelope mode", "mode", string(envelopeMode))
 		analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID)
 		defer func() { _ = analyticsPublisher.Close() }()
 

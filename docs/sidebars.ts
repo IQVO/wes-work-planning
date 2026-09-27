@@ -105,6 +105,7 @@ const sidebars: SidebarsConfig = {
         'adr/0019-labor-plan-committed-shift-plan-reconciliation',
         'adr/0020-flowfed-path-observed-throughput-signal',
         'adr/0021-cloudevents-envelope-migration',
+        'adr/0022-idempotency-key-middleware',
       ],
     },
   ],

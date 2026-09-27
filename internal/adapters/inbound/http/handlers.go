@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
@@ -47,6 +48,16 @@ type Handlers struct {
 	// Additive: read-only lookup of work units by their order-line
 	// reference, for cross-service console screens.
 	GetWorkUnitsByReference *usecases.GetWorkUnitsByReference
+
+	// IdempotencyPool, when non-nil, wires RequireIdempotencyKey onto
+	// POST /paths/{pathId}/work-units (see router.go and idempotency.go).
+	// A nil pool means "no transactional Postgres backing wired"
+	// (in-memory dev/test configuration) — the idempotency middleware
+	// needs a real pgxpool.Pool to begin its own transaction, so it is
+	// simply not applied in that case, mirroring this codebase's
+	// existing convention for every other optional Postgres-backed
+	// capability (UnitOfWork, the outbox relay).
+	IdempotencyPool *pgxpool.Pool
 }
 
 func pathIdParam(r *http.Request) (shared.PathId, error) {

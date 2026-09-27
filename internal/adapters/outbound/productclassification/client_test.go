@@ -82,34 +82,43 @@ func TestClient_GetClassification_404_FailsOpen(t *testing.T) {
 	}
 }
 
-func TestClient_GetClassification_500_ReturnsError(t *testing.T) {
+func TestClient_GetClassification_500_FailsOpen(t *testing.T) {
 	doer := &fakeDoer{resp: jsonResponse(http.StatusInternalServerError, "")} //nolint:bodyclose
 	client := productclassification.NewClient("http://inventory-storage.local", doer)
 
-	_, err := client.GetClassification(context.Background(), "sku-1")
-	if !errors.Is(err, productclassification.ErrUnexpectedStatus) {
-		t.Fatalf("expected ErrUnexpectedStatus, got %v", err)
+	view, err := client.GetClassification(context.Background(), "sku-1")
+	if err != nil {
+		t.Fatalf("expected fail-open (nil error), got %v", err)
+	}
+	if view.Known {
+		t.Fatalf("expected Known=false on 500")
 	}
 }
 
-func TestClient_GetClassification_TransportError_Propagates(t *testing.T) {
+func TestClient_GetClassification_TransportError_FailsOpen(t *testing.T) {
 	transportErr := errors.New("connection refused")
 	doer := &fakeDoer{err: transportErr}
 	client := productclassification.NewClient("http://inventory-storage.local", doer)
 
-	_, err := client.GetClassification(context.Background(), "sku-1")
-	if !errors.Is(err, transportErr) {
-		t.Fatalf("expected transport error to propagate, got %v", err)
+	view, err := client.GetClassification(context.Background(), "sku-1")
+	if err != nil {
+		t.Fatalf("expected fail-open (nil error), got %v", err)
+	}
+	if view.Known {
+		t.Fatalf("expected Known=false on a transport error")
 	}
 }
 
-func TestClient_GetClassification_MalformedJSON_ReturnsError(t *testing.T) {
+func TestClient_GetClassification_MalformedJSON_FailsOpen(t *testing.T) {
 	doer := &fakeDoer{resp: jsonResponse(http.StatusOK, `{not-json`)} //nolint:bodyclose
 	client := productclassification.NewClient("http://inventory-storage.local", doer)
 
-	_, err := client.GetClassification(context.Background(), "sku-1")
-	if err == nil {
-		t.Fatalf("expected an error decoding malformed JSON")
+	view, err := client.GetClassification(context.Background(), "sku-1")
+	if err != nil {
+		t.Fatalf("expected fail-open (nil error), got %v", err)
+	}
+	if view.Known {
+		t.Fatalf("expected Known=false on malformed JSON")
 	}
 }
 

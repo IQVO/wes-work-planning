@@ -35,6 +35,7 @@ func NewRouter(h *Handlers, serviceName string, logger *slog.Logger) *chi.Mux {
 	r.Use(corsMiddleware())
 
 	r.Get("/healthz", healthz)
+	r.Get("/readyz", h.handleReadyz)
 
 	r.Route("/paths/{pathId}", func(r chi.Router) {
 		r.Post("/charge", h.postChargeForecast)

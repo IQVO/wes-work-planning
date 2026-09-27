@@ -103,34 +103,43 @@ func TestClient_GetDistance_422_FailsOpen(t *testing.T) {
 	}
 }
 
-func TestClient_GetDistance_500_ReturnsError(t *testing.T) {
+func TestClient_GetDistance_500_FailsOpen(t *testing.T) {
 	doer := &fakeDoer{resp: jsonResponse(http.StatusInternalServerError, "")} //nolint:bodyclose
 	client := traveldistance.NewClient("http://facility-layout.local", doer)
 
-	_, err := client.GetDistance(context.Background(), "A", "B")
-	if !errors.Is(err, traveldistance.ErrUnexpectedStatus) {
-		t.Fatalf("expected ErrUnexpectedStatus, got %v", err)
+	view, err := client.GetDistance(context.Background(), "A", "B")
+	if err != nil {
+		t.Fatalf("expected fail-open (nil error), got %v", err)
+	}
+	if view.Known {
+		t.Fatalf("expected Known=false on 500")
 	}
 }
 
-func TestClient_GetDistance_TransportError_Propagates(t *testing.T) {
+func TestClient_GetDistance_TransportError_FailsOpen(t *testing.T) {
 	transportErr := errors.New("connection refused")
 	doer := &fakeDoer{err: transportErr}
 	client := traveldistance.NewClient("http://facility-layout.local", doer)
 
-	_, err := client.GetDistance(context.Background(), "A", "B")
-	if !errors.Is(err, transportErr) {
-		t.Fatalf("expected transport error to propagate, got %v", err)
+	view, err := client.GetDistance(context.Background(), "A", "B")
+	if err != nil {
+		t.Fatalf("expected fail-open (nil error), got %v", err)
+	}
+	if view.Known {
+		t.Fatalf("expected Known=false on a transport error")
 	}
 }
 
-func TestClient_GetDistance_MalformedJSON_ReturnsError(t *testing.T) {
+func TestClient_GetDistance_MalformedJSON_FailsOpen(t *testing.T) {
 	doer := &fakeDoer{resp: jsonResponse(http.StatusOK, `{not-json`)} //nolint:bodyclose
 	client := traveldistance.NewClient("http://facility-layout.local", doer)
 
-	_, err := client.GetDistance(context.Background(), "A", "B")
-	if err == nil {
-		t.Fatalf("expected an error decoding malformed JSON")
+	view, err := client.GetDistance(context.Background(), "A", "B")
+	if err != nil {
+		t.Fatalf("expected fail-open (nil error), got %v", err)
+	}
+	if view.Known {
+		t.Fatalf("expected Known=false on malformed JSON")
 	}
 }
 

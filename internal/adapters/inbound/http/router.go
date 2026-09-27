@@ -39,7 +39,27 @@ func NewRouter(h *Handlers, serviceName string, logger *slog.Logger) *chi.Mux {
 	r.Route("/paths/{pathId}", func(r chi.Router) {
 		r.Post("/charge", h.postChargeForecast)
 		r.Post("/plan", h.postShiftPlan)
-		r.Post("/work-units", h.postWorkUnit)
+		// POST /paths/{pathId}/work-units is route-scoped (r.With, not
+		// r.Use) behind RequireIdempotencyKey — it is the one mutating
+		// endpoint in this service that creates a NEW resource with a
+		// (caller-supplied but server-persisted) id, so a lost response
+		// and a client retry would otherwise duplicate the work unit
+		// (see docs/docs/adr for the ADR). The other three mutating POST
+		// routes are explicitly ruled out: postChargeForecast and
+		// postShiftPlan are upserts keyed by the caller-supplied path_id
+		// (ON CONFLICT (path_id) DO UPDATE — idempotent by construction,
+		// a retry just re-applies the same natural-key upsert), and
+		// postRelease acts on whichever existing pending entry the
+		// release policy currently picks, not a caller-identified new
+		// resource. IdempotencyPool nil (in-memory dev/test
+		// configuration, no transactional Postgres backing) skips the
+		// middleware entirely, mirroring every other optional
+		// Postgres-backed capability's nil convention in this service.
+		if h.IdempotencyPool != nil {
+			r.With(RequireIdempotencyKey(h.IdempotencyPool)).Post("/work-units", h.postWorkUnit)
+		} else {
+			r.Post("/work-units", h.postWorkUnit)
+		}
 		r.Post("/release", h.postRelease)
 		r.Get("/telemetry", h.getTelemetry)
 		r.Get("/rebalance", h.getRebalance)

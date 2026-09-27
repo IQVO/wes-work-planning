@@ -237,9 +237,18 @@ Fails with `400` if `plannedHeads > installedStations`.
 
 ### `POST /paths/{pathId}/work-units` — EnqueueWorkUnit
 
+Requires an `Idempotency-Key` header (ADR-0022): this is the one mutating
+endpoint that creates a genuinely new resource, so a retried request with
+the same key and the same body is guaranteed to return the identical
+response and create exactly one work unit, never a duplicate. A retry
+with the same key but a *different* body gets `422`
+(`idempotency-key-reused`); a missing header gets `400`
+(`idempotency-key-required`).
+
 ```sh
 curl -X POST localhost:8080/paths/pick-a/work-units \
   -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: wu-1-attempt-1' \
   -d '{"workUnitId":"wu-1","cpt":"2026-08-21T12:00:00Z","reference":"order-line-1"}'
 ```
 
@@ -488,6 +497,11 @@ per-process consumer group so every process replays the full history.
 
 ### Idempotency
 
+This section covers Kafka consumer idempotency. For the `Idempotency-Key`
+HTTP header on `POST /paths/{pathId}/work-units`, see ADR-0022 and that
+endpoint's own section above — a separate, request/response-level
+mechanism, not related to the Kafka de-duplication described here.
+
 Kafka is at-least-once. Every consumed event's `event_id` is recorded in
 `processed_events` (Postgres) / an in-memory set before its effect is
 applied; a redelivered `event_id` is skipped (and still acked) rather than
@@ -522,6 +536,7 @@ release it), then publish the completion event and re-query the unit:
 
 ```sh
 curl -X POST localhost:8080/paths/pick-a/work-units \
+  -H 'Idempotency-Key: wu-1-attempt-1' \
   -d '{"workUnitId":"wu-1","cpt":"2026-08-21T23:00:00Z","reference":"ref-1"}'
 curl -X POST localhost:8080/paths/pick-a/release
 
@@ -608,6 +623,7 @@ KAFKA_BROKERS=localhost:9092 EVENT_PUBLISHER=kafka LOG_LEVEL=info go run ./cmd/w
 
 curl -X POST localhost:8080/paths/pick-a/work-units \
   -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: wu-1-attempt-1' \
   -d '{"workUnitId":"wu-1","cpt":"2026-08-23T23:00:00Z","reference":"order-1"}'
 curl -X POST localhost:8080/paths/pick-a/release
 

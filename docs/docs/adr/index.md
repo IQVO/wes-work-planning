@@ -56,6 +56,7 @@ no scheduler).
 | [0019](./0019-labor-plan-committed-shift-plan-reconciliation.md) | Reconcile our committed `PathPlan` against Workforce's `LaborPlanObserved`, triggered on either side's commit | Accepted |
 | [0020](./0020-flowfed-path-observed-throughput-signal.md) | FlowFed paths stay `Known=false` permanently; an observed-throughput signal is proposed alongside, not instead | Accepted |
 | [0021](./0021-cloudevents-envelope-migration.md) | Migrate `warehouse.work-planning.events` to a CloudEvents 1.0 structured envelope via a dual-read/dual-write bake period; companion to fulfillment-execution's own envelope-migration ADR | Accepted |
+| [0022](./0022-idempotency-key-middleware.md) | Transactional Idempotency-Key middleware for `POST /paths/{pathId}/work-units`, ported from order-management's reference implementation | Accepted |
 
 ## The template
 

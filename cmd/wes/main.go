@@ -289,6 +289,11 @@ func run() error {
 		LaborPlanView:           usecases.NewLaborPlanView(laborPlanViews),
 		InventoryView:           usecases.NewInventoryView(inventoryViews),
 		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(workUnits),
+		// IdempotencyPool wires RequireIdempotencyKey onto POST
+		// /paths/{pathId}/work-units (see idempotency.go's ADR). nil in
+		// the in-memory configuration (pgPool nil), matching every other
+		// optional Postgres-backed capability's convention here.
+		IdempotencyPool: pgPool,
 	}
 
 	router := inboundhttp.NewRouter(handlers, otelServiceName, logger)

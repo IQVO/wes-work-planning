@@ -215,9 +215,13 @@ paths:
                 plannedThroughput: 4584
         "400":
           description: >
-            Malformed body, invalid field value (e.g. non-positive rate or
-            hours), or the `plannedHeads <= installedStations` invariant was
-            violated.
+            Malformed body, a missing required field (`plannedHeads`,
+            `installedStations`, `rateUnitsPerHour`, `hours` — zero-valued
+            defaults are never silently accepted), an invalid field value
+            (e.g. non-positive rate or hours), the `plannedHeads <=
+            installedStations` invariant was violated, or the computed
+            `plannedThroughput` (rate × heads × hours) is not representable
+            as a finite number.
           content:
             application/problem+json:
               schema:
@@ -393,10 +397,13 @@ paths:
             Optional RFC3339 CPT cutoff timestamp. When supplied, the
             response additionally reports remaining admission capacity for
             this path correlated against this cutoff, and a
-            `PathCapacityChanged` event is published (ADR-0018).
+            `PathCapacityChanged` event is published (ADR-0018). Must be
+            non-empty when present — `?cutoffAt=` (present but empty) is
+            a `400`, not "omitted".
           schema:
             type: string
             format: date-time
+            minLength: 1
           example: "2026-08-21T18:00:00Z"
       responses:
         "200":
@@ -680,10 +687,19 @@ components:
       required: true
       description: >
         The process path's identifier — a named station that owns a queue
-        (unit-in → unit-out), e.g. a pick zone or pack line.
+        (unit-in → unit-out), e.g. a pick zone or pack line. Must belong to
+        a process-path family declared in this deployment's process-path
+        catalogue (ADR-0012; today the fleet's sortable-fc topology
+        declares the pick/pack/rebin/slam families, each optionally
+        carrying a "-"-delimited station/zone suffix, e.g. pick-a or
+        pack-station-1). The write endpoints (receiveChargeForecast,
+        commitShiftPlan, enqueueWorkUnit) reject ids outside the declared
+        families with `400 unknown-path-id`; read endpoints surface a
+        missing pool/projection as `404` instead.
       schema:
         type: string
         minLength: 1
+        pattern: '^(pick|pack|rebin|slam)(-.*)?$'
       example: pick-a
     WorkUnitId:
       name: id
@@ -707,8 +723,12 @@ components:
   responses:
     BadRequest:
       description: >
-        Malformed request body (invalid JSON), a missing required field, or
-        an invalid field value (e.g. negative quantity, empty path id).
+        Malformed request body (invalid JSON), a missing required field
+        (silently-defaulted zero values are never accepted), an invalid
+        field value (e.g. negative quantity, empty path id), a `pathId`
+        outside the deployment's declared process-path families
+        (`unknown-path-id`), or a malformed query parameter (e.g. empty or
+        non-RFC3339 `cutoffAt`).
       content:
         application/problem+json:
           schema:
@@ -790,9 +810,11 @@ components:
           example: "2026-08-21T12:00:00Z"
         quantity:
           type: integer
-          format: int32
+          format: int64
           minimum: 0
-          description: Units due by this CPT.
+          description: >
+            Units due by this CPT. int64, not int32: the impl and its JSONB
+            store accept quantities across the full 64-bit range.
           example: 4200
       required: [cpt, quantity]
 
@@ -815,7 +837,7 @@ components:
           example: pick-a
         totalQuantity:
           type: integer
-          format: int32
+          format: int64
           description: Sum of all bucket quantities.
           example: 6000
         buckets:
@@ -860,19 +882,22 @@ components:
           example: 8
         fromLocationCode:
           type: string
+          nullable: true
           description: >
             Optional facility-layout LocationCode enriching the committed
             plan with a real travel-distance hint (ADR-0017). Must be set
             together with toLocationCode to attempt the lookup; either
-            omitted skips it entirely — this is a caller-opt-in
-            enrichment, not a required field.
+            omitted — or null, which is treated exactly like omitted —
+            skips it entirely. This is a caller-opt-in enrichment, not a
+            required field.
           example: WH1-STOR-AMB-A07-01-01-A
         toLocationCode:
           type: string
+          nullable: true
           description: >
             Optional facility-layout LocationCode enriching the committed
             plan with a real travel-distance hint (ADR-0017). See
-            fromLocationCode.
+            fromLocationCode; null is treated exactly like omitted.
           example: WH1-STOR-AMB-A09-03-01-A
       required: [plannedHeads, installedStations, rateUnitsPerHour, hours]
 
@@ -952,22 +977,25 @@ components:
           example: order-77213-line-1
         sku:
           type: string
+          nullable: true
           description: >-
             OPTIONAL inventory SKU this order line corresponds to, if known.
             When set, ReleaseNextWork's outbound WorkReleased event carries
             derived hazmat-capability/fragile hints looked up once from
             inventory-storage's product classification at release time (see
-            ADR-0009). Omit when the SKU is not known to the caller.
+            ADR-0009). Omit — or send null, which is treated exactly like
+            omitted — when the SKU is not known to the caller.
           example: sku-482910
         giftWrap:
           type: boolean
+          nullable: true
           description: >-
             OPTIONAL. Whether the requester asked the warehouse to produce a
             gift package for this work unit, stated at enqueue time. This is
             a caller-stated WorkReleased characteristic, not a product
             attribute — unlike `sku`, it is never looked up from another
-            service (see ADR-0010). Omit or false when gift wrap was not
-            requested.
+            service (see ADR-0010). Omit — or send null, which is treated
+            as not requested — when gift wrap was not asked for.
           example: true
       required: [workUnitId, cpt, reference]
 

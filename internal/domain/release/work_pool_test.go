@@ -261,3 +261,62 @@ func TestWorkPool_Complete_ThenReleaseIsRejectedAsAlreadyReleased(t *testing.T) 
 		t.Fatalf("got err %v, want %v", err, ErrAlreadyReleased)
 	}
 }
+
+// TestWorkPool_CompleteScansPastNonMatchingEntries proves Complete walks
+// the whole entry list: with several released entries queued, completing a
+// later unit must scan past the earlier ones (which stay untouched in
+// WIP) instead of acting on the first entry it sees or failing with
+// ErrUnknownEntry.
+func TestWorkPool_CompleteScansPastNonMatchingEntries(t *testing.T) {
+	pathId, _ := shared.NewPathId("pick-a")
+	pool := NewWorkPool(pathId, ReleaseFed, 10, 0)
+	cpt := shared.NewCPT(time.Now())
+
+	for _, id := range []string{"wu-1", "wu-2", "wu-3"} {
+		if err := pool.Enqueue(id, cpt); err != nil {
+			t.Fatalf("unexpected error enqueuing %s: %v", id, err)
+		}
+	}
+	for _, id := range []string{"wu-1", "wu-2", "wu-3"} {
+		if err := pool.Release(id); err != nil {
+			t.Fatalf("unexpected error releasing %s: %v", id, err)
+		}
+	}
+	if pool.WIP() != 3 {
+		t.Fatalf("got WIP %d, want 3 after three releases", pool.WIP())
+	}
+
+	// Completing the LAST entry exercises the scan past wu-1 and wu-2.
+	if err := pool.Complete("wu-3"); err != nil {
+		t.Fatalf("unexpected error completing wu-3: %v", err)
+	}
+	if pool.WIP() != 2 {
+		t.Fatalf("got WIP %d, want 2 after completing wu-3", pool.WIP())
+	}
+
+	// The entries scanned past keep their released (not completed) state:
+	// each still holds a WIP slot until individually completed.
+	entries := pool.Entries()
+	byId := make(map[string]PoolEntrySnapshot, len(entries))
+	for _, e := range entries {
+		byId[e.WorkUnitId] = e
+	}
+	for _, id := range []string{"wu-1", "wu-2"} {
+		if e := byId[id]; e.Completed {
+			t.Fatalf("%s was scanned past, must not be completed", id)
+		} else if !e.Released {
+			t.Fatalf("%s must still be released", id)
+		}
+	}
+	if e := byId["wu-3"]; !e.Completed {
+		t.Fatal("wu-3 must be completed")
+	}
+
+	// And the middle entry completes just as cleanly.
+	if err := pool.Complete("wu-2"); err != nil {
+		t.Fatalf("unexpected error completing wu-2: %v", err)
+	}
+	if pool.WIP() != 1 {
+		t.Fatalf("got WIP %d, want 1 after completing wu-2", pool.WIP())
+	}
+}

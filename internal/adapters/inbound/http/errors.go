@@ -50,6 +50,7 @@ func statusFor(err error) int {
 		errors.Is(err, charge.ErrUnknownCPT),
 		errors.Is(err, plan.ErrHeadsExceedStations),
 		errors.Is(err, plan.ErrNoPathPlans),
+		errors.Is(err, plan.ErrThroughputNotFinite),
 		errors.Is(err, workunit.ErrEmptyId),
 		errors.Is(err, workunit.ErrEmptyReference),
 		errors.Is(err, release.ErrUnknownEntry):
@@ -110,6 +111,8 @@ func problemFor(err error) (typeURI, title string) {
 		return problemBaseURI + "heads-exceed-installed-stations", "Planned heads exceed installed stations"
 	case errors.Is(err, plan.ErrNoPathPlans):
 		return problemBaseURI + "shift-plan-requires-path-plans", "Shift plan requires at least one path plan"
+	case errors.Is(err, plan.ErrThroughputNotFinite):
+		return problemBaseURI + "planned-throughput-not-finite", "Planned throughput is not finite"
 	case errors.Is(err, workunit.ErrEmptyId):
 		return problemBaseURI + "work-unit-id-required", "Work unit id is required"
 	case errors.Is(err, workunit.ErrEmptyReference):

@@ -67,16 +67,36 @@ type travelDistanceResponse struct {
 	Route     []travelNodeResponse `json:"route"`
 }
 
-// GetDistance calls facility-layout's GET /distance?from=&to= endpoint.
+// GetDistance calls fetch and normalizes ANY problem (transport error,
+// unexpected status) to the fail-open Known=false/nil contract this
+// port has always had (ADR-0017) — used by every caller that is not the
+// retrying BreakerClient (see breaker.go), so this type keeps behaving
+// exactly as before if a caller constructs it directly instead of
+// through NewBreakerClient.
+func (c *Client) GetDistance(ctx context.Context, from, to string) (traveldistanceview.TravelDistanceView, error) {
+	view, err := c.fetch(ctx, from, to)
+	if err != nil {
+		return traveldistanceview.TravelDistanceView{From: from, To: to, Known: false}, nil
+	}
+	return view, nil
+}
+
+// fetch calls facility-layout's GET /distance?from=&to= endpoint,
+// WITHOUT swallowing any error into the fail-open contract —
+// BreakerClient.retryingFetch (breaker.go) needs to tell "no distance
+// known for this pair" (404/422, a real answer) apart from "the request
+// itself failed" (a transport error, an unexpected status — a
+// candidate for retry), which GetDistance's own swallowed contract
+// cannot express.
 //
 //   - A 404 (unknown location) or 422 (locations in different zones, or
 //     any other case facility-layout refuses rather than guesses) are both
 //     treated as Known=false (fail-open / permissive): no distance is
-//     available for this pair, which never blocks committing a shift plan.
-//   - Any transport error or unexpected status returns an error, which the
-//     caller normalizes to the same permissive Known=false behaviour —
-//     mirrors productclassification.Client's GetClassification exactly.
-func (c *Client) GetDistance(ctx context.Context, from, to string) (traveldistanceview.TravelDistanceView, error) {
+//     available for this pair. This is a real answer, not a failure — it
+//     returns nil error same as a 200 does.
+//   - Any transport error or unexpected status returns a genuine,
+//     un-swallowed error.
+func (c *Client) fetch(ctx context.Context, from, to string) (traveldistanceview.TravelDistanceView, error) {
 	endpoint := fmt.Sprintf("%s/distance?from=%s&to=%s", c.baseURL, url.QueryEscape(from), url.QueryEscape(to))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

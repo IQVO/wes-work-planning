@@ -2,6 +2,7 @@ package shared
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -346,6 +347,13 @@ func TestStationCount(t *testing.T) {
 
 	t.Run("NewStationCount negative", func(t *testing.T) {
 		_, err := NewStationCount(-1)
+		if !errors.Is(err, ErrInvalidStationCount) {
+			t.Fatalf("got err %v, want %v", err, ErrInvalidStationCount)
+		}
+	})
+
+	t.Run("NewStationCount above int32 range", func(t *testing.T) {
+		_, err := NewStationCount(math.MaxInt32 + 1)
 		if !errors.Is(err, ErrInvalidStationCount) {
 			t.Fatalf("got err %v, want %v", err, ErrInvalidStationCount)
 		}

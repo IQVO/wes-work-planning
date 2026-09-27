@@ -31,6 +31,8 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/traveldistance"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
+	"github.com/claudioed/wes-work-planning/internal/bootretry"
+	"github.com/claudioed/wes-work-planning/internal/resilience"
 )
 
 // serviceName is this service's identity in OTel resource attributes and
@@ -53,6 +55,15 @@ func run() error {
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
 	eventPublisherKind := getenv("EVENT_PUBLISHER", "log")
+	// EVENT_ENVELOPE_MODE selects the integration-topic wire shape(s) the
+	// outbound Publisher's Encode produces (ADR-0021): "flat" (default,
+	// unset -- today's byte-identical envelope), "cloudevents" (the new
+	// CloudEvents 1.0 shape), or "dual" (both, two physical messages per
+	// event). Unset/unrecognized values fall back to "flat" -- zero
+	// behavior change unless this is explicitly set, mirroring this
+	// fleet's PRODUCT_CLASSIFICATION_MODE/PATH_CATALOGUE_SOURCE
+	// convention.
+	envelopeMode := outboundkafka.ParseEnvelopeMode(getenv("EVENT_ENVELOPE_MODE", "flat"))
 	otelServiceName := getenv("OTEL_SERVICE_NAME", serviceName)
 
 	// The process-path catalogue's SOURCE is selectable, defaulting to
@@ -80,9 +91,19 @@ func run() error {
 		if kafkaBrokers == "" {
 			return fmt.Errorf("PATH_CATALOGUE_SOURCE=kafka requires KAFKA_BROKERS to be set")
 		}
+		// Retried: this fleet's Istio native sidecars reset EVERY
+		// injected pod's first outbound TCP dial ~10s after the app
+		// starts, and NewConsumer's newTargetOffsets dials the broker
+		// directly before anything else runs. A single attempt turns
+		// that known, transient reset into CrashLoopBackOff exactly
+		// like the equivalent, unretried Postgres dial below did (see
+		// internal/bootretry's package doc comment).
 		var err error
-		kafkaCatalogue, err = kafkacatalog.NewConsumer(context.Background(), brokerList(kafkaBrokers), logger)
-		if err != nil {
+		if err = bootretry.Retry(context.Background(), logger, "connect to the process-path catalogue topic", func() error {
+			var dialErr error
+			kafkaCatalogue, dialErr = kafkacatalog.NewConsumer(context.Background(), brokerList(kafkaBrokers), logger)
+			return dialErr
+		}); err != nil {
 			return fmt.Errorf("failed to start the Kafka-sourced process-path catalogue: %w", err)
 		}
 		logger.Info("process-path catalogue source configured", "source", "kafka", "topic", kafkacatalog.Topic)
@@ -174,7 +195,17 @@ func run() error {
 		// `relation "charge_forecasts" does not exist`. Migrating before
 		// the pool is opened matches what fulfillment-execution's and
 		// workforce-management's OLTP binaries already do.
-		if err := postgres.Migrate(databaseURL, migrationsPath); err != nil {
+		// Retried, because in this fleet EVERY injected pod's first
+		// outbound TCP dial is reset ~10s after the app starts (Istio
+		// native sidecars; see internal/bootretry's package doc
+		// comment). A single attempt turns that known, transient
+		// condition into CrashLoopBackOff before this service ever
+		// gets far enough to serve its own health probe.
+		bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer bootCancel()
+		if err := bootretry.Retry(bootCtx, logger, "run migrations", func() error {
+			return postgres.Migrate(databaseURL, migrationsPath)
+		}); err != nil {
 			return err
 		}
 
@@ -183,6 +214,17 @@ func run() error {
 
 		pool, err := postgres.Connect(ctx, databaseURL)
 		if err != nil {
+			return err
+		}
+		// pgxpool.NewWithConfig does not itself dial or establish a
+		// connection, so without this retried Ping the first-dial
+		// reset would surface inside the first real request rather
+		// than at boot — turning a transient sidecar warm-up into an
+		// intermittent 500 instead of a bounded startup retry.
+		if err := bootretry.Retry(bootCtx, logger, "ping postgres", func() error {
+			return pool.Ping(bootCtx)
+		}); err != nil {
+			pool.Close()
 			return err
 		}
 		defer pool.Close()
@@ -200,8 +242,16 @@ func run() error {
 
 	var publisher ports.EventPublisher
 	var relay *postgres.OutboxRelay
-	classifications := buildClassificationLookup(getenv("PRODUCT_CLASSIFICATION_MODE", "permissive"), os.Getenv("INVENTORY_STORAGE_BASE_URL"), logger)
-	travelDistances := buildTravelDistanceLookup(getenv("TRAVEL_DISTANCE_MODE", "permissive"), os.Getenv("FACILITY_LAYOUT_BASE_URL"), logger)
+
+	// Circuit-breaker state gauge (ADR-0023) shared by both breaker
+	// clients below — a metrics-registration failure disables the
+	// GAUGE only (nil recorder is a documented no-op), never boot.
+	breakerMetrics, err := telemetry.NewCircuitBreakerMetrics()
+	if err != nil {
+		logger.Warn("circuit breaker metrics not registered; continuing without them", "error", err)
+	}
+	classifications := buildClassificationLookup(getenv("PRODUCT_CLASSIFICATION_MODE", "permissive"), os.Getenv("INVENTORY_STORAGE_BASE_URL"), breakerMetrics, logger)
+	travelDistances := buildTravelDistanceLookup(getenv("TRAVEL_DISTANCE_MODE", "permissive"), os.Getenv("FACILITY_LAYOUT_BASE_URL"), breakerMetrics, logger)
 	switch eventPublisherKind {
 	case "kafka":
 		if kafkaBrokers == "" {
@@ -213,8 +263,9 @@ func run() error {
 		// domain event onto the dedicated analytics topic
 		// (warehouse.wes.analytics) that feeds the "Release Throughput &
 		// Backlog Health" data product (ADR-0011).
-		integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID)
+		integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID, outboundkafka.WithEnvelopeMode(envelopeMode))
 		defer func() { _ = integrationPublisher.Close() }()
+		logger.Info("event envelope mode", "mode", string(envelopeMode))
 		analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID)
 		defer func() { _ = analyticsPublisher.Close() }()
 
@@ -257,6 +308,15 @@ func run() error {
 		LaborPlanView:           usecases.NewLaborPlanView(laborPlanViews),
 		InventoryView:           usecases.NewInventoryView(inventoryViews),
 		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(workUnits),
+		// IdempotencyPool wires RequireIdempotencyKey onto POST
+		// /paths/{pathId}/work-units (see idempotency.go's ADR). nil in
+		// the in-memory configuration (pgPool nil), matching every other
+		// optional Postgres-backed capability's convention here.
+		IdempotencyPool: pgPool,
+		// Readiness backs GET /readyz (ADR-0023 §graceful shutdown) --
+		// flipped to not-ready as the FIRST step of the shutdown
+		// sequence below, before anything else stops.
+		Readiness: &inboundhttp.Readiness{},
 	}
 
 	router := inboundhttp.NewRouter(handlers, otelServiceName, logger)
@@ -319,6 +379,12 @@ func run() error {
 		return err
 	case <-sigCh:
 		logger.Info("shutting down")
+		// Flip readiness to not-ready FIRST (ADR-0023 §graceful
+		// shutdown), before anything else stops, so a Kubernetes
+		// readinessProbe polling /readyz has a window to observe the
+		// flip and stop routing NEW traffic to this pod before the
+		// listener is closed below.
+		handlers.Readiness.SetNotReady()
 		cancelConsumer()
 		if consumer != nil {
 			_ = consumer.Close()
@@ -438,13 +504,16 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 // (http|permissive), defaulting to "permissive" so existing tests, CI and
 // deployments that do not set the env var are unaffected — mirroring
 // inventory-storage's own LOCATION_LOOKUP_MODE=http|permissive pattern (see
-// ADR-0009). "http" requires INVENTORY_STORAGE_BASE_URL.
-func buildClassificationLookup(mode, inventoryStorageBaseURL string, logger *slog.Logger) ports.ProductClassificationLookup {
+// ADR-0009). "http" requires INVENTORY_STORAGE_BASE_URL. In "http" mode the
+// client is wrapped with a per-dependency circuit breaker + jittered retry
+// (ADR-0023); recorder may be nil (breaker metrics unavailable), a
+// documented no-op.
+func buildClassificationLookup(mode, inventoryStorageBaseURL string, recorder resilience.StateRecorder, logger *slog.Logger) ports.ProductClassificationLookup {
 	if !strings.EqualFold(mode, "http") {
 		return productclassification.NewPermissiveLookup()
 	}
 	logger.Info("product classification lookup configured", "mode", "http", "inventory_storage_base_url", inventoryStorageBaseURL)
-	return productclassification.NewClient(inventoryStorageBaseURL, nil)
+	return productclassification.NewBreakerClient(productclassification.NewClient(inventoryStorageBaseURL, nil), recorder)
 }
 
 // buildTravelDistanceLookup selects the outbound ports.TravelDistanceLookup
@@ -452,11 +521,14 @@ func buildClassificationLookup(mode, inventoryStorageBaseURL string, logger *slo
 // "permissive" so existing tests, CI and deployments that do not set the
 // env var are unaffected — mirroring buildClassificationLookup's own
 // PRODUCT_CLASSIFICATION_MODE pattern exactly (see ADR-0017, Phase B3).
-// "http" requires FACILITY_LAYOUT_BASE_URL.
-func buildTravelDistanceLookup(mode, facilityLayoutBaseURL string, logger *slog.Logger) ports.TravelDistanceLookup {
+// "http" requires FACILITY_LAYOUT_BASE_URL. In "http" mode the client is
+// wrapped with a per-dependency circuit breaker + jittered retry
+// (ADR-0023); recorder may be nil (breaker metrics unavailable), a
+// documented no-op.
+func buildTravelDistanceLookup(mode, facilityLayoutBaseURL string, recorder resilience.StateRecorder, logger *slog.Logger) ports.TravelDistanceLookup {
 	if !strings.EqualFold(mode, "http") {
 		return traveldistance.NewPermissiveLookup()
 	}
 	logger.Info("travel distance lookup configured", "mode", "http", "facility_layout_base_url", facilityLayoutBaseURL)
-	return traveldistance.NewClient(facilityLayoutBaseURL, nil)
+	return traveldistance.NewBreakerClient(traveldistance.NewClient(facilityLayoutBaseURL, nil), recorder)
 }

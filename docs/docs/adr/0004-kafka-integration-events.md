@@ -159,3 +159,12 @@ Setting `KAFKA_BROKERS` starts the inbound consumer independently of
 - **Two documented envelopes.** Until the CloudEvents migration lands, the spec
   and the code disagree, and a reader must know which to trust. Documented in
   three places rather than left to be discovered.
+
+## Addendum (2026-09-26)
+
+The CloudEvents migration referenced above as a future intent now has a
+concrete plan: [ADR-0021](./0021-cloudevents-envelope-migration.md)
+(Proposed), a companion to fulfillment-execution's own envelope-migration
+ADR. It implements the CloudEvents envelope this ADR documented but never
+shipped, via a non-breaking dual-read/dual-write bake period. See ADR-0021
+for the schema, phase sequence, and rollback plan.

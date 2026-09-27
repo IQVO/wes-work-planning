@@ -1,6 +1,10 @@
 package plan
 
-import "github.com/claudioed/wes-work-planning/internal/domain/shared"
+import (
+	"math"
+
+	"github.com/claudioed/wes-work-planning/internal/domain/shared"
+)
 
 // PathPlan is the committed rate x heads x hours split for one process path.
 // Invariant: plannedHeads must not exceed installedStations.
@@ -32,6 +36,10 @@ func NewPathPlan(pathId shared.PathId, plannedHeads, installedStations shared.St
 	}
 	if hours <= 0 {
 		return PathPlan{}, shared.ErrInvalidHours
+	}
+	throughput := rate.UnitsPerHour() * float64(plannedHeads.Value()) * hours
+	if math.IsInf(throughput, 0) || math.IsNaN(throughput) {
+		return PathPlan{}, ErrThroughputNotFinite
 	}
 	return PathPlan{
 		pathId:            pathId,

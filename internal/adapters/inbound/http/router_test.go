@@ -14,8 +14,20 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 	"github.com/claudioed/wes-work-planning/internal/domain/laborview"
+	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 )
+
+// testCatalogue mirrors the fleet's sortable-fc process-path catalogue
+// (warehouse-infra's config/process-paths/sortable-fc.yaml — PICK/PACK/
+// REBIN/SLAM and their "-"-delimited families), so these handler tests
+// exercise the same boot-time validation cmd/wes wires in.
+var testCatalogue = pathcatalog.New([]pathcatalog.PathDefinition{
+	{Id: "PICK", MatchPrefix: "pick", RequiredCapabilities: []string{"pick"}},
+	{Id: "PACK", MatchPrefix: "pack", RequiredCapabilities: []string{"pack"}},
+	{Id: "REBIN", MatchPrefix: "rebin", RequiredCapabilities: []string{"rebin"}},
+	{Id: "SLAM", MatchPrefix: "slam", RequiredCapabilities: []string{"slam"}},
+})
 
 func newTestRouter() http.Handler {
 	return inboundhttp.NewRouter(newTestHandlers(), "wes-work-planning", nil)
@@ -42,6 +54,7 @@ func newTestHandlers() *inboundhttp.Handlers {
 		LaborPlanView:           usecases.NewLaborPlanView(laborPlanViews),
 		InventoryView:           usecases.NewInventoryView(inventoryViews),
 		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(workUnits),
+		Catalogue:               testCatalogue,
 	}
 
 	return h
@@ -118,6 +131,49 @@ func TestPostChargeForecast_InvalidQuantityReturns400(t *testing.T) {
 	}
 }
 
+func TestPostChargeForecast_UnknownProcessPathReturns400(t *testing.T) {
+	router := newTestRouter()
+	body := map[string]any{
+		"buckets": []map[string]any{
+			{"cpt": time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC), "quantity": 100},
+		},
+	}
+
+	rec := doJSON(t, router, http.MethodPost, "/paths/not-a-declared-path/charge", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	var problem struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("unmarshal problem+json body: %v", err)
+	}
+	if want := "https://errors.wes-work-planning.warehouse-systems.dev/unknown-path-id"; problem.Type != want {
+		t.Fatalf("got problem.type %q, want %q", problem.Type, want)
+	}
+}
+
+func TestPostChargeForecast_MissingRequiredBucketFieldReturns400(t *testing.T) {
+	router := newTestRouter()
+
+	for name, body := range map[string]map[string]any{
+		"missing cpt": {
+			"buckets": []map[string]any{{"quantity": 100}},
+		},
+		"missing quantity": {
+			"buckets": []map[string]any{{"cpt": time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/charge", body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("got status %d, want 400, body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestPostShiftPlan(t *testing.T) {
 	router := newTestRouter()
 	body := map[string]any{
@@ -148,6 +204,57 @@ func TestPostShiftPlan_HeadsExceedStationsReturns400(t *testing.T) {
 	rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/plan", body)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("got status %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostShiftPlan_MissingRequiredFieldReturns400(t *testing.T) {
+	router := newTestRouter()
+
+	for name, body := range map[string]map[string]any{
+		"missing plannedHeads": {
+			"installedStations": 5,
+			"rateUnitsPerHour":  50,
+			"hours":             8,
+		},
+		"missing installedStations": {
+			"plannedHeads":     3,
+			"rateUnitsPerHour": 50,
+			"hours":            8,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/plan", body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("got status %d, want 400, body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestPostShiftPlan_ThroughputOverflowReturns400(t *testing.T) {
+	router := newTestRouter()
+	// Each factor is positive and finite, but the product overflows
+	// float64 — the plan has no representable JSON response and must be
+	// rejected as a client error instead of producing an empty 201 body.
+	body := map[string]any{
+		"plannedHeads":      32,
+		"installedStations": 1800,
+		"rateUnitsPerHour":  5010217082820735.0,
+		"hours":             1.4080993563511214e+308,
+	}
+
+	rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/plan", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	var problem struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("unmarshal problem+json body: %v", err)
+	}
+	if want := "https://errors.wes-work-planning.warehouse-systems.dev/planned-throughput-not-finite"; problem.Type != want {
+		t.Fatalf("got problem.type %q, want %q", problem.Type, want)
 	}
 }
 
@@ -204,6 +311,19 @@ func TestPostWorkUnit_MalformedJSONReturns400(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostWorkUnit_MissingCPTReturns400(t *testing.T) {
+	router := newTestRouter()
+	body := map[string]any{
+		"workUnitId": "wu-1",
+		"reference":  "order-line-1",
+	}
+
+	rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", body)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("got status %d, want 400, body=%s", rec.Code, rec.Body.String())
 	}
@@ -411,6 +531,23 @@ func TestGetTelemetry_MalformedCutoffAtReturns400(t *testing.T) {
 	doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", enqueueBody)
 
 	rec := doJSON(t, router, http.MethodGet, "/paths/pick-a/telemetry?cutoffAt=not-a-date", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetTelemetry_EmptyCutoffAtReturns400(t *testing.T) {
+	router := newTestRouter()
+	enqueueBody := map[string]any{
+		"workUnitId": "wu-1",
+		"cpt":        time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC),
+		"reference":  "order-line-1",
+	}
+	doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", enqueueBody)
+
+	// `?cutoffAt=` (present but empty) is not "omitted": the parameter is
+	// documented as an RFC3339 date-time and an empty string is not one.
+	rec := doJSON(t, router, http.MethodGet, "/paths/pick-a/telemetry?cutoffAt=", nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("got status %d, want 400, body=%s", rec.Code, rec.Body.String())
 	}

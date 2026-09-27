@@ -37,6 +37,20 @@ func TestNewPathPlan(t *testing.T) {
 	}
 }
 
+func TestNewPathPlan_ThroughputOverflowRejected(t *testing.T) {
+	pathId, _ := shared.NewPathId("pick-a")
+	// Each factor is individually positive and finite, yet the product
+	// overflows float64 to +Inf — such a plan has no representable JSON
+	// response body and must be rejected at construction time.
+	rate, _ := shared.NewRate(5010217082820735.0)
+	heads, _ := shared.NewStationCount(32)
+	installed, _ := shared.NewStationCount(1800)
+
+	if _, err := NewPathPlan(pathId, heads, installed, rate, 1.4080993563511214e+308); !errors.Is(err, ErrThroughputNotFinite) {
+		t.Fatalf("got err %v, want ErrThroughputNotFinite", err)
+	}
+}
+
 func TestPathPlan_PlannedThroughput(t *testing.T) {
 	pathId, _ := shared.NewPathId("pick-a")
 	rate, _ := shared.NewRate(50)

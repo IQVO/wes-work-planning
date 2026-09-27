@@ -154,6 +154,60 @@ Jaeger and Grafana alongside HTTP.
    the naming conventions and mandatory annotations, and fails a PR that exceeds
    the tool-count budget without justification — the left-shift equivalent of
    `make check` for the MCP surface.
+4. **Eval gate (E1–E3):** the tool surface **MUST** pass the eval suites in
+   `internal/adapters/inbound/mcp/eval_*_test.go` and
+   `evalsuite_test.go`, all plain `go test`s inside the CI `test` job:
+   - **E1 — schema & metadata** (`eval_governance_test.go`): every
+     advertised tool's input schema resolves as a JSON Schema, accepts a
+     schema-shaped arguments object, and REJECTS wrong-typed values (it
+     constrains model input, not just decorates it); every parameter
+     carries a non-empty description; the advertised surface matches
+     `testdata/tool_registry.golden`; and this repo's tools are present,
+     correctly credited, and globally unique in
+     `testdata/fleet_tool_snapshot.golden` (the federated registry kept
+     identical across all fleet repos — a model host mounts several of
+     these servers together, so tool names MUST NOT collide). The one
+     conditional registration is pinned too:
+     `get_release_throughput_report` appears only when a reports client
+     is configured (ADR-0011), so the golden registry pins the
+     default-deps surface and a dedicated eval pins the conditionality.
+   - **E2 — wire conformance** (`eval_conformance_test.go`): over the real
+     Streamable HTTP handler — initialize handshake carries server info
+     and non-empty instructions; unknown tools, wrong-typed arguments,
+     unknown extra arguments, unknown resources and prompts are rejected;
+     the resource template and prompts are discoverable; a closed session
+     fails loudly.
+   - **E3 — behavioral evals** (`evalsuite_test.go` +
+     `testdata/features/mcp_tools.feature`): Gherkin scenarios driving
+     `tools/call` with model-realistic arguments (stray keys, wrong types,
+     unknown ids) against seeded state, pinning structured results and
+     side effects (domain events, state visible through other tools).
+
+### Pinned behavioral contracts the evals found
+
+- Typed tool schemas are **strict** (`additionalProperties: false`, the
+  SDK default): stray model-generated argument keys are rejected with a
+  validation error naming the key, not silently ignored.
+- Error shapes split at the tool boundary: argument-schema violations and
+  tool-handler errors surface as **tool-level error results**
+  (`IsError: true`), while calling a never-advertised tool (e.g. the
+  report tool on a deployment without the reports service) is a
+  **protocol-level JSON-RPC error**. Hosts must handle both.
+- Unknown-path reads (`get_backlog_telemetry`,
+  `get_rebalance_recommendation`) are clean tool errors (`not found`) —
+  unlike inventory-storage's `check_availability`, which answers zero for
+  an unknown SKU. A path with no provisioned pool has no projection to
+  report, so ambiguity is surfaced rather than masked as empty telemetry.
+- `get_backlog_telemetry` is annotated read-only, yet sampling a flow-fed
+  pool over its alarm threshold publishes `BacklogThresholdBreached`, and
+  `get_rebalance_recommendation` publishes `PathThrottled` /
+  `LaborReassignmentFlagged` alongside its recommendation — the same event
+  side effects the HTTP telemetry/rebalance endpoints have (the use cases
+  are reused unchanged). Pinned so the read-only annotation is read as
+  "no state mutation", not "no events".
+- `release_next_work` is bounded by the pool's enforced WIP invariant: at
+  the limit the release is rejected (`WIP limit reached`) rather than
+  queued — a mistaken model call cannot flood a release-fed path.
 
 ## 11. Changing this charter
 

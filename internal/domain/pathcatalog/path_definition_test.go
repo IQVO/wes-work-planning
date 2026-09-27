@@ -118,3 +118,53 @@ func TestCatalogue_Lookup_TiedPrefixLength_FirstDeclaredWins(t *testing.T) {
 		t.Fatalf("expected the first-declared definition to win a length tie, got %q", def.Id)
 	}
 }
+
+// TestCatalogue_Lookup_SkipsEmptyMatchPrefix proves an undeclared
+// (empty-string) MatchPrefix can never match — not even the empty id —
+// and never shadows or outranks a real declaration: Lookup treats it as
+// absent rather than as a zero-length prefix that matches everything.
+func TestCatalogue_Lookup_SkipsEmptyMatchPrefix(t *testing.T) {
+	cases := []struct {
+		name    string
+		defs    []pathcatalog.PathDefinition
+		lookup  string
+		wantId  string
+		wantErr error
+	}{
+		{
+			name: "empty prefix does not shadow or outrank a real declaration",
+			defs: []pathcatalog.PathDefinition{
+				{Id: "UNDECLARED", MatchPrefix: "", RequiredCapabilities: []string{"pick"}},
+				{Id: "PICK", MatchPrefix: "pick", RequiredCapabilities: []string{"pick"}},
+			},
+			lookup: "pick",
+			wantId: "PICK",
+		},
+		{
+			name: "empty prefix does not match the empty id",
+			defs: []pathcatalog.PathDefinition{
+				{Id: "UNDECLARED", MatchPrefix: "", RequiredCapabilities: []string{"pick"}},
+			},
+			lookup:  "",
+			wantErr: pathcatalog.ErrUnknownPath,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cat := pathcatalog.New(tc.defs)
+			def, err := cat.Lookup(tc.lookup)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("want %v, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if def.Id != tc.wantId {
+				t.Fatalf("got id %q, want %q", def.Id, tc.wantId)
+			}
+		})
+	}
+}

@@ -16,9 +16,13 @@ type problemDetails struct {
 	Instance string `json:"instance,omitempty"`
 }
 
+// cptBucketDTO uses pointers for its required fields so a bucket that
+// omits cpt or quantity is distinguishable from one carrying their zero
+// values — a missing required field is a 400, never a silently coerced
+// zero CPT / zero quantity (mirrors inventory-storage's cycle-count fix).
 type cptBucketDTO struct {
-	CPT      time.Time `json:"cpt"`
-	Quantity int       `json:"quantity"`
+	CPT      *time.Time `json:"cpt"`
+	Quantity *int       `json:"quantity"`
 }
 
 type receiveChargeForecastRequestDTO struct {
@@ -32,9 +36,14 @@ type chargeForecastResponseDTO struct {
 	ReceivedAt    time.Time      `json:"receivedAt"`
 }
 
+// commitShiftPlanRequestDTO uses pointers for plannedHeads and
+// installedStations so an omitted field is distinguishable from an
+// explicit 0 — both are required, and a missing one is a 400 rather than
+// a silently coerced zero count (rateUnitsPerHour and hours need no
+// pointer: their zero values already fail domain validation with 400).
 type commitShiftPlanRequestDTO struct {
-	PlannedHeads      int     `json:"plannedHeads"`
-	InstalledStations int     `json:"installedStations"`
+	PlannedHeads      *int    `json:"plannedHeads"`
+	InstalledStations *int    `json:"installedStations"`
 	RateUnitsPerHour  float64 `json:"rateUnitsPerHour"`
 	Hours             float64 `json:"hours"`
 	// FromLocationCode/ToLocationCode are optional facility-layout
@@ -62,10 +71,14 @@ type shiftPlanResponseDTO struct {
 	TravelDistanceEstimated *bool    `json:"travelDistanceEstimated,omitempty"`
 }
 
+// enqueueWorkUnitRequestDTO carries cpt as a pointer so an omitted CPT —
+// a required field — is a 400, never a silently coerced zero-value
+// timestamp. workUnitId/reference already 400 on empty via domain
+// validation; sku and giftWrap are genuinely optional.
 type enqueueWorkUnitRequestDTO struct {
-	WorkUnitId string    `json:"workUnitId"`
-	CPT        time.Time `json:"cpt"`
-	Reference  string    `json:"reference"`
+	WorkUnitId string     `json:"workUnitId"`
+	CPT        *time.Time `json:"cpt"`
+	Reference  string     `json:"reference"`
 	// SKU is optional: the inventory SKU this order line corresponds to,
 	// if known. Threaded through so the released WorkReleased integration
 	// event can carry derived hazmat/fragile hints (see ADR-0009). Absent

@@ -135,6 +135,13 @@ pathCatalogue:
   # When set, content above is ignored and no ConfigMap is created here.
   existingConfigMap: ""
 
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 2
+  failureThreshold: 30
+
 livenessProbe:
   httpGet:
     path: /healthz
@@ -144,10 +151,24 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /healthz
+    # /readyz (ADR-0023 §graceful shutdown), NOT /healthz: readiness
+    # must flip to not-ready during a graceful SIGTERM drain (see
+    # cmd/wes/main.go's shutdown sequence) so this pod stops receiving
+    # NEW traffic while it finishes in-flight requests -- /healthz
+    # stays a pure liveness signal ("is the process alive") and is
+    # deliberately never flipped by shutdown, or Kubernetes would kill
+    # the pod mid-drain instead of letting it finish.
+    path: /readyz
     port: http
   initialDelaySeconds: 3
   periodSeconds: 5
+
+# Bounds how long Kubernetes waits after SIGTERM before SIGKILLing this
+# pod (ADR-0023): the HTTP Shutdown budget (5s, cmd/wes/main.go) plus
+# the Kafka consumer/outbox-relay stop budget (5s, same file) plus
+# margin for the readinessProbe's periodSeconds=5 to have observed the
+# not-ready flip before traffic fully stops arriving.
+terminationGracePeriodSeconds: 30
 
 nodeSelector: {}
 tolerations: []

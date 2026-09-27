@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
@@ -44,7 +45,10 @@ type inventoryEventData struct {
 	DemandRef string `json:"demand_ref"`
 }
 
-// taskCompletedData is fulfillment-execution's TaskCompleted payload.
+// taskCompletedData is fulfillment-execution's TaskCompleted payload. The
+// shape is unchanged by ADR-0021's envelope migration: whether the message
+// arrives in the legacy flat envelope or the CloudEvents 1.0 envelope, this
+// struct decodes the identical `data` object either way.
 type taskCompletedData struct {
 	TaskId     string `json:"task_id"`
 	StationId  string `json:"station_id"`
@@ -67,6 +71,81 @@ type orderLineData struct {
 	SKU      string `json:"sku"`
 	PathId   string `json:"path_id"`
 	GiftWrap bool   `json:"gift_wrap"`
+}
+
+// cloudEventProbe is a minimal decode target used only to detect whether a
+// raw warehouse.fulfillment.events message is CloudEvents 1.0-shaped
+// (specversion present) or the legacy flat envelope shape (specversion
+// absent). See ADR-0021 Phase 2, Design decision #3: specversion is the
+// sole dual-read discriminator and never appears on a flat message.
+type cloudEventProbe struct {
+	SpecVersion string `json:"specversion"`
+}
+
+// cloudEventEnvelope is the CloudEvents 1.0 structured envelope shape
+// documented in fulfillment-execution's apis/asyncapi.yaml (ADR-0021 and
+// its fulfillment-execution companion ADR-0027). Only the fields needed to
+// normalize back to the legacy envelope.Envelope shape are decoded here.
+type cloudEventEnvelope struct {
+	SpecVersion     string          `json:"specversion"`
+	Id              string          `json:"id"`
+	Type            string          `json:"type"`
+	Source          string          `json:"source"`
+	Subject         string          `json:"subject"`
+	Time            time.Time       `json:"time"`
+	DataContentType string          `json:"datacontenttype"`
+	Data            json.RawMessage `json:"data"`
+}
+
+// fulfillmentCloudEventTypePrefix is the reverse-DNS prefix
+// fulfillment-execution's TaskCompleted `type` string carries on the wire
+// (fulfillment-execution's apis/asyncapi.yaml,
+// components.messages.TaskCompleted.examples), stripped back to the bare
+// "TaskCompleted" name envelope.EventTypeTaskCompleted and
+// handleFulfillmentEvent's switch already key on.
+const fulfillmentCloudEventTypePrefix = "com.warehouse.wes.fulfillment-execution.task."
+
+// decodeFulfillmentEnvelope dual-reads one warehouse.fulfillment.events
+// message in either the legacy flat envelope shape or the CloudEvents 1.0
+// structured envelope shape (ADR-0021 Phase 2, Task 2c), normalizing either
+// one to the identical envelope.Envelope representation
+// handleFulfillmentEvent already consumes unchanged — the `data` payload
+// itself is byte-identical either way, so no business logic is duplicated
+// across the two decode paths. A specversion that is present but not
+// exactly "1.0" is treated as malformed/unrecognized and returns an error,
+// which handleFulfillmentMessage handles the same way handleMessage already
+// handles any other unparseable message: log and commit, no redelivery
+// loop.
+func decodeFulfillmentEnvelope(raw []byte) (envelope.Envelope, error) {
+	var probe cloudEventProbe
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return envelope.Envelope{}, err
+	}
+
+	if probe.SpecVersion == "" {
+		var env envelope.Envelope
+		if err := json.Unmarshal(raw, &env); err != nil {
+			return envelope.Envelope{}, err
+		}
+		return env, nil
+	}
+
+	if probe.SpecVersion != "1.0" {
+		return envelope.Envelope{}, fmt.Errorf("unsupported CloudEvents specversion %q", probe.SpecVersion)
+	}
+
+	var ce cloudEventEnvelope
+	if err := json.Unmarshal(raw, &ce); err != nil {
+		return envelope.Envelope{}, err
+	}
+
+	return envelope.Envelope{
+		EventId:    ce.Id,
+		EventType:  strings.TrimPrefix(ce.Type, fulfillmentCloudEventTypePrefix),
+		OccurredAt: ce.Time,
+		Source:     ce.Source,
+		Data:       ce.Data,
+	}, nil
 }
 
 // Consumer consumes warehouse.workforce.events, warehouse.inventory.events,
@@ -93,6 +172,20 @@ type Consumer struct {
 }
 
 func NewConsumer(brokers []string, groupID string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, recordCompletion *usecases.RecordCompletion, enqueueWorkUnit *usecases.EnqueueWorkUnit, processed ports.ProcessedEventRepo, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
+	return newConsumer(brokers, groupID, envelope.TopicFulfillmentEvents, observeLabor, observeInventory, recordCompletion, enqueueWorkUnit, processed, catalogue, logger)
+}
+
+// NewConsumerForFulfillmentTopic is NewConsumer with the
+// warehouse.fulfillment.events topic overridden — needed so an integration
+// test can point the real dual-read replay/idempotency logic at a
+// throwaway, uniquely-named topic instead of the pinned production
+// constant, mirroring this fleet's standing testcontainers pattern (see
+// inventory-storage's facilitycache consumer).
+func NewConsumerForFulfillmentTopic(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, recordCompletion *usecases.RecordCompletion, enqueueWorkUnit *usecases.EnqueueWorkUnit, processed ports.ProcessedEventRepo, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
+	return newConsumer(brokers, groupID, fulfillmentTopic, observeLabor, observeInventory, recordCompletion, enqueueWorkUnit, processed, catalogue, logger)
+}
+
+func newConsumer(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, recordCompletion *usecases.RecordCompletion, enqueueWorkUnit *usecases.EnqueueWorkUnit, processed ports.ProcessedEventRepo, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
 	return &Consumer{
 		workforceReader: kafkago.NewReader(kafkago.ReaderConfig{
 			Brokers: brokers,
@@ -107,7 +200,7 @@ func NewConsumer(brokers []string, groupID string, observeLabor *usecases.Observ
 		fulfillmentReader: kafkago.NewReader(kafkago.ReaderConfig{
 			Brokers: brokers,
 			GroupID: groupID,
-			Topic:   envelope.TopicFulfillmentEvents,
+			Topic:   fulfillmentTopic,
 		}),
 		orderManagementReader: kafkago.NewReader(kafkago.ReaderConfig{
 			Brokers: brokers,
@@ -137,7 +230,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	errCh := make(chan error, 4)
 	go func() { errCh <- c.consumeLoop(ctx, c.workforceReader, c.handleWorkforceEvent) }()
 	go func() { errCh <- c.consumeLoop(ctx, c.inventoryReader, c.handleInventoryEvent) }()
-	go func() { errCh <- c.consumeLoop(ctx, c.fulfillmentReader, c.handleFulfillmentEvent) }()
+	go func() { errCh <- c.consumeFulfillmentLoop(ctx, c.fulfillmentReader, c.handleFulfillmentEvent) }()
 	go func() { errCh <- c.consumeLoop(ctx, c.orderManagementReader, c.handleOrderManagementEvent) }()
 
 	for i := 0; i < 4; i++ {
@@ -162,6 +255,72 @@ func (c *Consumer) consumeLoop(ctx context.Context, reader *kafkago.Reader, hand
 			return err
 		}
 	}
+}
+
+// consumeFulfillmentLoop is consumeLoop's counterpart for the
+// warehouse.fulfillment.events topic: it dual-reads either the legacy flat
+// envelope or the CloudEvents 1.0 envelope (ADR-0021 Phase 2, Task 2c) via
+// decodeFulfillmentEnvelope before handing off to the identical envelope-
+// shaped handling logic every other topic's consumeLoop already uses.
+func (c *Consumer) consumeFulfillmentLoop(ctx context.Context, reader *kafkago.Reader, handle func(context.Context, envelope.Envelope) error) error {
+	for {
+		msg, err := reader.FetchMessage(ctx)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		}
+
+		if err := c.handleFulfillmentMessage(ctx, reader, msg, handle); err != nil {
+			return err
+		}
+	}
+}
+
+// handleFulfillmentMessage mirrors handleMessage exactly, except the raw
+// message is decoded via decodeFulfillmentEnvelope (dual-read: legacy flat
+// envelope or CloudEvents 1.0) rather than a single json.Unmarshal into
+// envelope.Envelope. An unparseable message, or one whose specversion is
+// present but not "1.0", is logged and committed rather than redelivered
+// forever — the same fail-soft posture handleMessage already applies to any
+// other malformed message on any other topic.
+func (c *Consumer) handleFulfillmentMessage(ctx context.Context, reader *kafkago.Reader, msg kafkago.Message, handle func(context.Context, envelope.Envelope) error) error {
+	topic := reader.Config().Topic
+
+	msgCtx, span := otelkafka.StartConsumeSpan(otelkafka.Extract(ctx, &msg), topic,
+		semconv.MessagingKafkaOffset(int(msg.Offset)),
+		semconv.MessagingDestinationPartitionID(strconv.Itoa(msg.Partition)),
+	)
+	defer span.End()
+
+	env, err := decodeFulfillmentEnvelope(msg.Value)
+	if err != nil {
+		recordSpanError(span, err)
+		c.log(msgCtx, "skipping unparseable kafka message", "topic", topic, "error", err)
+		_ = reader.CommitMessages(ctx, msg)
+		return nil
+	}
+
+	span.SetAttributes(
+		attribute.String("messaging.message.event_id", env.EventId),
+		attribute.String("messaging.message.event_type", env.EventType),
+		attribute.String("messaging.message.source", env.Source),
+	)
+
+	if err := handle(msgCtx, env); err != nil {
+		recordSpanError(span, err)
+		c.log(msgCtx, "skipping kafka event",
+			"topic", topic, "event_id", env.EventId, "event_type", env.EventType, "error", err)
+		_ = reader.CommitMessages(ctx, msg)
+		return nil
+	}
+
+	if err := reader.CommitMessages(ctx, msg); err != nil {
+		recordSpanError(span, err)
+		return err
+	}
+	return nil
 }
 
 // handleMessage processes one fetched message inside a

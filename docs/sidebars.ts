@@ -106,6 +106,7 @@ const sidebars: SidebarsConfig = {
         'adr/0020-flowfed-path-observed-throughput-signal',
         'adr/0021-cloudevents-envelope-migration',
         'adr/0022-idempotency-key-middleware',
+        'adr/0024-kafka-hash-balancer-partition-affinity',
       ],
     },
   ],

@@ -57,6 +57,7 @@ no scheduler).
 | [0020](./0020-flowfed-path-observed-throughput-signal.md) | FlowFed paths stay `Known=false` permanently; an observed-throughput signal is proposed alongside, not instead | Accepted |
 | [0021](./0021-cloudevents-envelope-migration.md) | Migrate `warehouse.work-planning.events` to a CloudEvents 1.0 structured envelope via a dual-read/dual-write bake period; companion to fulfillment-execution's own envelope-migration ADR | Accepted |
 | [0022](./0022-idempotency-key-middleware.md) | Transactional Idempotency-Key middleware for `POST /paths/{pathId}/work-units`, ported from order-management's reference implementation | Accepted |
+| [0024](./0024-kafka-hash-balancer-partition-affinity.md) | Switch every outbound Kafka writer's `Balancer` from `LeastBytes` to `Hash`, so the existing per-aggregate `Message.Key` actually drives partition placement | Accepted |
 
 ## The template
 

@@ -106,11 +106,21 @@ func WithEnvelopeMode(mode EnvelopeMode) PublisherOption {
 // productclassification.PermissiveLookup — those two optional fields are
 // simply omitted/false, so every existing caller of NewPublisher keeps
 // compiling and behaving unchanged.
+//
+// Balancer is kafkago.Hash (FNV-1a over Message.Key), not LeastBytes:
+// kafka-go's Writer does not automatically route by key just because a
+// Message carries one — LeastBytes balances purely by cumulative byte
+// volume and ignores Message.Key entirely for partition placement. Hash
+// is the balancer that actually gives "same Key always maps to the same
+// partition", which every message this adapter builds relies on for
+// per-aggregate ordering (see encodeFlat/encodeCloudEvent, which key
+// every message by the event id) now that warehouse-infra PR #42 scaled
+// this topic from 1 to 8 partitions.
 func NewPublisher(brokers []string, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, newID IDGenerator, opts ...PublisherOption) *Publisher {
 	return NewPublisherWithWriter(&kafkago.Writer{
 		Addr:                   kafkago.TCP(brokers...),
 		Topic:                  envelope.TopicWorkPlanningEvents,
-		Balancer:               &kafkago.LeastBytes{},
+		Balancer:               &kafkago.Hash{},
 		AllowAutoTopicCreation: true,
 	}, workUnits, classifications, newID, opts...)
 }

@@ -107,6 +107,7 @@ const sidebars: SidebarsConfig = {
         'adr/0021-cloudevents-envelope-migration',
         'adr/0022-idempotency-key-middleware',
         'adr/0024-kafka-hash-balancer-partition-affinity',
+        'adr/0025-horizontal-autoscaling-and-pgxpool-tuning',
       ],
     },
   ],

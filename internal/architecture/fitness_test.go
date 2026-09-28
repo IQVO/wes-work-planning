@@ -220,6 +220,90 @@ func TestKafkaConsumerGroupNeverHardcodedInline(t *testing.T) {
 	}
 }
 
+// touchesKafka reports whether the test source actually talks to a Kafka
+// broker: this repo's kafka-go import is conventionally aliased `kafkago`
+// (never the default `kafka` package name), so "touches Kafka" is detected
+// via that alias's real I/O constructors (Writer{}, NewReader, DialContext,
+// TopicConfig{}) rather than a bare "segmentio/kafka-go" import-path match.
+// KAFKA_BROKERS gating counts too — that is exactly the banned shape.
+//
+// That distinction matters here: internal/adapters/outbound/postgres's
+// outbox tests (e.g. outbox_integration_test.go) import kafka-go only for
+// the kafkago.Message type on a noopWriter stub that satisfies the
+// production Writer interface — they never dial a broker, and are
+// Postgres-only tests that correctly have no testcontainers-kafka import.
+// A plain import-path check would false-positive on that file; requiring
+// evidence of real reader/writer/connection construction does not.
+func touchesKafka(content string) bool {
+	return strings.Contains(content, "kafkago.Writer{") ||
+		strings.Contains(content, "kafkago.Reader{") ||
+		strings.Contains(content, "kafkago.NewReader(") ||
+		strings.Contains(content, "kafkago.DialContext(") ||
+		strings.Contains(content, "kafkago.TopicConfig{") ||
+		strings.Contains(content, "KAFKA_BROKERS")
+}
+
+// scanBannedKafkaShapes reports whether the file's non-comment source
+// gates on os.Getenv("KAFKA_BROKERS") or hardcodes localhost:9092.
+// Scanned line-by-line so a comment that merely MENTIONS the banned
+// shapes (e.g. explaining that a real broker via testcontainers is
+// used specifically so the test needs no KAFKA_BROKERS/localhost:9092)
+// doesn't false-positive the same way a commented-out `t.Skip` line
+// shouldn't either.
+func scanBannedKafkaShapes(t *testing.T, path string) (hasSkipGate, hasHardcodedBroker bool) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if strings.Contains(line, `os.Getenv("KAFKA_BROKERS")`) {
+			hasSkipGate = true
+		}
+		if strings.Contains(line, "localhost:9092") {
+			hasHardcodedBroker = true
+		}
+	}
+	f.Close()
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan %s: %v", path, err)
+	}
+	return hasSkipGate, hasHardcodedBroker
+}
+
+// checkKafkaIntegrationTest asserts one _integration_test.go file's
+// Kafka-related obligations when it actually talks to a broker.
+func checkKafkaIntegrationTest(t *testing.T, path string) {
+	t.Helper()
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	content := string(src)
+
+	if !touchesKafka(content) {
+		return
+	}
+
+	hasSkipGate, hasHardcodedBroker := scanBannedKafkaShapes(t, path)
+
+	if hasSkipGate {
+		t.Errorf("%s: gates on os.Getenv(\"KAFKA_BROKERS\") — this fleet's CI integration job provisions Postgres only, so a skip-gated Kafka test silently skips in CI and proves nothing there; start a real broker via testcontainers-go/modules/kafka instead", path)
+	}
+	if hasHardcodedBroker {
+		t.Errorf("%s: hardcodes localhost:9092 — a fresh CI runner has no broker at that address; start one via testcontainers-go/modules/kafka instead", path)
+	}
+	if !strings.Contains(content, "testcontainers-go/modules/kafka") {
+		t.Errorf("%s: touches Kafka but does not import github.com/testcontainers/testcontainers-go/modules/kafka — Kafka-touching integration tests in this fleet must start their own broker via testcontainers, never assume/skip on an external one", path)
+	}
+}
+
 // TestKafkaIntegrationTestsUseTestcontainers encodes the fleet-wide rule
 // (corrected 2026-09-06): a Kafka-touching `-tags=integration` test MUST
 // start its own broker via testcontainers-go/modules/kafka, never gate on
@@ -230,78 +314,11 @@ func TestKafkaConsumerGroupNeverHardcodedInline(t *testing.T) {
 // Kafka assertions on a runner. Scans every _integration_test.go file that
 // actually talks to a Kafka broker and requires it to also import
 // testcontainers-go/modules/kafka.
-//
-// This repo's kafka-go import is conventionally aliased `kafkago` (never
-// the default `kafka` package name), so "touches Kafka" is detected via
-// that alias's real I/O constructors (Writer{}, NewReader, DialContext,
-// TopicConfig{}) rather than a bare "segmentio/kafka-go" import-path match.
-// That distinction matters here: internal/adapters/outbound/postgres's
-// outbox tests (e.g. outbox_integration_test.go) import kafka-go only for
-// the kafkago.Message type on a noopWriter stub that satisfies the
-// production Writer interface — they never dial a broker, and are
-// Postgres-only tests that correctly have no testcontainers-kafka import.
-// A plain import-path check would false-positive on that file; requiring
-// evidence of real reader/writer/connection construction does not.
 func TestKafkaIntegrationTestsUseTestcontainers(t *testing.T) {
 	for _, path := range goFilesUnder(t, "..", true) {
 		if !strings.HasSuffix(path, "_integration_test.go") {
 			continue
 		}
-
-		src, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		content := string(src)
-
-		touchesKafka := strings.Contains(content, "kafkago.Writer{") ||
-			strings.Contains(content, "kafkago.Reader{") ||
-			strings.Contains(content, "kafkago.NewReader(") ||
-			strings.Contains(content, "kafkago.DialContext(") ||
-			strings.Contains(content, "kafkago.TopicConfig{") ||
-			strings.Contains(content, "KAFKA_BROKERS")
-		if !touchesKafka {
-			continue
-		}
-
-		// Scan line-by-line so a comment that merely MENTIONS the banned
-		// shapes (e.g. explaining that a real broker via testcontainers is
-		// used specifically so the test needs no KAFKA_BROKERS/localhost:9092)
-		// doesn't false-positive the same way a commented-out `t.Skip` line
-		// shouldn't either.
-		hasSkipGate := false
-		hasHardcodedBroker := false
-		f, err := os.Open(path)
-		if err != nil {
-			t.Fatalf("open %s: %v", path, err)
-		}
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			line := scanner.Text()
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "//") {
-				continue
-			}
-			if strings.Contains(line, `os.Getenv("KAFKA_BROKERS")`) {
-				hasSkipGate = true
-			}
-			if strings.Contains(line, "localhost:9092") {
-				hasHardcodedBroker = true
-			}
-		}
-		f.Close()
-		if err := scanner.Err(); err != nil {
-			t.Fatalf("scan %s: %v", path, err)
-		}
-
-		if hasSkipGate {
-			t.Errorf("%s: gates on os.Getenv(\"KAFKA_BROKERS\") — this fleet's CI integration job provisions Postgres only, so a skip-gated Kafka test silently skips in CI and proves nothing there; start a real broker via testcontainers-go/modules/kafka instead", path)
-		}
-		if hasHardcodedBroker {
-			t.Errorf("%s: hardcodes localhost:9092 — a fresh CI runner has no broker at that address; start one via testcontainers-go/modules/kafka instead", path)
-		}
-		if !strings.Contains(content, "testcontainers-go/modules/kafka") {
-			t.Errorf("%s: touches Kafka but does not import github.com/testcontainers/testcontainers-go/modules/kafka — Kafka-touching integration tests in this fleet must start their own broker via testcontainers, never assume/skip on an external one", path)
-		}
+		checkKafkaIntegrationTest(t, path)
 	}
 }

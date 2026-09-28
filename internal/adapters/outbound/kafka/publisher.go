@@ -374,75 +374,102 @@ func eventTypes(events []shared.DomainEvent) []string {
 	return out
 }
 
-// dataFor builds the event-type-specific "data" payload. Only WorkReleased
-// has a documented downstream schema; other event types get a best-effort
-// payload of their own fields.
+// dataFor builds the event-type-specific "data" payload by dispatching to
+// the per-event-type payload builder. Only WorkReleased has a documented
+// downstream schema; other event types get a best-effort payload of their
+// own fields.
 func (p *Publisher) dataFor(ctx context.Context, e shared.DomainEvent) (json.RawMessage, error) {
 	switch ev := e.(type) {
 	case shared.WorkReleased:
-		cpt, ref, sku, giftWrap := "", "", "", false
-		if unit, err := p.workUnits.FindById(ctx, ev.WorkUnitId); err == nil {
-			cpt = unit.CPT().Time().Format(time.RFC3339)
-			ref = unit.Reference()
-			sku = unit.SKU()
-			giftWrap = unit.GiftWrap()
-		}
-
-		requiredCapabilities, fragile := p.classificationHints(ctx, sku)
-
-		data := map[string]any{
-			"path_id":      ev.PathId.String(),
-			"work_unit_id": ev.WorkUnitId,
-			"cpt":          cpt,
-			"ref":          ref,
-		}
-		// Strictly additive and backward compatible: only set these two
-		// optional fields when there is something to say. An unclassified
-		// SKU or an unavailable lookup omits them entirely rather than
-		// publishing an empty array / explicit false, so a consumer that
-		// already treats "absent" as "no hint" (fulfillment-execution's
-		// documented default) sees no difference from before this feature
-		// existed.
-		if len(requiredCapabilities) > 0 {
-			data["required_capabilities"] = requiredCapabilities
-		}
-		if fragile {
-			data["fragile"] = fragile
-		}
-		// gift_wrap is a caller-stated WorkReleased characteristic, not a
-		// classification hint — read straight off the WorkUnit (like
-		// cpt/ref), never derived from classificationHints (see ADR-0010).
-		// Same omit-when-false discipline as fragile.
-		if giftWrap {
-			data["gift_wrap"] = giftWrap
-		}
-		return json.Marshal(data)
+		return p.workReleasedData(ctx, ev)
 	case shared.ChargeForecastReceived:
-		return json.Marshal(map[string]any{"path_id": ev.PathId.String()})
+		return pathOnlyData(ev.PathId)
 	case shared.ShiftPlanCommitted:
-		return json.Marshal(map[string]any{"path_id": ev.PathId.String()})
+		return pathOnlyData(ev.PathId)
 	case shared.WorkUnitCreated:
-		return json.Marshal(map[string]any{"path_id": ev.PathId.String(), "work_unit_id": ev.WorkUnitId})
+		return workUnitData(ev.WorkUnitId, ev.PathId)
 	case shared.BacklogThresholdBreached:
-		return json.Marshal(map[string]any{"path_id": ev.PathId.String()})
+		return pathOnlyData(ev.PathId)
 	case shared.RateDeviationDetected:
-		return json.Marshal(map[string]any{"path_id": ev.PathId.String()})
+		return pathOnlyData(ev.PathId)
 	case shared.PathThrottled:
-		return json.Marshal(map[string]any{"path_id": ev.PathId.String()})
+		return pathOnlyData(ev.PathId)
 	case shared.LaborReassignmentFlagged:
-		return json.Marshal(map[string]any{"path_id": ev.PathId.String()})
+		return pathOnlyData(ev.PathId)
 	case shared.WorkUnitCompleted:
-		return json.Marshal(map[string]any{"path_id": ev.PathId.String(), "work_unit_id": ev.WorkUnitId})
+		return workUnitData(ev.WorkUnitId, ev.PathId)
 	case shared.PathCapacityChanged:
-		return json.Marshal(map[string]any{
-			"path_id":         ev.PathId.String(),
-			"cutoff_at":       ev.CutoffAt.Format(time.RFC3339),
-			"remaining_units": ev.RemainingUnits,
-			"known":           ev.Known,
-		})
+		return pathCapacityChangedData(ev)
 	default:
 		return json.Marshal(map[string]any{})
 	}
+}
+
+// workReleasedData builds the WorkReleased payload: the path/work-unit
+// identity plus the CPT, reference and gift-wrap characteristics READ off
+// the WorkUnit repo at encode time, and the strictly-additive
+// classification hints (ADR-0009/0010).
+func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased) (json.RawMessage, error) {
+	cpt, ref, sku, giftWrap := "", "", "", false
+	if unit, err := p.workUnits.FindById(ctx, ev.WorkUnitId); err == nil {
+		cpt = unit.CPT().Time().Format(time.RFC3339)
+		ref = unit.Reference()
+		sku = unit.SKU()
+		giftWrap = unit.GiftWrap()
+	}
+
+	requiredCapabilities, fragile := p.classificationHints(ctx, sku)
+
+	data := map[string]any{
+		"path_id":      ev.PathId.String(),
+		"work_unit_id": ev.WorkUnitId,
+		"cpt":          cpt,
+		"ref":          ref,
+	}
+	// Strictly additive and backward compatible: only set these two
+	// optional fields when there is something to say. An unclassified
+	// SKU or an unavailable lookup omits them entirely rather than
+	// publishing an empty array / explicit false, so a consumer that
+	// already treats "absent" as "no hint" (fulfillment-execution's
+	// documented default) sees no difference from before this feature
+	// existed.
+	if len(requiredCapabilities) > 0 {
+		data["required_capabilities"] = requiredCapabilities
+	}
+	if fragile {
+		data["fragile"] = fragile
+	}
+	// gift_wrap is a caller-stated WorkReleased characteristic, not a
+	// classification hint — read straight off the WorkUnit (like
+	// cpt/ref), never derived from classificationHints (see ADR-0010).
+	// Same omit-when-false discipline as fragile.
+	if giftWrap {
+		data["gift_wrap"] = giftWrap
+	}
+	return json.Marshal(data)
+}
+
+// pathOnlyData is the best-effort payload for event types that carry only
+// their process-path identity.
+func pathOnlyData(pathId shared.PathId) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{"path_id": pathId.String()})
+}
+
+// workUnitData is the best-effort payload for event types that carry a
+// work-unit identity alongside their process path.
+func workUnitData(workUnitId string, pathId shared.PathId) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{"path_id": pathId.String(), "work_unit_id": workUnitId})
+}
+
+// pathCapacityChangedData is the PathCapacityChanged payload consumed by
+// order-management (ADR-0018).
+func pathCapacityChangedData(ev shared.PathCapacityChanged) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{
+		"path_id":         ev.PathId.String(),
+		"cutoff_at":       ev.CutoffAt.Format(time.RFC3339),
+		"remaining_units": ev.RemainingUnits,
+		"known":           ev.Known,
+	})
 }
 
 // classificationHints looks up sku's ProductClassification once, at

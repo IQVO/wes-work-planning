@@ -90,12 +90,24 @@ func (r *WorkPoolRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (
 
 	wp := release.NewWorkPool(pathId, stringToMode(modeStr), wipLimit, alarmThreshold)
 
-	rows, err := querierFrom(ctx, r.pool).Query(ctx, `
+	if err := hydratePoolEntries(ctx, querierFrom(ctx, r.pool), pathId, wp); err != nil {
+		return nil, err
+	}
+
+	return wp, nil
+}
+
+// hydratePoolEntries rehydrates wp's entries (CPT-ascending) from the
+// work_pool_entries rows of pathId, replaying each stored state onto the
+// aggregate: every stored entry is enqueued, "released"/"completed" rows
+// are released, and "completed" rows additionally completed.
+func hydratePoolEntries(ctx context.Context, q querier, pathId shared.PathId, wp *release.WorkPool) error {
+	rows, err := q.Query(ctx, `
 		SELECT work_unit_id, cpt, state FROM work_pool_entries
 		WHERE path_id = $1 ORDER BY cpt ASC
 	`, pathId.String())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer rows.Close()
 
@@ -103,25 +115,34 @@ func (r *WorkPoolRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (
 		var workUnitId, state string
 		var cpt time.Time
 		if err := rows.Scan(&workUnitId, &cpt, &state); err != nil {
-			return nil, err
+			return err
 		}
-		if err := wp.Enqueue(workUnitId, shared.NewCPT(cpt)); err != nil {
-			return nil, err
-		}
-		if state == "released" || state == "completed" {
-			if err := wp.Release(workUnitId); err != nil {
-				return nil, err
-			}
-		}
-		if state == "completed" {
-			if err := wp.Complete(workUnitId); err != nil {
-				return nil, err
-			}
+		if err := enqueueEntryState(wp, workUnitId, cpt, state); err != nil {
+			return err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return err
 	}
+	return nil
+}
 
-	return wp, nil
+// enqueueEntryState replays one stored entry row onto wp: enqueue first,
+// then release for "released"/"completed" states, then complete for
+// "completed" — the inverse of Save's state column derivation.
+func enqueueEntryState(wp *release.WorkPool, workUnitId string, cpt time.Time, state string) error {
+	if err := wp.Enqueue(workUnitId, shared.NewCPT(cpt)); err != nil {
+		return err
+	}
+	if state == "released" || state == "completed" {
+		if err := wp.Release(workUnitId); err != nil {
+			return err
+		}
+	}
+	if state == "completed" {
+		if err := wp.Complete(workUnitId); err != nil {
+			return err
+		}
+	}
+	return nil
 }

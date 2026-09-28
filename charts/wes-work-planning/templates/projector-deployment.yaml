@@ -7,7 +7,9 @@ metadata:
     {{- include "wes-work-planning.labels" . | nindent 4 }}
     app.kubernetes.io/component: analytics-projector
 spec:
+  {{- if not .Values.autoscaling.projector.enabled }}
   replicas: {{ .Values.analytics.projector.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "wes-work-planning.selectorLabels" . | nindent 6 }}

@@ -108,6 +108,7 @@ const sidebars: SidebarsConfig = {
         'adr/0022-idempotency-key-middleware',
         'adr/0024-kafka-hash-balancer-partition-affinity',
         'adr/0025-horizontal-autoscaling-and-pgxpool-tuning',
+        'adr/0026-migrations-direct-postgres-connection',
       ],
     },
   ],

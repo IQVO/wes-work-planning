@@ -52,6 +52,25 @@ func run() error {
 
 	httpAddr := getenv("HTTP_ADDR", ":8080")
 	databaseURL := os.Getenv("DATABASE_URL")
+	// MIGRATIONS_DATABASE_URL, when set, is a DIRECT (non-pooled,
+	// session-mode) Postgres connection string used ONLY for the
+	// golang-migrate startup step in wireRepositories below -- the
+	// pgxpool opened right after migrations complete still uses
+	// databaseURL unchanged, so every request this service serves keeps
+	// going through PgBouncer exactly as before. See wireRepositories'
+	// doc comment for the full "why": golang-migrate's postgres driver
+	// takes a session-scoped `SELECT pg_advisory_lock($1)` to serialize
+	// concurrent migration runs, which PgBouncer's transaction-pooling
+	// mode does not support (warehouse-infra's PgBouncer rollout, PR
+	// #43; this fallback closes the fleet-wide bug that rollout
+	// introduced -- see ADR
+	// 0026-migrations-direct-postgres-connection.md, mirroring
+	// order-management ADR-0029). Falls back to databaseURL when unset,
+	// which is every environment that doesn't provision the split
+	// (local dev, CI integration tests, and any cluster whose Terraform
+	// predates this fix) -- byte-identical to this service's behavior
+	// before this change in that case.
+	migrationsDatabaseURL := getenv("MIGRATIONS_DATABASE_URL", databaseURL)
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
 	eventPublisherKind := getenv("EVENT_PUBLISHER", "log")
@@ -100,7 +119,7 @@ func run() error {
 
 	clock := memory.SystemClock{}
 
-	repos, err := wireRepositories(databaseURL, migrationsPath, logger)
+	repos, err := wireRepositories(databaseURL, migrationsDatabaseURL, migrationsPath, logger)
 	if err != nil {
 		return err
 	}
@@ -253,7 +272,28 @@ func (r repositories) travelDistanceLookup(logger *slog.Logger) ports.TravelDist
 // package doc comment). A single attempt turns that known, transient
 // condition into CrashLoopBackOff before this service ever gets far
 // enough to serve its own health probe.
-func wireRepositories(databaseURL, migrationsPath string, logger *slog.Logger) (repositories, error) {
+//
+// migrationsDatabaseURL is used ONLY for the golang-migrate step below —
+// the pgxpool opened just after it (and used for every subsequent
+// request) always uses databaseURL. They are deliberately different
+// connection strings in a PgBouncer-fronted environment: golang-migrate's
+// postgres driver takes a session-scoped `SELECT pg_advisory_lock($1)` to
+// serialize concurrent migration runs across replicas starting at the
+// same time, and PgBouncer's transaction-pooling mode (this fleet's
+// pool_mode for every OLTP DATABASE_URL, warehouse-infra PR #43) does not
+// support session-scoped state — each statement in one logical client
+// session can land on a different physical backend connection, so the
+// advisory lock never behaves as a real mutex. Losing replicas crash-loop
+// with `pq: unnamed prepared statement does not exist` / `pq: canceling
+// statement due to statement timeout` until one wins the race. See ADR
+// 0026-migrations-direct-postgres-connection.md (mirroring order-management
+// ADR-0029) for the full incident and fix. Callers pass
+// MIGRATIONS_DATABASE_URL when set (warehouse-infra now provisions it as a
+// direct, non-pooled DSN alongside DATABASE_URL) or fall back to
+// databaseURL itself for any environment that doesn't provision the split
+// (local dev, CI integration tests) — byte-identical to this function's
+// behavior before this parameter existed in that case.
+func wireRepositories(databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (repositories, error) {
 	if databaseURL == "" {
 		logger.Info("database url not configured; using in-memory adapters")
 		return repositories{
@@ -270,7 +310,7 @@ func wireRepositories(databaseURL, migrationsPath string, logger *slog.Logger) (
 	bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer bootCancel()
 	if err := bootretry.Retry(bootCtx, logger, "run migrations", func() error {
-		return postgres.Migrate(databaseURL, migrationsPath)
+		return postgres.Migrate(migrationsDatabaseURL, migrationsPath)
 	}); err != nil {
 		return repositories{}, err
 	}

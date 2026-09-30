@@ -247,37 +247,8 @@ func TestPublisher_EnvelopeMode_Dual_TwoMessagesSharedKeyBothShapes(t *testing.T
 
 	first, second := encoded[0], encoded[1]
 
-	// Same key on both physical messages (ADR-0021 Design decision #3).
-	if string(first.Key) != string(second.Key) {
-		t.Fatalf("dual mode messages do not share the same key: %q vs %q", first.Key, second.Key)
-	}
-	if string(first.Key) != "evt-dual-1" {
-		t.Fatalf("shared key = %q, want the event id evt-dual-1", first.Key)
-	}
-
-	// Same topic on both.
-	if first.Topic != envelope.TopicWorkPlanningEvents || second.Topic != envelope.TopicWorkPlanningEvents {
-		t.Fatalf("dual mode messages must both target %s, got %q and %q", envelope.TopicWorkPlanningEvents, first.Topic, second.Topic)
-	}
-
-	// The FIRST message must decode as the legacy flat envelope: it has
-	// event_id/event_type/occurred_at, and critically has NO specversion
-	// key at all -- ADR-0021 depends on specversion's absence being the
-	// dual-read discriminator.
-	var probe map[string]any
-	if err := json.Unmarshal(first.Value, &probe); err != nil {
-		t.Fatalf("unmarshal first message as JSON: %v", err)
-	}
-	if _, hasSpecVersion := probe["specversion"]; hasSpecVersion {
-		t.Fatalf("first (flat) message must not carry a specversion key, got %v", probe)
-	}
-	var flatEnv envelope.Envelope
-	if err := json.Unmarshal(first.Value, &flatEnv); err != nil {
-		t.Fatalf("unmarshal first message as Envelope: %v", err)
-	}
-	if flatEnv.EventId != "evt-dual-1" || flatEnv.EventType != "WorkReleased" || !flatEnv.OccurredAt.Equal(at) || flatEnv.Source != envelope.Source {
-		t.Fatalf("first (flat) message envelope wrong: %+v", flatEnv)
-	}
+	assertDualSharedMessageShape(t, first, second)
+	assertDualFlatMessage(t, first, at)
 
 	// The SECOND message must decode as CloudEvents 1.0: specversion
 	// present and "1.0", id equals the shared event id.
@@ -297,7 +268,7 @@ func TestPublisher_EnvelopeMode_Dual_TwoMessagesSharedKeyBothShapes(t *testing.T
 
 	// data payload identical between the two physical messages.
 	var flatData, ceData map[string]any
-	if err := json.Unmarshal(flatEnv.Data, &flatData); err != nil {
+	if err := json.Unmarshal(flatEnvData(t, first).Data, &flatData); err != nil {
 		t.Fatalf("unmarshal flat data: %v", err)
 	}
 	if err := json.Unmarshal(ce.Data, &ceData); err != nil {
@@ -308,6 +279,51 @@ func TestPublisher_EnvelopeMode_Dual_TwoMessagesSharedKeyBothShapes(t *testing.T
 	if string(flatJSON) != string(ceJSON) {
 		t.Fatalf("dual mode's two physical messages carry different data payloads:\nflat: %s\ncloudevents: %s", flatJSON, ceJSON)
 	}
+}
+
+// assertDualSharedMessageShape checks the properties both physical
+// messages of a dual-mode event share: the same key (ADR-0021 Design
+// decision #3) and the same integration topic.
+func assertDualSharedMessageShape(t *testing.T, first, second outboundkafka.Encoded) {
+	t.Helper()
+	if string(first.Key) != string(second.Key) {
+		t.Fatalf("dual mode messages do not share the same key: %q vs %q", first.Key, second.Key)
+	}
+	if string(first.Key) != "evt-dual-1" {
+		t.Fatalf("shared key = %q, want the event id evt-dual-1", first.Key)
+	}
+	if first.Topic != envelope.TopicWorkPlanningEvents || second.Topic != envelope.TopicWorkPlanningEvents {
+		t.Fatalf("dual mode messages must both target %s, got %q and %q", envelope.TopicWorkPlanningEvents, first.Topic, second.Topic)
+	}
+}
+
+// assertDualFlatMessage checks that the FIRST dual-mode message decodes
+// as the legacy flat envelope: it has event_id/event_type/occurred_at,
+// and critically has NO specversion key at all -- ADR-0021 depends on
+// specversion's absence being the dual-read discriminator.
+func assertDualFlatMessage(t *testing.T, first outboundkafka.Encoded, at time.Time) {
+	t.Helper()
+	var probe map[string]any
+	if err := json.Unmarshal(first.Value, &probe); err != nil {
+		t.Fatalf("unmarshal first message as JSON: %v", err)
+	}
+	if _, hasSpecVersion := probe["specversion"]; hasSpecVersion {
+		t.Fatalf("first (flat) message must not carry a specversion key, got %v", probe)
+	}
+	flatEnv := flatEnvData(t, first)
+	if flatEnv.EventId != "evt-dual-1" || flatEnv.EventType != "WorkReleased" || !flatEnv.OccurredAt.Equal(at) || flatEnv.Source != envelope.Source {
+		t.Fatalf("first (flat) message envelope wrong: %+v", flatEnv)
+	}
+}
+
+// flatEnvData decodes a dual-mode flat message into its envelope shape.
+func flatEnvData(t *testing.T, msg outboundkafka.Encoded) envelope.Envelope {
+	t.Helper()
+	var flatEnv envelope.Envelope
+	if err := json.Unmarshal(msg.Value, &flatEnv); err != nil {
+		t.Fatalf("unmarshal first message as Envelope: %v", err)
+	}
+	return flatEnv
 }
 
 func TestPublisher_EnvelopeMode_Dual_PublishWritesBothMessages(t *testing.T) {

@@ -54,10 +54,17 @@ type RelaySink struct {
 }
 
 // NewRelaySink constructs a RelaySink over a topic-less writer on brokers.
+//
+// Balancer is kafkago.Hash — same as Publisher's and AnalyticsPublisher's
+// own writers (see NewPublisher's doc comment for why Hash and not
+// LeastBytes): every Encoded this sink relays was already keyed by its
+// originating publisher, so the relay's own writer must also use a
+// key-aware balancer or that key is silently discarded for partition
+// placement on the second hop too.
 func NewRelaySink(brokers []string) *RelaySink {
 	return NewRelaySinkWithWriter(&kafkago.Writer{
 		Addr:                   kafkago.TCP(brokers...),
-		Balancer:               &kafkago.LeastBytes{},
+		Balancer:               &kafkago.Hash{},
 		AllowAutoTopicCreation: true,
 	})
 }

@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	inboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/inbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/analyticsstore"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
@@ -72,34 +74,11 @@ func run() error {
 	kafkaBrokers := brokerList(getenv("KAFKA_BROKERS", "localhost:9092"))
 	migrationsPath := getenv("ANALYTICS_MIGRATIONS_PATH", "migrations/analytics")
 
-	// The projector owns the analytical schema: run its migrations on start.
-	// Retried, because in this fleet EVERY injected pod's first outbound
-	// TCP dial is reset ~10s after the app starts (Istio native
-	// sidecars; see internal/bootretry's package doc comment). A single
-	// attempt turns that known, transient condition into
-	// CrashLoopBackOff before this process ever gets far enough to
-	// serve its own /healthz.
-	bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer bootCancel()
-	if err := bootretry.Retry(bootCtx, logger, "run analytics migrations", func() error {
-		return analyticsstore.Migrate(analyticsURL, migrationsPath)
-	}); err != nil {
-		return err
-	}
-
-	pool, err := analyticsstore.NewPool(rootCtx, analyticsURL)
+	pool, err := connectAnalyticsStore(rootCtx, logger, analyticsURL, migrationsPath)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
-	// analyticsstore.NewPool does not itself dial; without this retried
-	// Ping the same first-dial reset would surface inside the first
-	// real query instead of at boot.
-	if err := bootretry.Retry(bootCtx, logger, "ping analytics postgres", func() error {
-		return pool.Ping(bootCtx)
-	}); err != nil {
-		return err
-	}
 	if err := analyticsstore.RecordPoolStats(pool); err != nil {
 		logger.Error("analytics pgxpool metrics unavailable", "error", err)
 	}
@@ -140,6 +119,39 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(ctx)
+}
+
+// connectAnalyticsStore opens the analytical database the projector owns:
+// it runs the analytics migrations first, then dials and pings the pool.
+// Both boot steps are retried, because in this fleet EVERY injected pod's
+// first outbound TCP dial is reset ~10s after the app starts (Istio
+// native sidecars; see internal/bootretry's package doc comment). A
+// single attempt turns that known, transient condition into
+// CrashLoopBackOff before this process ever gets far enough to serve its
+// own /healthz.
+func connectAnalyticsStore(rootCtx context.Context, logger *slog.Logger, analyticsURL, migrationsPath string) (*pgxpool.Pool, error) {
+	bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer bootCancel()
+	if err := bootretry.Retry(bootCtx, logger, "run analytics migrations", func() error {
+		return analyticsstore.Migrate(analyticsURL, migrationsPath)
+	}); err != nil {
+		return nil, err
+	}
+
+	pool, err := analyticsstore.NewPool(rootCtx, analyticsURL)
+	if err != nil {
+		return nil, err
+	}
+	// analyticsstore.NewPool does not itself dial; without this retried
+	// Ping the same first-dial reset would surface inside the first
+	// real query instead of at boot.
+	if err := bootretry.Retry(bootCtx, logger, "ping analytics postgres", func() error {
+		return pool.Ping(bootCtx)
+	}); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
 }
 
 // newLogger builds the process-wide structured logger: JSON to stdout, at the

@@ -41,14 +41,33 @@ func TestWorkPool_Accessors_FlowFed(t *testing.T) {
 func TestWorkPool_Entries(t *testing.T) {
 	pathId, _ := shared.NewPathId("pick-a")
 	pool := NewWorkPool(pathId, ReleaseFed, 10, 0)
-
-	if entries := pool.Entries(); len(entries) != 0 {
-		t.Fatalf("got %d entries, want 0", len(entries))
-	}
-
 	cpt1 := shared.NewCPT(time.Now())
 	cpt2 := shared.NewCPT(time.Now().Add(time.Hour))
 
+	// The cases build on one shared pool, in order, exactly like the
+	// scenario they were extracted from.
+	t.Run("empty pool reports no entries", func(t *testing.T) { entriesReportEmpty(t, pool) })
+	t.Run("enqueued units appear pending in CPT order", func(t *testing.T) { entriesReportPendingInCPTOrder(t, pool, cpt1, cpt2) })
+	t.Run("released entry reports Released while others stay pending", func(t *testing.T) { entriesReportReleased(t, pool) })
+
+	// A Completed entry must still report Released == true (the postgres
+	// repo's FindByPathId rehydrates a "completed" DB row by calling
+	// wp.Release() then wp.Complete(), keyed off exactly this flag) as
+	// well as Completed == true itself. Regression coverage for the
+	// entry-state snapshot's OR condition, not just the plain-released
+	// case above.
+	t.Run("completed entry still reports Released and Completed", func(t *testing.T) { entriesReportCompleted(t, pool) })
+}
+
+func entriesReportEmpty(t *testing.T, pool *WorkPool) {
+	t.Helper()
+	if entries := pool.Entries(); len(entries) != 0 {
+		t.Fatalf("got %d entries, want 0", len(entries))
+	}
+}
+
+func entriesReportPendingInCPTOrder(t *testing.T, pool *WorkPool, cpt1, cpt2 shared.CPT) {
+	t.Helper()
 	if err := pool.Enqueue("wu-1", cpt1); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -69,30 +88,30 @@ func TestWorkPool_Entries(t *testing.T) {
 	if !entries[0].CPT.Equals(cpt1) {
 		t.Fatalf("got CPT %v, want %v", entries[0].CPT, cpt1)
 	}
+}
 
+func entriesReportReleased(t *testing.T, pool *WorkPool) {
+	t.Helper()
 	if err := pool.Release("wu-1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	entries = pool.Entries()
+	entries := pool.Entries()
 	if !entries[0].Released {
 		t.Fatalf("got %+v, want wu-1 released", entries[0])
 	}
 	if entries[1].Released {
 		t.Fatalf("got %+v, want wu-2 still pending", entries[1])
 	}
+}
 
-	// A Completed entry must still report Released == true (the postgres
-	// repo's FindByPathId rehydrates a "completed" DB row by calling
-	// wp.Release() then wp.Complete(), keyed off exactly this flag) as
-	// well as Completed == true itself. Regression coverage for the
-	// entry-state snapshot's OR condition, not just the plain-released
-	// case above.
+func entriesReportCompleted(t *testing.T, pool *WorkPool) {
+	t.Helper()
 	if err := pool.Complete("wu-1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	entries = pool.Entries()
+	entries := pool.Entries()
 	if !entries[0].Released {
 		t.Fatalf("got %+v, want wu-1 still reported Released after Complete", entries[0])
 	}

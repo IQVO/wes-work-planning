@@ -66,62 +66,56 @@ func statusFor(err error) int {
 // collide across the warehouse-systems services.
 const problemBaseURI = "https://errors.wes-work-planning.warehouse-systems.dev/"
 
+// problemCategory pairs one sentinel error with the RFC 7807 type-URI
+// slug and human title problemFor answers for it. The catalog is walked in
+// order and the first errors.Is match wins, so the entry order below IS
+// the matching order — keep it stable when appending.
+type problemCategory struct {
+	err   error
+	slug  string
+	title string
+}
+
+// problemCatalog lists every error category problemFor recognizes.
+// Categories mirror statusFor's grouping exactly — every sentinel error
+// statusFor recognizes has a corresponding entry here.
+var problemCatalog = []problemCategory{
+	{errMalformedBody, "malformed-request-body", "Malformed request body"},
+	{errMissingReference, "reference-required", "Reference query parameter is required"},
+	{ports.ErrNotFound, "not-found", "Resource not found"},
+	{release.ErrWIPLimitReached, "wip-limit-reached", "Release-fed pool WIP limit reached"},
+	{release.ErrAlreadyReleased, "work-pool-entry-already-released", "Work pool entry already released"},
+	{release.ErrDuplicateEntry, "work-unit-already-enqueued", "Work unit already enqueued in this pool"},
+	{release.ErrEmptyPool, "work-pool-empty", "Work pool is empty"},
+	{workunit.ErrAlreadyReleased, "work-unit-already-released", "Work unit already released"},
+	{workunit.ErrAlreadyCompleted, "work-unit-already-completed", "Work unit already completed"},
+	{workunit.ErrNotReleased, "work-unit-not-released", "Work unit not released"},
+	{shared.ErrInvalidQuantity, "invalid-quantity", "Invalid quantity"},
+	{shared.ErrInvalidRate, "invalid-rate", "Invalid rate"},
+	{shared.ErrInvalidStationCount, "invalid-station-count", "Invalid station count"},
+	{shared.ErrInvalidPathId, "invalid-path-id", "Invalid path id"},
+	{pathcatalog.ErrUnknownPath, "unknown-path-id", "Unrecognized process-path id"},
+	{shared.ErrInvalidHours, "invalid-hours", "Invalid hours"},
+	{charge.ErrNoBuckets, "charge-forecast-requires-buckets", "Charge forecast requires at least one CPT bucket"},
+	{charge.ErrUnknownCPT, "unknown-cpt", "No bucket exists for the given CPT"},
+	{plan.ErrHeadsExceedStations, "heads-exceed-installed-stations", "Planned heads exceed installed stations"},
+	{plan.ErrNoPathPlans, "shift-plan-requires-path-plans", "Shift plan requires at least one path plan"},
+	{plan.ErrThroughputNotFinite, "planned-throughput-not-finite", "Planned throughput is not finite"},
+	{workunit.ErrEmptyId, "work-unit-id-required", "Work unit id is required"},
+	{workunit.ErrEmptyReference, "work-unit-reference-required", "Work unit reference is required"},
+	{release.ErrUnknownEntry, "work-pool-entry-not-found", "Work unit not found in this pool"},
+}
+
 // problemFor returns the RFC 7807 (type, title) pair for a category of
-// error. Categories mirror statusFor's grouping exactly — every sentinel
-// error statusFor recognizes has a corresponding case here.
+// error: the first problemCatalog sentinel err matches (errors.Is), or the
+// catch-all internal-error category.
 func problemFor(err error) (typeURI, title string) {
-	switch {
-	case errors.Is(err, errMalformedBody):
-		return problemBaseURI + "malformed-request-body", "Malformed request body"
-	case errors.Is(err, errMissingReference):
-		return problemBaseURI + "reference-required", "Reference query parameter is required"
-	case errors.Is(err, ports.ErrNotFound):
-		return problemBaseURI + "not-found", "Resource not found"
-	case errors.Is(err, release.ErrWIPLimitReached):
-		return problemBaseURI + "wip-limit-reached", "Release-fed pool WIP limit reached"
-	case errors.Is(err, release.ErrAlreadyReleased):
-		return problemBaseURI + "work-pool-entry-already-released", "Work pool entry already released"
-	case errors.Is(err, release.ErrDuplicateEntry):
-		return problemBaseURI + "work-unit-already-enqueued", "Work unit already enqueued in this pool"
-	case errors.Is(err, release.ErrEmptyPool):
-		return problemBaseURI + "work-pool-empty", "Work pool is empty"
-	case errors.Is(err, workunit.ErrAlreadyReleased):
-		return problemBaseURI + "work-unit-already-released", "Work unit already released"
-	case errors.Is(err, workunit.ErrAlreadyCompleted):
-		return problemBaseURI + "work-unit-already-completed", "Work unit already completed"
-	case errors.Is(err, workunit.ErrNotReleased):
-		return problemBaseURI + "work-unit-not-released", "Work unit not released"
-	case errors.Is(err, shared.ErrInvalidQuantity):
-		return problemBaseURI + "invalid-quantity", "Invalid quantity"
-	case errors.Is(err, shared.ErrInvalidRate):
-		return problemBaseURI + "invalid-rate", "Invalid rate"
-	case errors.Is(err, shared.ErrInvalidStationCount):
-		return problemBaseURI + "invalid-station-count", "Invalid station count"
-	case errors.Is(err, shared.ErrInvalidPathId):
-		return problemBaseURI + "invalid-path-id", "Invalid path id"
-	case errors.Is(err, pathcatalog.ErrUnknownPath):
-		return problemBaseURI + "unknown-path-id", "Unrecognized process-path id"
-	case errors.Is(err, shared.ErrInvalidHours):
-		return problemBaseURI + "invalid-hours", "Invalid hours"
-	case errors.Is(err, charge.ErrNoBuckets):
-		return problemBaseURI + "charge-forecast-requires-buckets", "Charge forecast requires at least one CPT bucket"
-	case errors.Is(err, charge.ErrUnknownCPT):
-		return problemBaseURI + "unknown-cpt", "No bucket exists for the given CPT"
-	case errors.Is(err, plan.ErrHeadsExceedStations):
-		return problemBaseURI + "heads-exceed-installed-stations", "Planned heads exceed installed stations"
-	case errors.Is(err, plan.ErrNoPathPlans):
-		return problemBaseURI + "shift-plan-requires-path-plans", "Shift plan requires at least one path plan"
-	case errors.Is(err, plan.ErrThroughputNotFinite):
-		return problemBaseURI + "planned-throughput-not-finite", "Planned throughput is not finite"
-	case errors.Is(err, workunit.ErrEmptyId):
-		return problemBaseURI + "work-unit-id-required", "Work unit id is required"
-	case errors.Is(err, workunit.ErrEmptyReference):
-		return problemBaseURI + "work-unit-reference-required", "Work unit reference is required"
-	case errors.Is(err, release.ErrUnknownEntry):
-		return problemBaseURI + "work-pool-entry-not-found", "Work unit not found in this pool"
-	default:
-		return problemBaseURI + "internal-error", "Internal server error"
+	for _, category := range problemCatalog {
+		if errors.Is(err, category.err) {
+			return problemBaseURI + category.slug, category.title
+		}
 	}
+	return problemBaseURI + "internal-error", "Internal server error"
 }
 
 // writeError writes a domain/application error as an RFC 7807

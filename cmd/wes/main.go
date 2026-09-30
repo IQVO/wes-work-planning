@@ -52,6 +52,25 @@ func run() error {
 
 	httpAddr := getenv("HTTP_ADDR", ":8080")
 	databaseURL := os.Getenv("DATABASE_URL")
+	// MIGRATIONS_DATABASE_URL, when set, is a DIRECT (non-pooled,
+	// session-mode) Postgres connection string used ONLY for the
+	// golang-migrate startup step in wireRepositories below -- the
+	// pgxpool opened right after migrations complete still uses
+	// databaseURL unchanged, so every request this service serves keeps
+	// going through PgBouncer exactly as before. See wireRepositories'
+	// doc comment for the full "why": golang-migrate's postgres driver
+	// takes a session-scoped `SELECT pg_advisory_lock($1)` to serialize
+	// concurrent migration runs, which PgBouncer's transaction-pooling
+	// mode does not support (warehouse-infra's PgBouncer rollout, PR
+	// #43; this fallback closes the fleet-wide bug that rollout
+	// introduced -- see ADR
+	// 0026-migrations-direct-postgres-connection.md, mirroring
+	// order-management ADR-0029). Falls back to databaseURL when unset,
+	// which is every environment that doesn't provision the split
+	// (local dev, CI integration tests, and any cluster whose Terraform
+	// predates this fix) -- byte-identical to this service's behavior
+	// before this change in that case.
+	migrationsDatabaseURL := getenv("MIGRATIONS_DATABASE_URL", databaseURL)
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
 	eventPublisherKind := getenv("EVENT_PUBLISHER", "log")
@@ -66,77 +85,17 @@ func run() error {
 	envelopeMode := outboundkafka.ParseEnvelopeMode(getenv("EVENT_ENVELOPE_MODE", "flat"))
 	otelServiceName := getenv("OTEL_SERVICE_NAME", serviceName)
 
-	// The process-path catalogue's SOURCE is selectable, defaulting to
-	// the existing boot-time file read ("file") -- zero behavior change
-	// for any existing deployment unless PATH_CATALOGUE_SOURCE=kafka is
-	// explicitly set, matching this fleet's EVENT_PUBLISHER convention.
-	// See internal/adapters/outbound/kafkacatalog's package doc comment
-	// for the full rationale and the readiness-gate design, mirrored
-	// byte-for-byte from fulfillment-execution's identical wiring.
-	catalogueSource := getenv("PATH_CATALOGUE_SOURCE", "file")
-
-	var catalogue ports.PathCatalogue
-	var kafkaCatalogue *kafkacatalog.Consumer
 	// catalogueConsumerCtx/cancelCatalogueConsumer are declared here
-	// (rather than at cancelConsumer's original location further down)
 	// because the Kafka catalogue source needs its own Run goroutine
-	// started BEFORE WaitReady is called below -- otherwise nothing
-	// would ever be consuming messages while this process waits,
-	// guaranteeing a deadlock until WaitReadyTimeout.
+	// started BEFORE WaitReady is called inside wireCatalogue --
+	// otherwise nothing would ever be consuming messages while this
+	// process waits, guaranteeing a deadlock until WaitReadyTimeout.
 	catalogueConsumerCtx, cancelCatalogueConsumer := context.WithCancel(context.Background())
 	defer cancelCatalogueConsumer()
 
-	switch catalogueSource {
-	case "kafka":
-		if kafkaBrokers == "" {
-			return fmt.Errorf("PATH_CATALOGUE_SOURCE=kafka requires KAFKA_BROKERS to be set")
-		}
-		// Retried: this fleet's Istio native sidecars reset EVERY
-		// injected pod's first outbound TCP dial ~10s after the app
-		// starts, and NewConsumer's newTargetOffsets dials the broker
-		// directly before anything else runs. A single attempt turns
-		// that known, transient reset into CrashLoopBackOff exactly
-		// like the equivalent, unretried Postgres dial below did (see
-		// internal/bootretry's package doc comment).
-		var err error
-		if err = bootretry.Retry(context.Background(), logger, "connect to the process-path catalogue topic", func() error {
-			var dialErr error
-			kafkaCatalogue, dialErr = kafkacatalog.NewConsumer(context.Background(), brokerList(kafkaBrokers), logger)
-			return dialErr
-		}); err != nil {
-			return fmt.Errorf("failed to start the Kafka-sourced process-path catalogue: %w", err)
-		}
-		logger.Info("process-path catalogue source configured", "source", "kafka", "topic", kafkacatalog.Topic)
-		go func() {
-			logger.Info("process-path catalogue consumer running", "topic", kafkacatalog.Topic)
-			if err := kafkaCatalogue.Run(catalogueConsumerCtx); err != nil {
-				logger.Error("process-path catalogue consumer stopped", "error", err)
-			}
-		}()
-
-		logger.Info("waiting for the process-path catalogue to replay its initial history before accepting traffic")
-		waitCtx, waitCancel := context.WithTimeout(context.Background(), kafkacatalog.WaitReadyTimeout)
-		err = kafkaCatalogue.WaitReady(waitCtx)
-		waitCancel()
-		if err != nil {
-			return fmt.Errorf("process-path catalogue did not become ready within %s: %w", kafkacatalog.WaitReadyTimeout, err)
-		}
-		logger.Info("process-path catalogue is ready", "paths", kafkaCatalogue.Ids())
-		catalogue = kafkaCatalogue
-	default:
-		// The process-path catalogue is loaded and validated once at
-		// boot, before anything else stands up — a missing or
-		// malformed catalogue file must stop this service from
-		// starting at all, never fall back to a partial/empty
-		// catalogue (mirrors fulfillment-execution's identical
-		// boot-time contract; see ADR-0017 there and this service's
-		// own ADR-0012).
-		fileCatalogue, err := filecatalog.Load(getenv("PATH_CATALOGUE_FILE", "/etc/wes-work-planning/process-paths.yaml"))
-		if err != nil {
-			return fmt.Errorf("failed to load the process-path catalogue: %w", err)
-		}
-		logger.Info("process-path catalogue loaded", "paths", fileCatalogue.Ids())
-		catalogue = fileCatalogue
+	catalogue, kafkaCatalogue, err := wireCatalogue(kafkaBrokers, catalogueConsumerCtx, logger)
+	if err != nil {
+		return err
 	}
 
 	shutdownTelemetry, err := telemetry.Setup(
@@ -160,177 +119,334 @@ func run() error {
 
 	clock := memory.SystemClock{}
 
-	var (
-		charges   ports.ChargeRepo
-		plans     ports.PlanRepo
-		pools     ports.WorkPoolRepo
-		workUnits ports.WorkUnitRepo
-
-		laborPlanViews ports.LaborPlanViewRepo
-		inventoryViews ports.InventoryViewRepo
-		processedEvts  ports.ProcessedEventRepo
-
-		// pgPool and uow are nil in the in-memory configuration. A nil
-		// UnitOfWork makes every use case run Save + Publish back to back
-		// (ADR-0014); with Postgres they run in one transaction.
-		pgPool *pgxpool.Pool
-		uow    ports.UnitOfWork
-	)
-
-	if databaseURL == "" {
-		logger.Info("database url not configured; using in-memory adapters")
-		charges = memory.NewChargeRepo()
-		plans = memory.NewPlanRepo()
-		pools = memory.NewWorkPoolRepo()
-		workUnits = memory.NewWorkUnitRepo()
-		laborPlanViews = memory.NewLaborPlanViewRepo()
-		inventoryViews = memory.NewInventoryViewRepo()
-		processedEvts = memory.NewProcessedEventRepo()
-	} else {
-		// The OLTP schema is a precondition this process enforces itself,
-		// rather than assuming an out-of-band golang-migrate CLI step ran.
-		// That assumption silently did not hold: the service deployed
-		// cleanly against an empty database and every Postgres-backed
-		// endpoint failed at request time with
-		// `relation "charge_forecasts" does not exist`. Migrating before
-		// the pool is opened matches what fulfillment-execution's and
-		// workforce-management's OLTP binaries already do.
-		// Retried, because in this fleet EVERY injected pod's first
-		// outbound TCP dial is reset ~10s after the app starts (Istio
-		// native sidecars; see internal/bootretry's package doc
-		// comment). A single attempt turns that known, transient
-		// condition into CrashLoopBackOff before this service ever
-		// gets far enough to serve its own health probe.
-		bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer bootCancel()
-		if err := bootretry.Retry(bootCtx, logger, "run migrations", func() error {
-			return postgres.Migrate(databaseURL, migrationsPath)
-		}); err != nil {
-			return err
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		pool, err := postgres.Connect(ctx, databaseURL)
-		if err != nil {
-			return err
-		}
-		// pgxpool.NewWithConfig does not itself dial or establish a
-		// connection, so without this retried Ping the first-dial
-		// reset would surface inside the first real request rather
-		// than at boot — turning a transient sidecar warm-up into an
-		// intermittent 500 instead of a bounded startup retry.
-		if err := bootretry.Retry(bootCtx, logger, "ping postgres", func() error {
-			return pool.Ping(bootCtx)
-		}); err != nil {
-			pool.Close()
-			return err
-		}
-		defer pool.Close()
-		pgPool = pool
-		uow = postgres.NewUnitOfWork(pool)
-
-		charges = postgres.NewChargeRepo(pool)
-		plans = postgres.NewPlanRepo(pool)
-		pools = postgres.NewWorkPoolRepo(pool)
-		workUnits = postgres.NewWorkUnitRepo(pool)
-		laborPlanViews = postgres.NewLaborPlanViewRepo(pool)
-		inventoryViews = postgres.NewInventoryViewRepo(pool)
-		processedEvts = postgres.NewProcessedEventRepo(pool)
+	repos, err := wireRepositories(databaseURL, migrationsDatabaseURL, migrationsPath, logger)
+	if err != nil {
+		return err
+	}
+	if repos.pgPool != nil {
+		defer repos.pgPool.Close()
 	}
 
-	var publisher ports.EventPublisher
-	var relay *postgres.OutboxRelay
+	publisher, relay, stopPublisher, err := wireEventPublisher(logger, eventPublisherKind, kafkaBrokers, envelopeMode, repos.workUnits, repos.classificationLookup(logger), repos.pgPool)
+	if err != nil {
+		return err
+	}
+	defer stopPublisher()
 
-	// Circuit-breaker state gauge (ADR-0023) shared by both breaker
-	// clients below — a metrics-registration failure disables the
-	// GAUGE only (nil recorder is a documented no-op), never boot.
+	handlers := newHandlers(repos, publisher, clock, catalogue, repos.travelDistanceLookup(logger))
+
+	server := &http.Server{
+		Addr:              httpAddr,
+		Handler:           inboundhttp.NewRouter(handlers, otelServiceName, logger),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	s := &serving{
+		logger:                  logger,
+		httpAddr:                httpAddr,
+		server:                  server,
+		handlers:                handlers,
+		relay:                   relay,
+		repos:                   repos,
+		catalogue:               catalogue,
+		kafkaBrokers:            kafkaBrokers,
+		recordCompletion:        usecases.NewRecordCompletion(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(repos.uow),
+		enqueueWorkUnit:         usecases.NewEnqueueWorkUnit(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(repos.uow),
+		cancelCatalogueConsumer: cancelCatalogueConsumer,
+		kafkaCatalogue:          kafkaCatalogue,
+	}
+	return s.run()
+}
+
+// wireCatalogue resolves the process-path catalogue from its selectable
+// SOURCE, defaulting to the existing boot-time file read ("file") --
+// zero behavior change for any existing deployment unless
+// PATH_CATALOGUE_SOURCE=kafka is explicitly set, matching this fleet's
+// EVENT_PUBLISHER convention. See internal/adapters/outbound/kafkacatalog's
+// package doc comment for the full rationale and the readiness-gate
+// design, mirrored byte-for-byte from fulfillment-execution's identical
+// wiring. catalogueConsumerCtx must already be live for the kafka mode's
+// consumer goroutine.
+func wireCatalogue(kafkaBrokers string, catalogueConsumerCtx context.Context, logger *slog.Logger) (ports.PathCatalogue, *kafkacatalog.Consumer, error) {
+	switch getenv("PATH_CATALOGUE_SOURCE", "file") {
+	case "kafka":
+		if kafkaBrokers == "" {
+			return nil, nil, fmt.Errorf("PATH_CATALOGUE_SOURCE=kafka requires KAFKA_BROKERS to be set")
+		}
+		// Retried: this fleet's Istio native sidecars reset EVERY
+		// injected pod's first outbound TCP dial ~10s after the app
+		// starts, and NewConsumer's newTargetOffsets dials the broker
+		// directly before anything else runs. A single attempt turns
+		// that known, transient reset into CrashLoopBackOff exactly
+		// like the equivalent, unretried Postgres dial below did (see
+		// internal/bootretry's package doc comment).
+		var kafkaCatalogue *kafkacatalog.Consumer
+		if err := bootretry.Retry(context.Background(), logger, "connect to the process-path catalogue topic", func() error {
+			var dialErr error
+			kafkaCatalogue, dialErr = kafkacatalog.NewConsumer(context.Background(), brokerList(kafkaBrokers), logger)
+			return dialErr
+		}); err != nil {
+			return nil, nil, fmt.Errorf("failed to start the Kafka-sourced process-path catalogue: %w", err)
+		}
+		logger.Info("process-path catalogue source configured", "source", "kafka", "topic", kafkacatalog.Topic)
+		go func() {
+			logger.Info("process-path catalogue consumer running", "topic", kafkacatalog.Topic)
+			if err := kafkaCatalogue.Run(catalogueConsumerCtx); err != nil {
+				logger.Error("process-path catalogue consumer stopped", "error", err)
+			}
+		}()
+
+		logger.Info("waiting for the process-path catalogue to replay its initial history before accepting traffic")
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), kafkacatalog.WaitReadyTimeout)
+		err := kafkaCatalogue.WaitReady(waitCtx)
+		waitCancel()
+		if err != nil {
+			return nil, nil, fmt.Errorf("process-path catalogue did not become ready within %s: %w", kafkacatalog.WaitReadyTimeout, err)
+		}
+		logger.Info("process-path catalogue is ready", "paths", kafkaCatalogue.Ids())
+		return kafkaCatalogue, kafkaCatalogue, nil
+	default:
+		// The process-path catalogue is loaded and validated once at
+		// boot, before anything else stands up — a missing or
+		// malformed catalogue file must stop this service from
+		// starting at all, never fall back to a partial/empty
+		// catalogue (mirrors fulfillment-execution's identical
+		// boot-time contract; see ADR-0017 there and this service's
+		// own ADR-0012).
+		fileCatalogue, err := filecatalog.Load(getenv("PATH_CATALOGUE_FILE", "/etc/wes-work-planning/process-paths.yaml"))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load the process-path catalogue: %w", err)
+		}
+		logger.Info("process-path catalogue loaded", "paths", fileCatalogue.Ids())
+		return fileCatalogue, nil, nil
+	}
+}
+
+// repositories groups the environment-selected persistence adapters.
+// pgPool and uow are nil in the in-memory configuration. A nil
+// UnitOfWork makes every use case run Save + Publish back to back
+// (ADR-0014); with Postgres they run in one transaction.
+type repositories struct {
+	charges        ports.ChargeRepo
+	plans          ports.PlanRepo
+	pools          ports.WorkPoolRepo
+	workUnits      ports.WorkUnitRepo
+	laborPlanViews ports.LaborPlanViewRepo
+	inventoryViews ports.InventoryViewRepo
+	processedEvts  ports.ProcessedEventRepo
+	pgPool         *pgxpool.Pool
+	uow            ports.UnitOfWork
+}
+
+// classificationLookup wires the product-classification ACL behind the
+// shared circuit-breaker gauge (ADR-0023).
+func (r repositories) classificationLookup(logger *slog.Logger) ports.ProductClassificationLookup {
 	breakerMetrics, err := telemetry.NewCircuitBreakerMetrics()
 	if err != nil {
 		logger.Warn("circuit breaker metrics not registered; continuing without them", "error", err)
 	}
-	classifications := buildClassificationLookup(getenv("PRODUCT_CLASSIFICATION_MODE", "permissive"), os.Getenv("INVENTORY_STORAGE_BASE_URL"), breakerMetrics, logger)
-	travelDistances := buildTravelDistanceLookup(getenv("TRAVEL_DISTANCE_MODE", "permissive"), os.Getenv("FACILITY_LAYOUT_BASE_URL"), breakerMetrics, logger)
-	switch eventPublisherKind {
-	case "kafka":
-		if kafkaBrokers == "" {
-			return fmt.Errorf("EVENT_PUBLISHER=kafka requires KAFKA_BROKERS to be set")
-		}
-		brokers := brokerList(kafkaBrokers)
-		// The integration publisher (warehouse.work-planning.events) is
-		// untouched. Alongside it, a SEPARATE analytics publisher fans every
-		// domain event onto the dedicated analytics topic
-		// (warehouse.wes.analytics) that feeds the "Release Throughput &
-		// Backlog Health" data product (ADR-0011).
-		integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID, outboundkafka.WithEnvelopeMode(envelopeMode))
-		defer func() { _ = integrationPublisher.Close() }()
-		logger.Info("event envelope mode", "mode", string(envelopeMode))
-		analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID)
-		defer func() { _ = analyticsPublisher.Close() }()
+	return buildClassificationLookup(getenv("PRODUCT_CLASSIFICATION_MODE", "permissive"), os.Getenv("INVENTORY_STORAGE_BASE_URL"), breakerMetrics, logger)
+}
 
-		if pgPool != nil {
-			// Transactional outbox (ADR-0014): both publishers act only as
-			// ENCODERS inside the use case's transaction — one outbox row
-			// per event per topic — and the relay below drains those rows
-			// onto Kafka through a single topic-less writer. The store and
-			// the topics can no longer diverge.
-			sink := outboundkafka.NewRelaySink(brokers)
-			defer func() { _ = sink.Close() }()
-			relay = postgres.NewOutboxRelay(pgPool, sink, logger,
-				postgres.WithInterval(durationEnv("OUTBOX_RELAY_INTERVAL", time.Second)))
-			publisher = postgres.NewOutboxPublisher(pgPool, integrationPublisher, analyticsPublisher)
-			logger.Info("event publisher configured", "publisher", "kafka", "mode", "outbox", "brokers", kafkaBrokers)
-		} else {
-			// No Postgres, no transaction to bind to: publish directly. A
-			// MultiPublisher emits each event to BOTH topics, exactly once
-			// each, without either publisher knowing about the other.
-			publisher = events.NewMultiPublisher(integrationPublisher, analyticsPublisher)
-			logger.Info("event publisher configured", "publisher", "kafka", "mode", "direct", "brokers", kafkaBrokers)
-		}
-	default:
-		publisher = events.NewLogPublisher(logger)
-		logger.Info("event publisher configured", "publisher", "log")
+// travelDistanceLookup wires the facility-layout travel-distance ACL
+// behind the shared circuit-breaker gauge (ADR-0023).
+func (r repositories) travelDistanceLookup(logger *slog.Logger) ports.TravelDistanceLookup {
+	breakerMetrics, err := telemetry.NewCircuitBreakerMetrics()
+	if err != nil {
+		logger.Warn("circuit breaker metrics not registered; continuing without them", "error", err)
+	}
+	return buildTravelDistanceLookup(getenv("TRAVEL_DISTANCE_MODE", "permissive"), os.Getenv("FACILITY_LAYOUT_BASE_URL"), breakerMetrics, logger)
+}
+
+// wireRepositories selects the in-memory or Postgres outbound side.
+//
+// The OLTP schema is a precondition this process enforces itself, rather
+// than assuming an out-of-band golang-migrate CLI step ran. That
+// assumption silently did not hold: the service deployed cleanly against
+// an empty database and every Postgres-backed endpoint failed at request
+// time with `relation "charge_forecasts" does not exist`. Migrating
+// before the pool is opened matches what fulfillment-execution's and
+// workforce-management's OLTP binaries already do. Retried, because in
+// this fleet EVERY injected pod's first outbound TCP dial is reset ~10s
+// after the app starts (Istio native sidecars; see internal/bootretry's
+// package doc comment). A single attempt turns that known, transient
+// condition into CrashLoopBackOff before this service ever gets far
+// enough to serve its own health probe.
+//
+// migrationsDatabaseURL is used ONLY for the golang-migrate step below —
+// the pgxpool opened just after it (and used for every subsequent
+// request) always uses databaseURL. They are deliberately different
+// connection strings in a PgBouncer-fronted environment: golang-migrate's
+// postgres driver takes a session-scoped `SELECT pg_advisory_lock($1)` to
+// serialize concurrent migration runs across replicas starting at the
+// same time, and PgBouncer's transaction-pooling mode (this fleet's
+// pool_mode for every OLTP DATABASE_URL, warehouse-infra PR #43) does not
+// support session-scoped state — each statement in one logical client
+// session can land on a different physical backend connection, so the
+// advisory lock never behaves as a real mutex. Losing replicas crash-loop
+// with `pq: unnamed prepared statement does not exist` / `pq: canceling
+// statement due to statement timeout` until one wins the race. See ADR
+// 0026-migrations-direct-postgres-connection.md (mirroring order-management
+// ADR-0029) for the full incident and fix. Callers pass
+// MIGRATIONS_DATABASE_URL when set (warehouse-infra now provisions it as a
+// direct, non-pooled DSN alongside DATABASE_URL) or fall back to
+// databaseURL itself for any environment that doesn't provision the split
+// (local dev, CI integration tests) — byte-identical to this function's
+// behavior before this parameter existed in that case.
+func wireRepositories(databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (repositories, error) {
+	if databaseURL == "" {
+		logger.Info("database url not configured; using in-memory adapters")
+		return repositories{
+			charges:        memory.NewChargeRepo(),
+			plans:          memory.NewPlanRepo(),
+			pools:          memory.NewWorkPoolRepo(),
+			workUnits:      memory.NewWorkUnitRepo(),
+			laborPlanViews: memory.NewLaborPlanViewRepo(),
+			inventoryViews: memory.NewInventoryViewRepo(),
+			processedEvts:  memory.NewProcessedEventRepo(),
+		}, nil
 	}
 
-	recordCompletion := usecases.NewRecordCompletion(workUnits, pools, publisher, clock).WithUnitOfWork(uow)
-	enqueueWorkUnit := usecases.NewEnqueueWorkUnit(workUnits, pools, publisher, clock).WithUnitOfWork(uow)
+	bootCtx, bootCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer bootCancel()
+	if err := bootretry.Retry(bootCtx, logger, "run migrations", func() error {
+		return postgres.Migrate(migrationsDatabaseURL, migrationsPath)
+	}); err != nil {
+		return repositories{}, err
+	}
 
-	handlers := &inboundhttp.Handlers{
-		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(charges, publisher, clock).WithUnitOfWork(uow),
-		CommitShiftPlan:         usecases.NewCommitShiftPlan(plans, publisher, clock).WithUnitOfWork(uow).WithTravelDistanceLookup(travelDistances),
-		EnqueueWorkUnit:         enqueueWorkUnit,
-		ReleaseNextWork:         usecases.NewReleaseNextWork(pools, workUnits, publisher, clock).WithUnitOfWork(uow),
-		RecordCompletion:        recordCompletion,
-		SampleBacklog:           usecases.NewSampleBacklog(pools, publisher, clock).WithUnitOfWork(uow),
-		RebalanceDecision:       usecases.NewRebalanceDecision(pools, publisher, clock).WithUnitOfWork(uow),
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := postgres.Connect(ctx, databaseURL)
+	if err != nil {
+		return repositories{}, err
+	}
+	// pgxpool.NewWithConfig does not itself dial or establish a
+	// connection, so without this retried Ping the first-dial reset
+	// would surface inside the first real request rather than at boot —
+	// turning a transient sidecar warm-up into an intermittent 500
+	// instead of a bounded startup retry.
+	if err := bootretry.Retry(bootCtx, logger, "ping postgres", func() error {
+		return pool.Ping(bootCtx)
+	}); err != nil {
+		pool.Close()
+		return repositories{}, err
+	}
+	return repositories{
+		charges:        postgres.NewChargeRepo(pool),
+		plans:          postgres.NewPlanRepo(pool),
+		pools:          postgres.NewWorkPoolRepo(pool),
+		workUnits:      postgres.NewWorkUnitRepo(pool),
+		laborPlanViews: postgres.NewLaborPlanViewRepo(pool),
+		inventoryViews: postgres.NewInventoryViewRepo(pool),
+		processedEvts:  postgres.NewProcessedEventRepo(pool),
+		pgPool:         pool,
+		uow:            postgres.NewUnitOfWork(pool),
+	}, nil
+}
+
+// wireEventPublisher selects the outbound event publisher. The default
+// is the log publisher; with EVENT_PUBLISHER=kafka the integration
+// publisher (warehouse.work-planning.events) is untouched while a
+// SEPARATE analytics publisher fans every domain event onto the
+// dedicated analytics topic (warehouse.wes.analytics) that feeds the
+// "Release Throughput & Backlog Health" data product (ADR-0011). With
+// Postgres configured both act only as ENCODERS inside the use case's
+// transaction — one outbox row per event per topic (ADR-0014) — and the
+// returned relay drains those rows onto Kafka through a single
+// topic-less writer, so the store and the topics can no longer diverge;
+// without Postgres a MultiPublisher emits each event to BOTH topics
+// directly. The returned stop func releases every Kafka writer opened;
+// the caller defers it.
+func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers string, envelopeMode outboundkafka.EnvelopeMode, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, pgPool *pgxpool.Pool) (ports.EventPublisher, *postgres.OutboxRelay, func(), error) {
+	if eventPublisherKind != "kafka" {
+		logger.Info("event publisher configured", "publisher", "log")
+		return events.NewLogPublisher(logger), nil, func() {}, nil
+	}
+	if kafkaBrokers == "" {
+		return nil, nil, func() {}, fmt.Errorf("EVENT_PUBLISHER=kafka requires KAFKA_BROKERS to be set")
+	}
+	brokers := brokerList(kafkaBrokers)
+	integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID, outboundkafka.WithEnvelopeMode(envelopeMode))
+	logger.Info("event envelope mode", "mode", string(envelopeMode))
+	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID)
+	closers := []func(){func() { _ = integrationPublisher.Close() }, func() { _ = analyticsPublisher.Close() }}
+
+	var relay *postgres.OutboxRelay
+	var publisher ports.EventPublisher
+	if pgPool != nil {
+		sink := outboundkafka.NewRelaySink(brokers)
+		closers = append(closers, func() { _ = sink.Close() })
+		relay = postgres.NewOutboxRelay(pgPool, sink, logger,
+			postgres.WithInterval(durationEnv("OUTBOX_RELAY_INTERVAL", time.Second)))
+		publisher = postgres.NewOutboxPublisher(pgPool, integrationPublisher, analyticsPublisher)
+		logger.Info("event publisher configured", "publisher", "kafka", "mode", "outbox", "brokers", kafkaBrokers)
+	} else {
+		// No Postgres, no transaction to bind to: publish directly. A
+		// MultiPublisher emits each event to BOTH topics, exactly once
+		// each, without either publisher knowing about the other.
+		publisher = events.NewMultiPublisher(integrationPublisher, analyticsPublisher)
+		logger.Info("event publisher configured", "publisher", "kafka", "mode", "direct", "brokers", kafkaBrokers)
+	}
+	return publisher, relay, func() {
+		for i := len(closers) - 1; i >= 0; i-- {
+			closers[i]()
+		}
+	}, nil
+}
+
+// newHandlers wires every use case into the inbound HTTP handlers,
+// including the idempotency pool and readiness gate of their ADRs.
+func newHandlers(repos repositories, publisher ports.EventPublisher, clock memory.SystemClock, catalogue ports.PathCatalogue, travelDistances ports.TravelDistanceLookup) *inboundhttp.Handlers {
+	uow := repos.uow
+	return &inboundhttp.Handlers{
+		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(repos.charges, publisher, clock).WithUnitOfWork(uow),
+		CommitShiftPlan:         usecases.NewCommitShiftPlan(repos.plans, publisher, clock).WithUnitOfWork(uow).WithTravelDistanceLookup(travelDistances),
+		EnqueueWorkUnit:         usecases.NewEnqueueWorkUnit(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow),
+		ReleaseNextWork:         usecases.NewReleaseNextWork(repos.pools, repos.workUnits, publisher, clock).WithUnitOfWork(uow),
+		RecordCompletion:        usecases.NewRecordCompletion(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow),
+		SampleBacklog:           usecases.NewSampleBacklog(repos.pools, publisher, clock).WithUnitOfWork(uow),
+		RebalanceDecision:       usecases.NewRebalanceDecision(repos.pools, publisher, clock).WithUnitOfWork(uow),
 		Catalogue:               catalogue,
-		LaborPlanView:           usecases.NewLaborPlanView(laborPlanViews),
-		InventoryView:           usecases.NewInventoryView(inventoryViews),
-		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(workUnits),
+		LaborPlanView:           usecases.NewLaborPlanView(repos.laborPlanViews),
+		InventoryView:           usecases.NewInventoryView(repos.inventoryViews),
+		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(repos.workUnits),
 		// IdempotencyPool wires RequireIdempotencyKey onto POST
 		// /paths/{pathId}/work-units (see idempotency.go's ADR). nil in
 		// the in-memory configuration (pgPool nil), matching every other
 		// optional Postgres-backed capability's convention here.
-		IdempotencyPool: pgPool,
+		IdempotencyPool: repos.pgPool,
 		// Readiness backs GET /readyz (ADR-0023 §graceful shutdown) --
 		// flipped to not-ready as the FIRST step of the shutdown
 		// sequence below, before anything else stops.
 		Readiness: &inboundhttp.Readiness{},
 	}
+}
 
-	router := inboundhttp.NewRouter(handlers, otelServiceName, logger)
+// serving groups everything the process needs from the moment the HTTP
+// server starts listening until it has fully drained.
+type serving struct {
+	logger                  *slog.Logger
+	httpAddr                string
+	server                  *http.Server
+	handlers                *inboundhttp.Handlers
+	relay                   *postgres.OutboxRelay
+	repos                   repositories
+	catalogue               ports.PathCatalogue
+	kafkaBrokers            string
+	recordCompletion        *usecases.RecordCompletion
+	enqueueWorkUnit         *usecases.EnqueueWorkUnit
+	cancelCatalogueConsumer context.CancelFunc
+	kafkaCatalogue          *kafkacatalog.Consumer
+}
 
-	server := &http.Server{
-		Addr:              httpAddr,
-		Handler:           router,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
+// run serves until SIGINT/SIGTERM (or a component failure), then drains.
+func (s *serving) run() error {
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("http server listening", "addr", httpAddr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		s.logger.Info("http server listening", "addr", s.httpAddr)
+		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
@@ -341,11 +457,11 @@ func run() error {
 	relayDone := make(chan struct{})
 	relayCtx, stopRelay := context.WithCancel(context.Background())
 	defer stopRelay()
-	if relay != nil {
+	if s.relay != nil {
 		go func() {
 			defer close(relayDone)
-			logger.Info("outbox relay running", "topics", []string{envelope.TopicWorkPlanningEvents, outboundkafka.AnalyticsTopic})
-			if err := relay.Run(relayCtx); err != nil && !errors.Is(err, context.Canceled) {
+			s.logger.Info("outbox relay running", "topics", []string{envelope.TopicWorkPlanningEvents, outboundkafka.AnalyticsTopic})
+			if err := s.relay.Run(relayCtx); err != nil && !errors.Is(err, context.Canceled) {
 				errCh <- err
 			}
 		}()
@@ -357,16 +473,16 @@ func run() error {
 	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
 	defer cancelConsumer()
 
-	if kafkaBrokers != "" {
-		logger.Info("consuming integration events", "brokers", kafkaBrokers)
-		observeLabor := usecases.NewObserveLaborPlan(laborPlanViews, processedEvts)
-		observeInventory := usecases.NewObserveInventoryChange(inventoryViews, processedEvts)
+	if s.kafkaBrokers != "" {
+		s.logger.Info("consuming integration events", "brokers", s.kafkaBrokers)
+		observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts)
+		observeInventory := usecases.NewObserveInventoryChange(s.repos.inventoryViews, s.repos.processedEvts)
 		groupID := consumerGroupID(os.Getenv("KAFKA_CONSUMER_GROUP"))
-		logger.Info("kafka consumer group", "group_id", groupID)
-		consumer = inboundkafka.NewConsumer(brokerList(kafkaBrokers), groupID, observeLabor, observeInventory, recordCompletion, enqueueWorkUnit, processedEvts, catalogue, logger)
+		s.logger.Info("kafka consumer group", "group_id", groupID)
+		consumer = inboundkafka.NewConsumer(brokerList(s.kafkaBrokers), groupID, observeLabor, observeInventory, s.recordCompletion, s.enqueueWorkUnit, s.repos.processedEvts, s.catalogue, s.logger)
 		go func() {
 			if err := consumer.Run(consumerCtx); err != nil {
-				logger.Error("kafka consumer stopped", "error", err)
+				s.logger.Error("kafka consumer stopped", "error", err)
 			}
 		}()
 	}
@@ -378,35 +494,41 @@ func run() error {
 	case err := <-errCh:
 		return err
 	case <-sigCh:
-		logger.Info("shutting down")
-		// Flip readiness to not-ready FIRST (ADR-0023 §graceful
-		// shutdown), before anything else stops, so a Kubernetes
-		// readinessProbe polling /readyz has a window to observe the
-		// flip and stop routing NEW traffic to this pod before the
-		// listener is closed below.
-		handlers.Readiness.SetNotReady()
-		cancelConsumer()
-		if consumer != nil {
-			_ = consumer.Close()
-		}
-		cancelCatalogueConsumer()
-		if kafkaCatalogue != nil {
-			_ = kafkaCatalogue.Close()
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		err := server.Shutdown(ctx)
-		// Let the relay finish its in-flight pass so an event committed by
-		// a request that completed just before shutdown is not stranded
-		// until the next pod boots.
-		stopRelay()
-		select {
-		case <-relayDone:
-		case <-ctx.Done():
-			logger.Warn("outbox relay did not stop before the shutdown deadline")
-		}
-		return err
+		s.logger.Info("shutting down")
+		return s.gracefulShutdown(cancelConsumer, consumer, stopRelay, relayDone)
 	}
+}
+
+// gracefulShutdown drains the process (ADR-0023 §graceful shutdown):
+// readiness flips first, consumers and the catalogue consumer stop and
+// close, the HTTP server drains within 5s, and the outbox relay is
+// allowed to finish its in-flight pass so an event committed by a
+// request that completed just before shutdown is not stranded until the
+// next pod boots.
+func (s *serving) gracefulShutdown(cancelConsumer context.CancelFunc, consumer *inboundkafka.Consumer, stopRelay context.CancelFunc, relayDone <-chan struct{}) error {
+	// Flip readiness to not-ready FIRST, before anything else stops, so
+	// a Kubernetes readinessProbe polling /readyz has a window to
+	// observe the flip and stop routing NEW traffic to this pod before
+	// the listener is closed below.
+	s.handlers.Readiness.SetNotReady()
+	cancelConsumer()
+	if consumer != nil {
+		_ = consumer.Close()
+	}
+	s.cancelCatalogueConsumer()
+	if s.kafkaCatalogue != nil {
+		_ = s.kafkaCatalogue.Close()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := s.server.Shutdown(ctx)
+	stopRelay()
+	select {
+	case <-relayDone:
+	case <-ctx.Done():
+		s.logger.Warn("outbox relay did not stop before the shutdown deadline")
+	}
+	return err
 }
 
 // newLogger builds the process-wide structured logger: JSON to stdout, at

@@ -71,11 +71,100 @@ resources:
     cpu: 100m
     memory: 128Mi
 
+# HorizontalPodAutoscaler (autoscaling/v2) per independently-scalable
+# workload type (Phase 3 scalability rollout, mirroring order-management
+# ADR-0026 — see docs/docs/adr/0025-horizontal-autoscaling-and-pgxpool-tuning.md).
+# Every block below defaults `enabled: false` so this PR cannot silently
+# change production replica behaviour on merge — the fleet turns these on
+# deliberately later, after this PR proves the shape is correct. When a
+# component's autoscaling.<x>.enabled=true, that Deployment's own
+# replicaCount / analytics.<x>.replicaCount / mcp.replicaCount value is
+# OMITTED from the rendered manifest (see each deployment template's
+# `{{- if not .Values.autoscaling.<x>.enabled }}` guard) so the HPA
+# controller is the SOLE owner of .spec.replicas — a hardcoded `replicas:`
+# field competing with the HPA would otherwise fight it on every reconcile.
 autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 5
-  targetCPUUtilizationPercentage: 80
+  # cmd/wes (this Deployment): stateless OLTP HTTP service, no
+  # in-memory session state beyond a safe rebuild-from-Kafka local cache.
+  # PATH_CATALOGUE_SOURCE=kafka wires a per-process-UNIQUE consumer
+  # group id (kafkacatalog.uniqueConsumerGroup) purely to replay a
+  # read-only cache — safe to run N independent copies of by design; the
+  # fleet's own lesson about never sharing that kind of group is exactly
+  # why it's already unique here. The only STABLE shared consumer group
+  # this binary owns is the inbound integration-event consumer
+  # (defaultConsumerGroup = "wes-work-planning", KAFKA_CONSUMER_GROUP
+  # override) — the fleet's normal horizontally-scalable pattern, N
+  # replicas share partitions via ordinary Kafka group rebalancing.
+  # Nothing here breaks at N>1. max 4 / target 70% CPU, matching
+  # order-management's identical api treatment.
+  api:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+  # cmd/wes-projector: its analytics Kafka consumer group
+  # (kafka.AnalyticsConsumerGroup == "wes-analytics") IS a stable, shared
+  # name with no per-instance uniqueness (verified in
+  # internal/adapters/inbound/kafka/analytics_consumer.go) -- the
+  # fleet's correctly-scalable pattern, same shape as order-management's
+  # equivalent projector -- so N replicas legitimately share the
+  # analytics topic's partitions via normal Kafka rebalancing, not a
+  # collision risk. Capped at 2, not left at api's 4, for the same two
+  # reasons order-management's ADR-0026 documents: (a) the analytics
+  # topic is keyed by the aggregate id (PathId/WorkUnit id --
+  # kafka.AnalyticsPublisher's marshalAnalyticsData), so ordering is
+  # only guaranteed per-aggregate/per-partition, and a wide fan-out buys
+  # little extra throughput for what is a lightweight ON CONFLICT-upsert
+  # workload; (b) every write is already idempotent on event_id via
+  # PostgresProjection's claim/ON CONFLICT DO NOTHING (ADR-0011), so
+  # correctness does not regress at 2, but there is no throughput case
+  # yet that justifies more.
+  projector:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 2
+    targetCPUUtilizationPercentage: 70
+  # cmd/wes-reports: stateless read-only REST reader over its own
+  # read-only pgxpool (analyticsstore.NewReadOnlyPool) — no in-memory
+  # state, safe to run N independent copies of. max 3 / target 70% CPU,
+  # matching order-management's identical reports treatment.
+  reports:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+  # frontend (web/, nginx-unprivileged serving the built SPA bundle):
+  # pure static-asset serving, no server-side session or per-request
+  # state whatsoever -- the most trivially horizontally scalable
+  # workload in this chart. max 3 / target 70% CPU, matching
+  # order-management's identical frontend treatment.
+  frontend:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+# mcp deliberately has NO autoscaling block here (skipped, not just
+# disabled): cmd/mcp wraps github.com/modelcontextprotocol/go-sdk/mcp's
+# StreamableHTTPHandler (internal/adapters/inbound/mcp/server.go,
+# mcp.NewStreamableHTTPHandler), which keeps a per-process, in-memory
+# session map keyed by the MCP protocol's own Mcp-Session-Id header — a
+# real session, not just a TCP/HTTP connection (same SDK, same finding
+# as order-management ADR-0026). charts/wes-work-planning/templates/
+# mcp-service.yaml is a plain ClusterIP Service with no sessionAffinity
+# configured, so a second request carrying the same Mcp-Session-Id
+# (e.g. a multi-call MCP session, initialize then a later tools/call)
+# could be routed by kube-proxy to a DIFFERENT pod than the one that
+# created the session, which has never heard of that session id and
+# would reject it. This is genuine in-memory-only per-replica state, not
+# the OLTP api Deployment's read-only/rebuild-from-Kafka kind — mcp is
+# NOT safely horizontally scalable as currently built. Making it so
+# would require either sessionAffinity: ClientIP (a partial mitigation,
+# not a fix -- it breaks the moment a client's IP changes, e.g. behind
+# an LB) or a shared/external EventStore (mcp.StreamableHTTPOptions.
+# EventStore) for session state, which is a real code change out of
+# scope for this chart-and-pgxpool-tuning PR. mcp.replicaCount therefore
+# stays a plain, un-autoscaled value (see mcp: below); revisit if/when
+# the SDK wiring adopts Stateless mode or an external session store.
 
 # --- application configuration ---
 # The service falls back to in-memory adapters and a log-only event publisher
@@ -95,6 +184,19 @@ database:
   # precedence over database.url when set.
   existingSecret: ""
   existingSecretKey: "DATABASE_URL"
+  # Key, in the same existingSecret, of a DIRECT (non-pooled, session-mode)
+  # Postgres connection string used ONLY for the golang-migrate startup
+  # step (cmd/wes's wireRepositories) -- never for the runtime pgxpool,
+  # which always uses existingSecretKey/DATABASE_URL above, unchanged.
+  # `optional: true` below so a secret that predates this key (local dev,
+  # an environment whose Terraform hasn't been rolled yet) still starts
+  # the pod: the Go binary's own getenv("MIGRATIONS_DATABASE_URL",
+  # databaseURL) fallback then makes migrations run against DATABASE_URL,
+  # exactly as before this key existed. See ADR
+  # 0026-migrations-direct-postgres-connection.md (mirroring
+  # order-management ADR-0029) for the PgBouncer/pg_advisory_lock
+  # incompatibility this key exists to route migrations around.
+  migrationsExistingSecretKey: "MIGRATIONS_DATABASE_URL"
 
 kafka:
   enabled: false

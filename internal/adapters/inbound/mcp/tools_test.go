@@ -90,6 +90,34 @@ func (h *harness) seedFlowFedPool(t *testing.T, path string, backlog, alarmThres
 	}
 }
 
+// backlogTelemetryCase is one row of TestGetBacklogTelemetry's table.
+type backlogTelemetryCase struct {
+	name      string
+	in        string
+	wantDepth int
+	wantMode  string
+	wantOver  bool
+	wantErr   bool
+}
+
+// assertBacklogTelemetry checks the happy-path output fields against the
+// case's expectations.
+func assertBacklogTelemetry(t *testing.T, out backlogTelemetry, tc backlogTelemetryCase) {
+	t.Helper()
+	if out.BacklogDepth != tc.wantDepth {
+		t.Fatalf("backlogDepth = %d, want %d", out.BacklogDepth, tc.wantDepth)
+	}
+	if out.Mode != tc.wantMode {
+		t.Fatalf("mode = %q, want %q", out.Mode, tc.wantMode)
+	}
+	if out.OverAlarmThreshold != tc.wantOver {
+		t.Fatalf("overAlarmThreshold = %v, want %v", out.OverAlarmThreshold, tc.wantOver)
+	}
+	if out.PathId != tc.in {
+		t.Fatalf("pathId = %q, want %q", out.PathId, tc.in)
+	}
+}
+
 func TestGetBacklogTelemetry(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -97,14 +125,7 @@ func TestGetBacklogTelemetry(t *testing.T) {
 	h.seedPending(t, "pick-a", 2*time.Hour, "o2")
 	h.seedFlowFedPool(t, "pack-a", 5, 2) // backlog 5 > threshold 2 => over alarm
 
-	tests := []struct {
-		name      string
-		in        string
-		wantDepth int
-		wantMode  string
-		wantOver  bool
-		wantErr   bool
-	}{
+	tests := []backlogTelemetryCase{
 		{"release-fed backlog 2", "pick-a", 2, "ReleaseFed", false, false},
 		{"flow-fed over alarm", "pack-a", 5, "FlowFed", true, false},
 		{"empty pathId rejected", "", 0, "", false, true},
@@ -122,18 +143,7 @@ func TestGetBacklogTelemetry(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if out.BacklogDepth != tc.wantDepth {
-				t.Fatalf("backlogDepth = %d, want %d", out.BacklogDepth, tc.wantDepth)
-			}
-			if out.Mode != tc.wantMode {
-				t.Fatalf("mode = %q, want %q", out.Mode, tc.wantMode)
-			}
-			if out.OverAlarmThreshold != tc.wantOver {
-				t.Fatalf("overAlarmThreshold = %v, want %v", out.OverAlarmThreshold, tc.wantOver)
-			}
-			if out.PathId != tc.in {
-				t.Fatalf("pathId = %q, want %q", out.PathId, tc.in)
-			}
+			assertBacklogTelemetry(t, out, tc)
 		})
 	}
 }

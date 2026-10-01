@@ -36,6 +36,18 @@ type ProcessedEventRepo interface {
 	TryMarkProcessed(ctx context.Context, eventId string, processedAt time.Time) (alreadyProcessed bool, err error)
 }
 
+// ProcessedEventReleaser is an OPTIONAL capability of a ProcessedEventRepo
+// that has no transactional backing (the in-memory adapter). When an
+// inbound-event use case runs without a UnitOfWork, its processed-event
+// mark cannot be rolled back with a failed effect, so the use case calls
+// ReleaseProcessed to undo the mark instead; the next retry of the same
+// event then re-applies it rather than skipping it as a redelivery
+// (ADR-0028). A transactional repo (Postgres) never needs it: the mark is
+// written in the UnitOfWork's transaction and rolls back on its own.
+type ProcessedEventReleaser interface {
+	ReleaseProcessed(ctx context.Context, eventId string) error
+}
+
 // ProductClassificationLookup is the outbound port for the synchronous
 // cross-context read from inventory-storage's product-classification
 // endpoint (GET /products/{sku}/classification), used at work-release time

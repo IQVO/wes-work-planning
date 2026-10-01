@@ -52,9 +52,8 @@ func newFulfillmentFixture() fulfillmentFixture {
 		workUnits: workUnits,
 		processed: processed,
 		consumer: &Consumer{
-			recordCompletion: recordCompletion,
-			processed:        processed,
-			catalogue:        testCatalogue(),
+			applyTaskCompleted: usecases.NewApplyTaskCompleted(recordCompletion, processed),
+			catalogue:          testCatalogue(),
 		},
 	}.withReleasedUnit(pools, publisher, clock, workUnits)
 }
@@ -184,9 +183,8 @@ func newOrderManagementFixture() orderManagementFixture {
 		pools:     pools,
 		processed: processed,
 		consumer: &Consumer{
-			enqueueWorkUnit: enqueueWorkUnit,
-			processed:       processed,
-			catalogue:       testCatalogue(),
+			applyOrderAllocated: usecases.NewApplyOrderAllocated(enqueueWorkUnit, processed, testCatalogue()),
+			catalogue:           testCatalogue(),
 		},
 	}
 }

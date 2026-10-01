@@ -316,6 +316,18 @@ curl "localhost:8080/work-units?reference=order-line-1"
 Every work unit ever enqueued with that `reference` (order-management's order
 id), as an array. Read-only; an unknown reference returns `200` with `[]`.
 
+### `GET /work-units/{id}` — GetWorkUnit
+
+```sh
+curl localhost:8080/work-units/wu-1
+```
+
+One work unit by its own id (the same `WorkUnitResponse` shape as the other
+work-unit endpoints: `id`, `pathId`, `cpt`, `reference`, `state`, `giftWrap`,
+optional `sku`/`releasedAt`/`completedAt`). Read-only; an unknown id returns
+`404` (`not-found`). Use this instead of parsing a work unit id to recover
+its order reference or SKU.
+
 ### `GET /inventory-view/{sku}` — InventoryView (read model)
 
 ```sh

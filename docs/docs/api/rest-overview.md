@@ -27,7 +27,7 @@ in the [ubiquitous language](../business-context/ubiquitous-language.md):
 |---|---|
 | **Charge Forecast** | The volume that must clear a path, bucketed by CPT |
 | **Shift Plan** | *This* context's committed rate × heads × hours split |
-| **Work Units** | Enqueue a releasable unit; record its completion |
+| **Work Units** | Enqueue a releasable unit; read one by id or look units up by reference; record its completion |
 | **Release** | Continuous, priority-ordered admission (waveless) |
 | **Telemetry** | Live buffer read model — backlog depth, WIP, feed mode |
 | **Rebalance** | Flow-balancing recommendation (Drum-Buffer-Rope) |

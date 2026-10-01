@@ -16,6 +16,9 @@
 #     "returns every WorkUnit ever enqueued against a caller-supplied
 #     reference (order-management's OrderId), array-shaped,
 #     side-effect-free".
+#   - apis/openapi.yaml — "getWorkUnit" (GET /work-units/{id}: the same
+#     WorkUnitResponse shape as getWorkUnitsByReference, resolved by the
+#     unit's own identity; 404 not-found for an unknown id).
 #   - docs/docs/api/errors.md — "The full catalogue": not-found (404) and
 #     reference-required (400) type URIs.
 Feature: Read-only projections observed from neighbouring bounded contexts
@@ -76,3 +79,22 @@ Feature: Read-only projections observed from neighbouring bounded contexts
     Then the request is rejected with status 400
     And the problem detail title is "Reference query parameter is required"
     And the problem detail type is "https://errors.wes-work-planning.warehouse-systems.dev/reference-required"
+
+  @bdd
+  Scenario: A work unit is read by its own identity
+    Given a WorkUnit "order-77213-line-1" with CPT "2026-08-21T10:00:00Z" and reference "order-77213" is enqueued to process path "pick-zone-a"
+    And a WorkUnit "order-77213-line-2" with CPT "2026-08-21T12:00:00Z" and reference "order-77213" is enqueued to process path "pick-zone-a"
+    When the WorkUnit "order-77213-line-1" is requested by its id
+    Then the request is accepted with status 200
+    And the WorkUnit in the response has id "order-77213-line-1"
+    And the WorkUnit in the response has reference "order-77213"
+    And the WorkUnit in the response has pathId "pick-zone-a"
+    And the WorkUnit in the response has cpt "2026-08-21T10:00:00Z"
+    And the WorkUnit in the response has state "Pending"
+
+  @bdd
+  Scenario: Reading an unknown work unit by id is rejected as not found
+    When the WorkUnit "order-00000-line-9" is requested by its id
+    Then the request is rejected with status 404
+    And the problem detail title is "Resource not found"
+    And the problem detail type is "https://errors.wes-work-planning.warehouse-systems.dev/not-found"

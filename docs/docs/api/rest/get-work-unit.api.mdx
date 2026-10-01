@@ -1,0 +1,70 @@
+---
+id: get-work-unit
+title: "Get one work unit by its own identity"
+description: "Returns a single `WorkUnit` resolved by its own `workUnitId` — the GetWorkUnit use case. This is the identity lookup, distinct from `GET /work-units?reference=` (which looks units up by their UPSTREAM order-line reference and always returns an array). A client holding only a work unit id — e.g. an associate's RF gun that claimed a PICK task from fulfillment-execution, whose `orderRef` is this service's `workUnitId` — reads the unit's `sku`, upstream `reference`, `pathId`, `cpt` and `state` here instead of parsing the id string (ids are opaque to clients). Read-only and side-effect-free; the response shape is the same `WorkUnitResponse` the other work-unit endpoints return. An unknown id returns `404` (`not-found`)."
+sidebar_label: "Get one work unit by its own identity"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api/rest/wes-work-planning-release
+custom_edit_url: null
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Get one work unit by its own identity"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/work-units/{id}"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Returns a single `WorkUnit` resolved by its own `workUnitId` — the GetWorkUnit use case. This is the identity lookup, distinct from `GET /work-units?reference=` (which looks units up by their UPSTREAM order-line reference and always returns an array). A client holding only a work unit id — e.g. an associate's RF gun that claimed a PICK task from fulfillment-execution, whose `orderRef` is this service's `workUnitId` — reads the unit's `sku`, upstream `reference`, `pathId`, `cpt` and `state` here instead of parsing the id string (ids are opaque to clients). Read-only and side-effect-free; the response shape is the same `WorkUnitResponse` the other work-unit endpoints return. An unknown id returns `404` (`not-found`).
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-work-unit.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-work-unit.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-work-unit.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

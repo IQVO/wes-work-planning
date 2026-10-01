@@ -108,3 +108,5 @@ rest are published for observability/future subscribers.
 8. `GetWorkUnitsByReference(reference)` → read-only, backs the fleet's
    cross-service Order Lifecycle console screen (see ADR-0002 in
    `warehouse-ops-agent`'s docs)
+9. `GetWorkUnit(workUnitId)` → read-only identity lookup of one WorkUnit
+   (`GET /work-units/{id}`); unknown id → `ports.ErrNotFound` (404)

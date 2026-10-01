@@ -402,6 +402,7 @@ func newHandlers(repos repositories, publisher ports.EventPublisher, clock memor
 		LaborPlanView:           usecases.NewLaborPlanView(repos.laborPlanViews),
 		InventoryView:           usecases.NewInventoryView(repos.inventoryViews),
 		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(repos.workUnits),
+		GetWorkUnit:             usecases.NewGetWorkUnit(repos.workUnits),
 		// IdempotencyPool wires RequireIdempotencyKey onto POST
 		// /paths/{pathId}/work-units (see idempotency.go's ADR). nil in
 		// the in-memory configuration (pgPool nil), matching every other

@@ -17,7 +17,7 @@ Spectral on every push and pull request:
 | **REST** — OpenAPI 3.0.3 | [`apis/openapi.yaml`](https://github.com/claudioed/wes-work-planning/blob/main/apis/openapi.yaml) | [REST API](./rest-overview.md) — **generated from the spec**, not hand-transcribed |
 | **Events** — AsyncAPI 2.6.0 | [`apis/asyncapi.yaml`](https://github.com/claudioed/wes-work-planning/blob/main/apis/asyncapi.yaml) | [Events](./events.md) |
 
-## Endpoint coverage: 10 / 10
+## Endpoint coverage: 12 / 12
 
 Every route registered in `internal/adapters/inbound/http/router.go` is
 documented in `apis/openapi.yaml`, and therefore appears in the generated
@@ -34,7 +34,9 @@ reference.
 | 7 | `GET` | `/paths/{pathId}/rebalance` | RebalanceDecision | `rebalanceDecision` |
 | 8 | `GET` | `/paths/{pathId}/labor-plan-view` | LaborPlanView (projection) | `getLaborPlanView` |
 | 9 | `GET` | `/inventory-view/{sku}` | InventoryView (projection) | `getInventoryView` |
-| 10 | `GET` | `/healthz` | — | `healthCheck` |
+| 10 | `GET` | `/work-units?reference=` | GetWorkUnitsByReference | `getWorkUnitsByReference` |
+| 11 | `GET` | `/work-units/{id}` | GetWorkUnit | `getWorkUnit` |
+| 12 | `GET` | `/healthz` | — | `healthCheck` |
 
 ## Design constraints
 

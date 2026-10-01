@@ -1,13 +1,13 @@
 // Package kafka is the outbound Kafka adapter: it implements
-// ports.EventPublisher on top of github.com/segmentio/kafka-go, serializing
-// each domain event into the shared integration-event envelope and writing
-// it to this service's own topic.
+// ports.EventPublisher on top of github.com/segmentio/kafka-go, encoding
+// each domain event as a CloudEvents 1.0 event (structured content mode,
+// via internal/adapters/kafka/cloudevents) and writing it to this
+// service's own topics.
 package kafka
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
@@ -16,7 +16,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/otelkafka"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
@@ -32,39 +32,6 @@ const (
 	hazmatTag  = "Hazmat"
 	fragileTag = "Fragile"
 )
-
-// EnvelopeMode selects which wire shape(s) Encode produces onto the
-// integration topic (ADR-0021). The zero value is EnvelopeModeFlat, so a
-// Publisher constructed without WithEnvelopeMode keeps writing today's
-// envelope unchanged.
-type EnvelopeMode string
-
-const (
-	// EnvelopeModeFlat emits only the legacy Envelope shape — today's
-	// wire format, byte-identical. Default.
-	EnvelopeModeFlat EnvelopeMode = "flat"
-	// EnvelopeModeCloudEvents emits only the new CloudEvents 1.0 shape.
-	EnvelopeModeCloudEvents EnvelopeMode = "cloudevents"
-	// EnvelopeModeDual emits BOTH shapes as two physical Kafka messages
-	// per domain event, same topic, same key.
-	EnvelopeModeDual EnvelopeMode = "dual"
-)
-
-// ParseEnvelopeMode maps EVENT_ENVELOPE_MODE's raw env var value onto an
-// EnvelopeMode, defaulting to EnvelopeModeFlat for an empty or unrecognized
-// value — mirroring this fleet's existing *_MODE convention (e.g.
-// PRODUCT_CLASSIFICATION_MODE, PATH_CATALOGUE_SOURCE), which fails soft to
-// today's behavior rather than refusing to boot on a typo.
-func ParseEnvelopeMode(raw string) EnvelopeMode {
-	switch EnvelopeMode(raw) {
-	case EnvelopeModeCloudEvents:
-		return EnvelopeModeCloudEvents
-	case EnvelopeModeDual:
-		return EnvelopeModeDual
-	default:
-		return EnvelopeModeFlat
-	}
-}
 
 // IDGenerator returns a fresh event ID (a UUID v4 in production).
 type IDGenerator func() string
@@ -83,17 +50,6 @@ type Publisher struct {
 	newID           IDGenerator
 	workUnits       ports.WorkUnitRepo
 	classifications ports.ProductClassificationLookup
-	envelopeMode    EnvelopeMode
-}
-
-// PublisherOption customises a Publisher at construction time.
-type PublisherOption func(*Publisher)
-
-// WithEnvelopeMode sets which wire shape(s) the Publisher's Encode
-// produces (ADR-0021). Omitting this option keeps EnvelopeModeFlat —
-// today's byte-identical output — for every existing caller.
-func WithEnvelopeMode(mode EnvelopeMode) PublisherOption {
-	return func(p *Publisher) { p.envelopeMode = mode }
 }
 
 // NewPublisher constructs a Publisher writing to TopicWorkPlanningEvents on
@@ -113,40 +69,35 @@ func WithEnvelopeMode(mode EnvelopeMode) PublisherOption {
 // volume and ignores Message.Key entirely for partition placement. Hash
 // is the balancer that actually gives "same Key always maps to the same
 // partition", which every message this adapter builds relies on for
-// per-aggregate ordering (see encodeFlat/encodeCloudEvent, which key
-// every message by the event id) now that warehouse-infra PR #42 scaled
+// per-aggregate ordering (see encodeCloudEvent, which keys every message
+// by the event id) now that warehouse-infra PR #42 scaled
 // this topic from 1 to 8 partitions.
-func NewPublisher(brokers []string, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, newID IDGenerator, opts ...PublisherOption) *Publisher {
+func NewPublisher(brokers []string, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, newID IDGenerator) *Publisher {
 	return NewPublisherWithWriter(&kafkago.Writer{
 		Addr:                   kafkago.TCP(brokers...),
-		Topic:                  envelope.TopicWorkPlanningEvents,
+		Topic:                  cloudevents.TopicWorkPlanningEvents,
 		Balancer:               &kafkago.Hash{},
 		AllowAutoTopicCreation: true,
-	}, workUnits, classifications, newID, opts...)
+	}, workUnits, classifications, newID)
 }
 
 // NewPublisherWithWriter builds a Publisher against an already-constructed
 // Writer — the seam unit tests use to substitute a fake without a real
 // broker; production code should use NewPublisher.
-func NewPublisherWithWriter(writer Writer, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, newID IDGenerator, opts ...PublisherOption) *Publisher {
-	p := &Publisher{
+func NewPublisherWithWriter(writer Writer, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, newID IDGenerator) *Publisher {
+	return &Publisher{
 		writer:          writer,
 		newID:           newID,
 		workUnits:       workUnits,
 		classifications: classifications,
-		envelopeMode:    EnvelopeModeFlat,
 	}
-	for _, opt := range opts {
-		opt(p)
-	}
-	return p
 }
 
 func (p *Publisher) Close() error {
 	return p.writer.Close()
 }
 
-// Publish writes one envelope per domain event inside a single
+// Publish writes one CloudEvent per domain event inside a single
 // "kafka.publish <topic>" producer span, injecting that span's W3C trace
 // context into every message's headers so the consuming service continues
 // the same distributed trace. It is Encode followed by WriteMessages.
@@ -155,7 +106,7 @@ func (p *Publisher) Publish(ctx context.Context, events ...shared.DomainEvent) e
 		return nil
 	}
 
-	ctx, span := otelkafka.StartPublishSpan(ctx, envelope.TopicWorkPlanningEvents,
+	ctx, span := otelkafka.StartPublishSpan(ctx, cloudevents.TopicWorkPlanningEvents,
 		semconv.MessagingBatchMessageCount(len(events)),
 	)
 	defer span.End()
@@ -180,20 +131,16 @@ func (p *Publisher) Publish(ctx context.Context, events ...shared.DomainEvent) e
 	return nil
 }
 
-// Encode builds the integration-topic wire form of every event — the
-// envelope, the enriched WorkReleased data payload (which READS the
-// WorkUnit repo, so under the transactional outbox this must run inside
-// the use case's transaction to see the just-saved row), and the W3C trace
+// Encode builds the integration-topic wire form of every event — one
+// CloudEvents 1.0 event per domain event (ADR-0027), the enriched
+// WorkReleased data payload (which READS the WorkUnit repo, so under the
+// transactional outbox this must run inside the use case's transaction to
+// see the just-saved row), the content-type header and the W3C trace
 // headers of whatever span is active on ctx. It never touches the broker.
 //
-// The wire SHAPE(S) built depend on p.envelopeMode (ADR-0021):
-// EnvelopeModeFlat (default) emits one legacy Envelope-shaped message per
-// event, byte-identical to this adapter's original output.
-// EnvelopeModeCloudEvents emits one CloudEvents 1.0-shaped message per
-// event instead. EnvelopeModeDual emits BOTH — two physical messages per
-// event, same topic, same key (the event id) — so a dual-read-capable
-// consumer's existing event_id-keyed idempotency gate silently no-ops
-// whichever message arrives second.
+// The CloudEvents `id` is minted here exactly once per domain event; it is
+// what the outbox persists and the relay republishes verbatim, so a
+// redelivery carries the same id.
 func (p *Publisher) Encode(ctx context.Context, events ...shared.DomainEvent) ([]Encoded, error) {
 	out := make([]Encoded, 0, len(events))
 	for _, e := range events {
@@ -201,118 +148,59 @@ func (p *Publisher) Encode(ctx context.Context, events ...shared.DomainEvent) ([
 		if err != nil {
 			return nil, err
 		}
-		id := p.newID()
-
-		switch p.envelopeMode {
-		case EnvelopeModeCloudEvents:
-			ce, err := p.encodeCloudEvent(ctx, e, id, data)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, ce)
-		case EnvelopeModeDual:
-			flat, err := p.encodeFlat(ctx, e, id, data)
-			if err != nil {
-				return nil, err
-			}
-			ce, err := p.encodeCloudEvent(ctx, e, id, data)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, flat, ce)
-		default:
-			flat, err := p.encodeFlat(ctx, e, id, data)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, flat)
+		enc, err := encodeCloudEvent(ctx, cloudevents.TopicWorkPlanningEvents, cloudevents.StreamEvents, p.newID(), e, subjectFor(e), data)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, enc)
 	}
 	return out, nil
 }
 
-// encodeFlat builds one legacy envelope.Envelope-shaped Encoded for e,
-// keyed and traced identically to this adapter's original (pre-ADR-0021)
-// Encode. id is the event id minted once by the caller, shared with
-// encodeCloudEvent in dual mode so both physical messages carry the same
-// Kafka key.
-func (p *Publisher) encodeFlat(ctx context.Context, e shared.DomainEvent, id string, data json.RawMessage) (Encoded, error) {
-	env := envelope.Envelope{
-		EventId:    id,
-		EventType:  e.EventName(),
-		OccurredAt: e.OccurredAt(),
-		Source:     envelope.Source,
-		Data:       data,
-	}
-	body, err := json.Marshal(env)
+// encodeCloudEvent builds one structured-mode CloudEvents Encoded for e on
+// topic/stream. Key is the event id (integration topic) — see NewPublisher's
+// doc comment; the analytics publisher passes its own aggregate-id key via
+// encodeCloudEventKeyed.
+func encodeCloudEvent(ctx context.Context, topic, stream, id string, e shared.DomainEvent, subject string, data json.RawMessage) (Encoded, error) {
+	return encodeCloudEventKeyed(ctx, topic, stream, id, id, e, subject, data)
+}
+
+// encodeCloudEventKeyed is encodeCloudEvent with an explicit Kafka key.
+func encodeCloudEventKeyed(ctx context.Context, topic, stream, id, key string, e shared.DomainEvent, subject string, data json.RawMessage) (Encoded, error) {
+	entity := entityFor(e)
+	body, err := cloudevents.New(cloudevents.Spec{
+		ID:        id,
+		Entity:    entity,
+		EventName: e.EventName(),
+		Subject:   subject,
+		Time:      e.OccurredAt(),
+		Stream:    stream,
+		Version:   1,
+		Data:      data,
+	})
 	if err != nil {
 		return Encoded{}, err
 	}
 
-	msg := kafkago.Message{Key: []byte(env.EventId), Value: body}
+	msg := kafkago.Message{
+		Key:     []byte(key),
+		Value:   body,
+		Headers: []kafkago.Header{cloudevents.ContentTypeHeader()},
+	}
 	otelkafka.Inject(ctx, &msg)
 	return Encoded{
-		Topic:     envelope.TopicWorkPlanningEvents,
-		EventType: env.EventType,
+		Topic:     topic,
+		EventType: cloudevents.Type(entity, e.EventName()),
 		Key:       msg.Key,
 		Value:     msg.Value,
 		Headers:   msg.Headers,
 	}, nil
-}
-
-// encodeCloudEvent builds one CloudEvents 1.0-shaped Encoded for e,
-// matching apis/asyncapi.yaml's documented schema verbatim (ADR-0021). id
-// and data are shared with encodeFlat in dual mode: the "data" payload is
-// byte-identical either way, and both physical messages carry the same
-// Kafka key.
-func (p *Publisher) encodeCloudEvent(ctx context.Context, e shared.DomainEvent, id string, data json.RawMessage) (Encoded, error) {
-	ce := envelope.CloudEvent{
-		SpecVersion:     envelope.CloudEventsSpecVersion,
-		Id:              id,
-		Type:            cloudEventsType(entityFor(e), e.EventName()),
-		Source:          envelope.SourceURI,
-		Subject:         subjectFor(e),
-		Time:            e.OccurredAt(),
-		DataContentType: envelope.CloudEventsDataContentType,
-		Data:            data,
-	}
-	body, err := json.Marshal(ce)
-	if err != nil {
-		return Encoded{}, err
-	}
-
-	msg := kafkago.Message{Key: []byte(ce.Id), Value: body}
-	otelkafka.Inject(ctx, &msg)
-	return Encoded{
-		Topic:     envelope.TopicWorkPlanningEvents,
-		EventType: e.EventName(),
-		Key:       msg.Key,
-		Value:     msg.Value,
-		Headers:   msg.Headers,
-	}, nil
-}
-
-// cloudEventsSubdomain and cloudEventsBoundedContext are the two fixed
-// segments of this service's CloudEvents "type" convention — already named
-// in apis/asyncapi.yaml's "type naming convention" section, reused verbatim
-// here rather than re-derived.
-const (
-	cloudEventsSubdomain      = "wes"
-	cloudEventsBoundedContext = "work-planning"
-)
-
-// cloudEventsType builds the reverse-DNS CloudEvents "type" context
-// attribute apis/asyncapi.yaml already documents:
-// com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>. A pure
-// function so it is trivially unit-testable independent of any Publisher.
-func cloudEventsType(entity, eventName string) string {
-	return fmt.Sprintf("com.warehouse.%s.%s.%s.%s", cloudEventsSubdomain, cloudEventsBoundedContext, entity, eventName)
 }
 
 // eventTypeEntity maps each domain event's bare EventName to the
-// CloudEvents "type" entity segment apis/asyncapi.yaml already documents
-// for it (that message's own `tags` entry) — read straight off the spec,
-// never invented.
+// CloudEvents "type" entity segment apis/asyncapi.yaml documents for it
+// (that message's own `tags` entry) — read straight off the spec, never
+// invented. The same type is used on the integration and analytics topics.
 var eventTypeEntity = map[string]string{
 	"ChargeForecastReceived":   "charge",
 	"ShiftPlanCommitted":       "plan",
@@ -328,8 +216,7 @@ var eventTypeEntity = map[string]string{
 
 // entityFor looks up e's CloudEvents type entity segment in
 // eventTypeEntity. An event type with no documented entity (none exist
-// today, but this keeps cloudevents mode fail-soft rather than panicking on
-// a future undocumented event type) falls back to "unknown".
+// today) falls back to "unknown" rather than panicking.
 func entityFor(e shared.DomainEvent) string {
 	if entity, ok := eventTypeEntity[e.EventName()]; ok {
 		return entity

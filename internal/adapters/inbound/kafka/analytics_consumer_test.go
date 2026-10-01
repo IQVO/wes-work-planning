@@ -2,12 +2,13 @@ package kafka_test
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
 
 	inboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/inbound/kafka"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 )
 
 // projCall captures one projection-store method invocation.
@@ -60,23 +61,32 @@ func (p *fakeProcessed) MarkProcessed(_ context.Context, eventId string) (bool, 
 	return true, nil
 }
 
-func analyticsEnvelopeBytes(t *testing.T, eventId, eventType string, at time.Time, data map[string]any) []byte {
+// analyticsEntity is the CloudEvents type entity segment per analytics event.
+var analyticsEntity = map[string]string{
+	"WorkReleased":             "workunit",
+	"WorkUnitCompleted":        "workunit",
+	"WorkUnitCreated":          "workunit",
+	"BacklogThresholdBreached": "workpool",
+	"PathThrottled":            "workpool",
+	"RateDeviationDetected":    "workpool",
+}
+
+// analyticsEnvelopeBytes builds the exact wire bytes the AnalyticsPublisher
+// produces: a CloudEvents 1.0 event with the analytics dataschema.
+func analyticsEnvelopeBytes(t *testing.T, eventId, eventName string, at time.Time, data map[string]any) []byte {
 	t.Helper()
-	raw, err := json.Marshal(data)
+	b, err := cloudevents.New(cloudevents.Spec{
+		ID:        eventId,
+		Entity:    analyticsEntity[eventName],
+		EventName: eventName,
+		Subject:   "pick-zone-a",
+		Time:      at,
+		Stream:    cloudevents.StreamAnalytics,
+		Version:   1,
+		Data:      data,
+	})
 	if err != nil {
-		t.Fatalf("marshal data: %v", err)
-	}
-	env := map[string]any{
-		"event_id":       eventId,
-		"event_type":     eventType,
-		"occurred_at":    at.Format(time.RFC3339Nano),
-		"source":         "wes-work-planning",
-		"schema_version": 1,
-		"data":           json.RawMessage(raw),
-	}
-	b, err := json.Marshal(env)
-	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
+		t.Fatalf("build CloudEvent: %v", err)
 	}
 	return b
 }
@@ -158,5 +168,23 @@ func TestAnalyticsConsumer_IgnoresNonProjectingEventType(t *testing.T) {
 	// contract change could reprocess it.
 	if processed.seen["e1"] {
 		t.Error("non-projecting event should not be marked processed")
+	}
+}
+
+// TestAnalyticsConsumer_RejectsLegacyFlatEnvelope: a retired flat-envelope
+// message (event_id/event_type/occurred_at/schema_version) is never parsed:
+// it is rejected as ErrNotCloudEvent, nothing is projected or marked.
+func TestAnalyticsConsumer_RejectsLegacyFlatEnvelope(t *testing.T) {
+	proj := &fakeProjection{}
+	processed := newFakeProcessed()
+	c := &inboundkafka.AnalyticsConsumer{Projection: proj, Processed: processed, Logger: slog.Default()}
+
+	flat := []byte(`{"event_id":"legacy-1","event_type":"WorkReleased","occurred_at":"2026-05-01T08:00:00Z","source":"wes-work-planning","schema_version":1,"data":{"path_id":"pick-zone-a"}}`)
+	err := c.HandleMessage(context.Background(), flat)
+	if !errors.Is(err, cloudevents.ErrNotCloudEvent) {
+		t.Fatalf("HandleMessage error = %v, want ErrNotCloudEvent", err)
+	}
+	if len(proj.calls) != 0 || len(processed.seen) != 0 {
+		t.Fatalf("legacy message must not be projected or marked: calls=%d seen=%v", len(proj.calls), processed.seen)
 	}
 }

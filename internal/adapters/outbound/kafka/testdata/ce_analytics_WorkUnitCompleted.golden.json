@@ -1,0 +1,14 @@
+{
+  "specversion": "1.0",
+  "id": "22222222-2222-4222-8222-222222222222",
+  "source": "/warehouse/wes-work-planning",
+  "type": "com.warehouse.wes.work-planning.workunit.WorkUnitCompleted",
+  "subject": "wu-gold",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:wes-work-planning:analytics:WorkUnitCompleted:v1",
+  "time": "2026-09-30T12:00:00Z",
+  "data": {
+    "path_id": "pick-a",
+    "work_unit_id": "wu-gold"
+  }
+}

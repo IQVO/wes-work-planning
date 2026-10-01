@@ -2,24 +2,13 @@ package kafka_test
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 )
-
-// analyticsEnv is the decode shape of the analytics envelope, for asserting
-// on what the AnalyticsPublisher wrote.
-type analyticsEnv struct {
-	EventId       string          `json:"event_id"`
-	EventType     string          `json:"event_type"`
-	OccurredAt    time.Time       `json:"occurred_at"`
-	Source        string          `json:"source"`
-	SchemaVersion int             `json:"schema_version"`
-	Data          json.RawMessage `json:"data"`
-}
 
 func newAnalyticsID() outboundkafka.IDGenerator {
 	n := 0
@@ -38,7 +27,7 @@ func mustPathId(t *testing.T, s string) shared.PathId {
 	return p
 }
 
-// analyticsCase is one row of TestAnalyticsPublisher_EmitsEnvelopePerEvent's
+// analyticsCase is one row of TestAnalyticsPublisher_EmitsCloudEventPerEvent's
 // table.
 type analyticsCase struct {
 	name     string
@@ -50,7 +39,7 @@ type analyticsCase struct {
 }
 
 // assertAnalyticsMessage decodes one written message and asserts the
-// analytics wire form: the envelope's fixed fields plus the data payload's
+// analytics wire form: the CloudEvent context attributes plus the data payload's
 // path/work-unit identity.
 func assertAnalyticsMessage(t *testing.T, key, value []byte, tt analyticsCase, at time.Time) {
 	t.Helper()
@@ -58,28 +47,28 @@ func assertAnalyticsMessage(t *testing.T, key, value []byte, tt analyticsCase, a
 		t.Errorf("key = %q, want %q", key, tt.wantKey)
 	}
 
-	var env analyticsEnv
-	if err := json.Unmarshal(value, &env); err != nil {
-		t.Fatalf("decode envelope: %v", err)
+	env, err := cloudevents.Decode(value)
+	if err != nil {
+		t.Fatalf("decode CloudEvent: %v", err)
 	}
-	if env.EventType != tt.wantType {
-		t.Errorf("event_type = %q, want %q", env.EventType, tt.wantType)
+	if env.Type() != tt.wantType {
+		t.Errorf("type = %q, want %q", env.Type(), tt.wantType)
 	}
-	if env.Source != "wes-work-planning" {
-		t.Errorf("source = %q, want wes-work-planning", env.Source)
+	if env.Source() != "/warehouse/wes-work-planning" {
+		t.Errorf("source = %q, want /warehouse/wes-work-planning", env.Source())
 	}
-	if env.SchemaVersion != 1 {
-		t.Errorf("schema_version = %d, want 1", env.SchemaVersion)
+	if env.Subject() != tt.wantKey {
+		t.Errorf("subject = %q, want %q (the aggregate id)", env.Subject(), tt.wantKey)
 	}
-	if env.EventId == "" {
-		t.Error("event_id is empty")
+	if env.ID() == "" {
+		t.Error("id is empty")
 	}
-	if !env.OccurredAt.Equal(at) {
-		t.Errorf("occurred_at = %v, want %v", env.OccurredAt, at)
+	if !env.Time().Equal(at) {
+		t.Errorf("time = %v, want %v", env.Time(), at)
 	}
 
 	var data map[string]any
-	if err := json.Unmarshal(env.Data, &data); err != nil {
+	if err := env.DataAs(&data); err != nil {
 		t.Fatalf("decode data: %v", err)
 	}
 	if data["path_id"] != tt.wantPath {
@@ -90,21 +79,21 @@ func assertAnalyticsMessage(t *testing.T, key, value []byte, tt analyticsCase, a
 	}
 }
 
-func TestAnalyticsPublisher_EmitsEnvelopePerEvent(t *testing.T) {
+func TestAnalyticsPublisher_EmitsCloudEventPerEvent(t *testing.T) {
 	at := time.Date(2026, 5, 1, 8, 0, 0, 0, time.UTC)
 	pathId := mustPathId(t, "pick-zone-a")
 
 	tests := []analyticsCase{
-		{"work released", shared.NewWorkReleased("wu-1", pathId, at), "WorkReleased", "wu-1", "pick-zone-a", "wu-1"},
-		{"work completed", shared.NewWorkUnitCompleted("wu-2", pathId, at), "WorkUnitCompleted", "wu-2", "pick-zone-a", "wu-2"},
-		{"work created", shared.NewWorkUnitCreated("wu-3", pathId, at), "WorkUnitCreated", "wu-3", "pick-zone-a", "wu-3"},
-		{"backlog breach", shared.NewBacklogThresholdBreached(pathId, at), "BacklogThresholdBreached", "pick-zone-a", "pick-zone-a", ""},
-		{"path throttled", shared.NewPathThrottled(pathId, at), "PathThrottled", "pick-zone-a", "pick-zone-a", ""},
-		{"rate deviation", shared.NewRateDeviationDetected(pathId, at), "RateDeviationDetected", "pick-zone-a", "pick-zone-a", ""},
-		{"charge forecast", shared.NewChargeForecastReceived(pathId, at), "ChargeForecastReceived", "pick-zone-a", "pick-zone-a", ""},
-		{"shift plan", shared.NewShiftPlanCommitted(pathId, at), "ShiftPlanCommitted", "pick-zone-a", "pick-zone-a", ""},
-		{"labor reassign", shared.NewLaborReassignmentFlagged(pathId, at), "LaborReassignmentFlagged", "pick-zone-a", "pick-zone-a", ""},
-		{"path capacity changed", shared.NewPathCapacityChanged(pathId, at.Add(time.Hour), 4, true, at), "PathCapacityChanged", "pick-zone-a", "pick-zone-a", ""},
+		{"work released", shared.NewWorkReleased("wu-1", pathId, at), "com.warehouse.wes.work-planning.workunit.WorkReleased", "wu-1", "pick-zone-a", "wu-1"},
+		{"work completed", shared.NewWorkUnitCompleted("wu-2", pathId, at), "com.warehouse.wes.work-planning.workunit.WorkUnitCompleted", "wu-2", "pick-zone-a", "wu-2"},
+		{"work created", shared.NewWorkUnitCreated("wu-3", pathId, at), "com.warehouse.wes.work-planning.workunit.WorkUnitCreated", "wu-3", "pick-zone-a", "wu-3"},
+		{"backlog breach", shared.NewBacklogThresholdBreached(pathId, at), "com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached", "pick-zone-a", "pick-zone-a", ""},
+		{"path throttled", shared.NewPathThrottled(pathId, at), "com.warehouse.wes.work-planning.workpool.PathThrottled", "pick-zone-a", "pick-zone-a", ""},
+		{"rate deviation", shared.NewRateDeviationDetected(pathId, at), "com.warehouse.wes.work-planning.workpool.RateDeviationDetected", "pick-zone-a", "pick-zone-a", ""},
+		{"charge forecast", shared.NewChargeForecastReceived(pathId, at), "com.warehouse.wes.work-planning.charge.ChargeForecastReceived", "pick-zone-a", "pick-zone-a", ""},
+		{"shift plan", shared.NewShiftPlanCommitted(pathId, at), "com.warehouse.wes.work-planning.plan.ShiftPlanCommitted", "pick-zone-a", "pick-zone-a", ""},
+		{"labor reassign", shared.NewLaborReassignmentFlagged(pathId, at), "com.warehouse.wes.work-planning.workpool.LaborReassignmentFlagged", "pick-zone-a", "pick-zone-a", ""},
+		{"path capacity changed", shared.NewPathCapacityChanged(pathId, at.Add(time.Hour), 4, true, at), "com.warehouse.wes.work-planning.workpool.PathCapacityChanged", "pick-zone-a", "pick-zone-a", ""},
 	}
 
 	for _, tt := range tests {

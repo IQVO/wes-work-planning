@@ -10,8 +10,18 @@ description: Why cross-context integration is asynchronous over Kafka, why the e
 
 ## Status
 
-**Accepted.** Platform-wide: the same decision is recorded in the other three
-publishing services.
+**Superseded by [ADR-0027](./0027-cloudevents-mandatory-event-envelope.md)**
+for the wire envelope (§2, §3 and the caution below). The rest — Kafka as the
+integration transport (§1), publishing behind the port (§4), mandatory
+consumer idempotency (§5) and consuming without publishing (§6) — remains in
+force; idempotency now keys on the CloudEvents `id`. Originally accepted
+platform-wide.
+
+:::warning Superseded envelope
+The flat envelope shown in §2 is retired. Every message is now a CloudEvents
+1.0 structured-mode event — see ADR-0027. The text below is kept unchanged
+as the historical record.
+:::
 
 ## Context
 
@@ -159,6 +169,12 @@ Setting `KAFKA_BROKERS` starts the inbound consumer independently of
 - **Two documented envelopes.** Until the CloudEvents migration lands, the spec
   and the code disagree, and a reader must know which to trust. Documented in
   three places rather than left to be discovered.
+
+## Addendum (2026-09-30)
+
+Superseded for the envelope by
+[ADR-0027](./0027-cloudevents-mandatory-event-envelope.md): CloudEvents 1.0
+is mandatory on every topic, with no flat envelope and no dual mode.
 
 ## Addendum (2026-09-26)
 

@@ -2,12 +2,13 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	ce "github.com/cloudevents/sdk-go/v2/event"
+
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
@@ -75,19 +76,29 @@ func (f fulfillmentFixture) withReleasedUnit(pools *memory.WorkPoolRepo, publish
 	return f
 }
 
-func taskCompletedEnvelope(t *testing.T, eventId, workUnitId string) envelope.Envelope {
+// testEvent builds a valid CloudEvents 1.0 event as another bounded
+// context would publish it, for feeding the handlers directly.
+func testEvent(t *testing.T, id, ceType, source, subject string, data any) ce.Event {
 	t.Helper()
-	data, err := json.Marshal(taskCompletedData{TaskId: "task-1", StationId: "station-1", WorkUnitId: workUnitId})
-	if err != nil {
-		t.Fatalf("marshal data: %v", err)
+	e := ce.New(ce.CloudEventsVersionV1)
+	e.SetID(id)
+	e.SetType(ceType)
+	e.SetSource(source)
+	e.SetSubject(subject)
+	e.SetTime(time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC))
+	if err := e.SetData(ce.ApplicationJSON, data); err != nil {
+		t.Fatalf("set data: %v", err)
 	}
-	return envelope.Envelope{
-		EventId:    eventId,
-		EventType:  envelope.EventTypeTaskCompleted,
-		OccurredAt: time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC),
-		Source:     "fulfillment-execution",
-		Data:       data,
+	if err := e.Validate(); err != nil {
+		t.Fatalf("invalid test event: %v", err)
 	}
+	return e
+}
+
+func taskCompletedEnvelope(t *testing.T, eventId, workUnitId string) ce.Event {
+	t.Helper()
+	return testEvent(t, eventId, cloudevents.TypeTaskCompleted, "/warehouse/fulfillment-execution", "task-1",
+		taskCompletedData{TaskId: "task-1", StationId: "station-1", WorkUnitId: workUnitId})
 }
 
 func TestHandleFulfillmentEvent_CompletesTheWorkUnit(t *testing.T) {
@@ -110,7 +121,7 @@ func TestHandleFulfillmentEvent_IgnoresOtherEventTypes(t *testing.T) {
 	f := newFulfillmentFixture()
 
 	env := taskCompletedEnvelope(t, "evt-other", "wu-1")
-	env.EventType = "SomethingElse"
+	env.SetType("com.warehouse.wes.example.thing.SomethingElse")
 
 	if err := f.consumer.handleFulfillmentEvent(context.Background(), env); err != nil {
 		t.Fatalf("handleFulfillmentEvent: %v", err)
@@ -180,23 +191,13 @@ func newOrderManagementFixture() orderManagementFixture {
 	}
 }
 
-func orderAllocatedEnvelope(t *testing.T, eventId, eventType, orderId string, lines []orderLineData) envelope.Envelope {
+func orderAllocatedEnvelope(t *testing.T, eventId, eventType, orderId string, lines []orderLineData) ce.Event {
 	t.Helper()
-	data, err := json.Marshal(orderAllocatedData{
+	return testEvent(t, eventId, eventType, "/warehouse/order-management", orderId, orderAllocatedData{
 		OrderId:     orderId,
 		PromiseDate: time.Date(2026, 8, 21, 23, 0, 0, 0, time.UTC),
 		Lines:       lines,
 	})
-	if err != nil {
-		t.Fatalf("marshal data: %v", err)
-	}
-	return envelope.Envelope{
-		EventId:    eventId,
-		EventType:  eventType,
-		OccurredAt: time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC),
-		Source:     "order-management",
-		Data:       data,
-	}
 }
 
 func TestHandleOrderManagementEvent_EnqueuesOneWorkUnitPerLine(t *testing.T) {
@@ -205,7 +206,7 @@ func TestHandleOrderManagementEvent_EnqueuesOneWorkUnitPerLine(t *testing.T) {
 		{LineNo: 1, SKU: "SKU-1", PathId: "pick-a", GiftWrap: false},
 		{LineNo: 2, SKU: "SKU-2", PathId: "pick-a", GiftWrap: true},
 	}
-	env := orderAllocatedEnvelope(t, "evt-order-1", envelope.EventTypeOrderAllocated, "order-1", lines)
+	env := orderAllocatedEnvelope(t, "evt-order-1", cloudevents.TypeOrderAllocated, "order-1", lines)
 
 	if err := f.consumer.handleOrderManagementEvent(context.Background(), env); err != nil {
 		t.Fatalf("handleOrderManagementEvent: %v", err)
@@ -231,7 +232,7 @@ func TestHandleOrderManagementEvent_EnqueuesOneWorkUnitPerLine(t *testing.T) {
 func TestHandleOrderManagementEvent_PartiallyAllocatedBehavesIdentically(t *testing.T) {
 	f := newOrderManagementFixture()
 	lines := []orderLineData{{LineNo: 1, SKU: "SKU-9", PathId: "pick-a", GiftWrap: false}}
-	env := orderAllocatedEnvelope(t, "evt-order-partial", envelope.EventTypeOrderPartiallyAllocated, "order-9", lines)
+	env := orderAllocatedEnvelope(t, "evt-order-partial", cloudevents.TypeOrderPartiallyAllocated, "order-9", lines)
 
 	if err := f.consumer.handleOrderManagementEvent(context.Background(), env); err != nil {
 		t.Fatalf("handleOrderManagementEvent: %v", err)
@@ -263,7 +264,7 @@ func TestHandleOrderManagementEvent_IgnoresOtherEventTypes(t *testing.T) {
 func TestHandleOrderManagementEvent_RedeliveryDoesNotEnqueueAgain(t *testing.T) {
 	f := newOrderManagementFixture()
 	lines := []orderLineData{{LineNo: 1, SKU: "SKU-1", PathId: "pick-a"}}
-	env := orderAllocatedEnvelope(t, "evt-order-dup", envelope.EventTypeOrderAllocated, "order-1", lines)
+	env := orderAllocatedEnvelope(t, "evt-order-dup", cloudevents.TypeOrderAllocated, "order-1", lines)
 
 	if err := f.consumer.handleOrderManagementEvent(context.Background(), env); err != nil {
 		t.Fatalf("first handleOrderManagementEvent: %v", err)
@@ -302,7 +303,7 @@ func mustPathId(t *testing.T, value string) shared.PathId {
 func TestHandleOrderManagementEvent_UnknownPathId_ReturnsError(t *testing.T) {
 	f := newOrderManagementFixture()
 	lines := []orderLineData{{LineNo: 1, SKU: "SKU-1", PathId: "not-a-real-path", GiftWrap: false}}
-	env := orderAllocatedEnvelope(t, "evt-unknown", envelope.EventTypeOrderAllocated, "order-unknown", lines)
+	env := orderAllocatedEnvelope(t, "evt-unknown", cloudevents.TypeOrderAllocated, "order-unknown", lines)
 
 	err := f.consumer.handleOrderManagementEvent(context.Background(), env)
 	if !errors.Is(err, pathcatalog.ErrUnknownPath) {
@@ -325,7 +326,7 @@ func TestHandleOrderManagementEvent_ResolvesRealFleetPathIdVariants(t *testing.T
 		{LineNo: 2, SKU: "SKU-2", PathId: "pick-zone-a"},
 		{LineNo: 3, SKU: "SKU-3", PathId: "pack-soak"},
 	}
-	env := orderAllocatedEnvelope(t, "evt-variants", envelope.EventTypeOrderAllocated, "order-variants", lines)
+	env := orderAllocatedEnvelope(t, "evt-variants", cloudevents.TypeOrderAllocated, "order-variants", lines)
 
 	if err := f.consumer.handleOrderManagementEvent(context.Background(), env); err != nil {
 		t.Fatalf("unexpected error resolving real-world path_id variants: %v", err)
@@ -359,9 +360,9 @@ func newWorkforceFixture() workforceFixture {
 	}
 }
 
-func shiftPlanCommittedEnvelope(t *testing.T, eventId, pathId string) envelope.Envelope {
+func shiftPlanCommittedEnvelope(t *testing.T, eventId, pathId string) ce.Event {
 	t.Helper()
-	data, err := json.Marshal(shiftPlanCommittedData{
+	return testEvent(t, eventId, cloudevents.TypeShiftPlanCommitted, "/warehouse/workforce-management", "shift-1", shiftPlanCommittedData{
 		BuildingId:   "wh1",
 		ShiftId:      "shift-1",
 		PathId:       pathId,
@@ -369,16 +370,6 @@ func shiftPlanCommittedEnvelope(t *testing.T, eventId, pathId string) envelope.E
 		PlannedRate:  90,
 		PlannedHours: 8,
 	})
-	if err != nil {
-		t.Fatalf("marshal data: %v", err)
-	}
-	return envelope.Envelope{
-		EventId:    eventId,
-		EventType:  envelope.EventTypeShiftPlanCommitted,
-		OccurredAt: time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC),
-		Source:     "workforce-management",
-		Data:       data,
-	}
 }
 
 func TestHandleWorkforceEvent_ObservesLaborPlanForARecognizedPath(t *testing.T) {
@@ -415,7 +406,7 @@ func TestHandleWorkforceEvent_UnknownPathId_ReturnsError(t *testing.T) {
 func TestHandleWorkforceEvent_IgnoresOtherEventTypes(t *testing.T) {
 	f := newWorkforceFixture()
 	env := shiftPlanCommittedEnvelope(t, "evt-shift-other", "pick-zone-a")
-	env.EventType = "SomethingElse"
+	env.SetType("com.warehouse.wes.example.thing.SomethingElse")
 
 	if err := f.consumer.handleWorkforceEvent(context.Background(), env); err != nil {
 		t.Fatalf("handleWorkforceEvent: %v", err)

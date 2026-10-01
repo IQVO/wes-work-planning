@@ -11,6 +11,8 @@ import (
 	kafkago "github.com/segmentio/kafka-go"
 	"github.com/testcontainers/testcontainers-go"
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
+
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 )
 
 // TestNewConsumer_TwoInstancesInARow_BothReplayFully is the real regression
@@ -38,7 +40,8 @@ func TestNewConsumer_TwoInstancesInARow_BothReplayFully(t *testing.T) {
 
 	writer := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: topic, AllowAutoTopicCreation: false}
 	if err := writer.WriteMessages(ctx, kafkago.Message{
-		Value: []byte(`{"event_type":"ProcessPathCreated","data":{"path_id":"ITEST2","match_prefix":"itest2","direct":true,"required_capabilities":["itest2"]}}`),
+		Value:   []byte(`{"specversion":"1.0","id":"0b7e6c1e-1f1a-4c55-9d8e-1a2b3c4d5e6f","source":"/warehouse/process-path-management","type":"com.warehouse.wes.process-path-management.processpath.ProcessPathCreated","subject":"ITEST2","time":"2026-09-30T12:00:00Z","datacontenttype":"application/json","dataschema":"urn:warehouse:process-path-management:events:ProcessPathCreated:v1","data":{"path_id":"ITEST2","match_prefix":"itest2","direct":true,"required_capabilities":["itest2"]}}`),
+		Headers: []kafkago.Header{cloudevents.ContentTypeHeader()},
 	}); err != nil {
 		t.Fatalf("seed publish: %v", err)
 	}

@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	kafkago "github.com/segmentio/kafka-go"
 
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
@@ -153,10 +153,10 @@ func TestOutbox_EnqueueAndRelease_CommitAggregateAndBothTopicsTogether(t *testin
 	if got := countRows(t, pool, "work_pool_entries", "work_unit_id = 'wu-1'"); got != 1 {
 		t.Fatalf("expected pool entry persisted (WorkPoolRepo joined the transaction), got %d", got)
 	}
-	if got := countOutbox(t, pool, "topic = '"+envelope.TopicWorkPlanningEvents+"' AND event_type = 'WorkUnitCreated' AND published_at IS NULL"); got != 1 {
+	if got := countOutbox(t, pool, "topic = '"+cloudevents.TopicWorkPlanningEvents+"' AND event_type = 'com.warehouse.wes.work-planning.workunit.WorkUnitCreated' AND published_at IS NULL"); got != 1 {
 		t.Fatalf("expected 1 integration outbox row for WorkUnitCreated, got %d", got)
 	}
-	if got := countOutbox(t, pool, "topic = '"+outboundkafka.AnalyticsTopic+"' AND event_type = 'WorkUnitCreated' AND published_at IS NULL"); got != 1 {
+	if got := countOutbox(t, pool, "topic = '"+outboundkafka.AnalyticsTopic+"' AND event_type = 'com.warehouse.wes.work-planning.workunit.WorkUnitCreated' AND published_at IS NULL"); got != 1 {
 		t.Fatalf("expected 1 analytics outbox row for WorkUnitCreated, got %d", got)
 	}
 
@@ -165,7 +165,7 @@ func TestOutbox_EnqueueAndRelease_CommitAggregateAndBothTopicsTogether(t *testin
 		t.Fatalf("release: %v", err)
 	}
 	var value []byte
-	if err := pool.QueryRow(ctx, "SELECT value FROM outbox_events WHERE topic = $1 AND event_type = 'WorkReleased'", envelope.TopicWorkPlanningEvents).Scan(&value); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT value FROM outbox_events WHERE topic = $1 AND event_type = 'com.warehouse.wes.work-planning.workunit.WorkReleased'", cloudevents.TopicWorkPlanningEvents).Scan(&value); err != nil {
 		t.Fatalf("read WorkReleased row: %v", err)
 	}
 	// ref and cpt come from Publisher.dataFor reading work_units — only
@@ -258,9 +258,9 @@ func TestOutboxRelay_PublishesInOrderAcrossTopicsAndMarksRows(t *testing.T) {
 		t.Fatalf("expected 6 published (3 events x 2 topics), got n=%d sent=%d", n, len(sink.sent))
 	}
 	want := []struct{ topic, eventType string }{
-		{envelope.TopicWorkPlanningEvents, "WorkUnitCreated"}, {outboundkafka.AnalyticsTopic, "WorkUnitCreated"},
-		{envelope.TopicWorkPlanningEvents, "WorkReleased"}, {outboundkafka.AnalyticsTopic, "WorkReleased"},
-		{envelope.TopicWorkPlanningEvents, "WorkUnitCompleted"}, {outboundkafka.AnalyticsTopic, "WorkUnitCompleted"},
+		{cloudevents.TopicWorkPlanningEvents, "com.warehouse.wes.work-planning.workunit.WorkUnitCreated"}, {outboundkafka.AnalyticsTopic, "com.warehouse.wes.work-planning.workunit.WorkUnitCreated"},
+		{cloudevents.TopicWorkPlanningEvents, "com.warehouse.wes.work-planning.workunit.WorkReleased"}, {outboundkafka.AnalyticsTopic, "com.warehouse.wes.work-planning.workunit.WorkReleased"},
+		{cloudevents.TopicWorkPlanningEvents, "com.warehouse.wes.work-planning.workunit.WorkUnitCompleted"}, {outboundkafka.AnalyticsTopic, "com.warehouse.wes.work-planning.workunit.WorkUnitCompleted"},
 	}
 	for i, w := range want {
 		if sink.sent[i].Topic != w.topic || sink.sent[i].EventType != w.eventType {
@@ -319,17 +319,17 @@ func TestOutboxRelay_SinkFailure_StopsAtFailedRowAndRecoversInOrder(t *testing.T
 		t.Fatalf("enqueue: %v", err)
 	}
 	// Persist a header on the middle row to prove the JSON round trip.
-	if _, err := pool.Exec(ctx, `UPDATE outbox_events SET headers = '[{"key":"traceparent","value":"00-abc-def-01"}]' WHERE event_type = 'ShiftPlanCommitted'`); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE outbox_events SET headers = '[{"key":"traceparent","value":"00-abc-def-01"}]' WHERE event_type = 'com.warehouse.wes.work-planning.plan.ShiftPlanCommitted'`); err != nil {
 		t.Fatalf("set headers: %v", err)
 	}
 
-	sink := &recordingSink{failOn: "ShiftPlanCommitted", failErr: errors.New("broker down")}
+	sink := &recordingSink{failOn: "com.warehouse.wes.work-planning.plan.ShiftPlanCommitted", failErr: errors.New("broker down")}
 	relay := postgres.NewOutboxRelay(pool, sink, slog.Default())
 	n, err := relay.RelayOnce(ctx)
 	if err == nil {
 		t.Fatal("expected the failing row to surface an error")
 	}
-	if n != 1 || len(sink.sent) != 1 || sink.sent[0].EventType != "ChargeForecastReceived" {
+	if n != 1 || len(sink.sent) != 1 || sink.sent[0].EventType != "com.warehouse.wes.work-planning.charge.ChargeForecastReceived" {
 		t.Fatalf("expected only ChargeForecastReceived published before the failure, got n=%d sent=%v", n, sink.sent)
 	}
 	if got := countOutbox(t, pool, "published_at IS NULL"); got != 2 {
@@ -337,13 +337,13 @@ func TestOutboxRelay_SinkFailure_StopsAtFailedRowAndRecoversInOrder(t *testing.T
 	}
 	var attempts int
 	var lastErr string
-	if err := pool.QueryRow(ctx, "SELECT attempts, coalesce(last_error,'') FROM outbox_events WHERE event_type = 'ShiftPlanCommitted'").Scan(&attempts, &lastErr); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT attempts, coalesce(last_error,'') FROM outbox_events WHERE event_type = 'com.warehouse.wes.work-planning.plan.ShiftPlanCommitted'").Scan(&attempts, &lastErr); err != nil {
 		t.Fatalf("read failed row: %v", err)
 	}
 	if attempts != 1 || !strings.Contains(lastErr, "broker down") {
 		t.Fatalf("expected the failed row to record the attempt, got attempts=%d last_error=%q", attempts, lastErr)
 	}
-	if got := countOutbox(t, pool, "event_type = 'WorkUnitCreated' AND attempts = 0"); got != 1 {
+	if got := countOutbox(t, pool, "event_type = 'com.warehouse.wes.work-planning.workunit.WorkUnitCreated' AND attempts = 0"); got != 1 {
 		t.Fatal("the row behind the failure must be untouched")
 	}
 
@@ -353,7 +353,7 @@ func TestOutboxRelay_SinkFailure_StopsAtFailedRowAndRecoversInOrder(t *testing.T
 	if err != nil || n != 2 {
 		t.Fatalf("recovery pass: n=%d err=%v", n, err)
 	}
-	if sink.sent[1].EventType != "ShiftPlanCommitted" || sink.sent[2].EventType != "WorkUnitCreated" {
+	if sink.sent[1].EventType != "com.warehouse.wes.work-planning.plan.ShiftPlanCommitted" || sink.sent[2].EventType != "com.warehouse.wes.work-planning.workunit.WorkUnitCreated" {
 		t.Fatalf("expected ShiftPlanCommitted then WorkUnitCreated after recovery, got %v", sink.sent)
 	}
 	if len(sink.sent[1].Headers) != 1 || sink.sent[1].Headers[0].Key != "traceparent" || string(sink.sent[1].Headers[0].Value) != "00-abc-def-01" {
@@ -362,7 +362,7 @@ func TestOutboxRelay_SinkFailure_StopsAtFailedRowAndRecoversInOrder(t *testing.T
 	if got := countOutbox(t, pool, "published_at IS NULL"); got != 0 {
 		t.Fatalf("expected outbox drained, %d pending", got)
 	}
-	if err := pool.QueryRow(ctx, "SELECT attempts, coalesce(last_error,'') FROM outbox_events WHERE event_type = 'ShiftPlanCommitted'").Scan(&attempts, &lastErr); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT attempts, coalesce(last_error,'') FROM outbox_events WHERE event_type = 'com.warehouse.wes.work-planning.plan.ShiftPlanCommitted'").Scan(&attempts, &lastErr); err != nil {
 		t.Fatalf("re-read row: %v", err)
 	}
 	if attempts != 2 || lastErr != "" {

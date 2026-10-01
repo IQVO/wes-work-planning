@@ -119,12 +119,39 @@ domain logic. Use those exact terms; do not invent synonyms.
   is the spec of record; the Docusaurus REST reference is generated from it,
   never edited by hand.
 - Async contract of record is [`apis/asyncapi.yaml`](./apis/asyncapi.yaml)
-  (CloudEvents 1.0 over Kafka); narrative pages in `docs/docs/api/events.md`
+  (CloudEvents 1.0 over Kafka — mandatory, see the Events section below);
+  narrative pages in `docs/docs/api/events.md`
   and `docs/docs/ecosystem/integration-events.md` are written from it and
   should be updated by hand whenever a message/channel changes there (this
   fleet documents AsyncAPI narratively per-service; there is no generated
   AsyncAPI static site in this repo — that only exists in the separate
   fleet-wide docs aggregator).
+
+## Events: CloudEvents 1.0 is MANDATORY
+
+Every Kafka message this service produces or consumes (integration
+`warehouse.<ctx>.events` AND analytics `warehouse.<ctx>.analytics`) is a
+CloudEvents 1.0 event in structured content mode. This is a hard fleet rule,
+not a preference:
+
+- No flat envelope (`event_id`/`event_type`/`occurred_at`), no dual-write,
+  no dual-read, no envelope toggle env var (`EVENT_ENVELOPE_MODE` is gone).
+- Build/validate/(un)marshal with `github.com/cloudevents/sdk-go/v2/event`
+  via `internal/adapters/kafka/cloudevents/`; transport stays kafka-go.
+- Kafka header `content-type: application/cloudevents+json; charset=UTF-8`.
+- Required attributes: `specversion=1.0`, `id` (UUID, stable across outbox
+  redelivery), `source=/warehouse/wes-work-planning`, `type`, `subject` (aggregate id), `time`
+  (occurred-at, UTC), `datacontenttype=application/json`,
+  `dataschema=urn:warehouse:wes-work-planning:<events|analytics>:<EventName>:v<N>`.
+- `type` = `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`;
+  for this service: `com.warehouse.wes.work-planning.<entity>.<EventName>`. Breaking payload
+  change => new `.v2` type + new dataschema version, never mutate.
+- Consumers dispatch on the FULL `type`, ignore unknown types, dedupe on
+  `id`, and DLQ/skip (never crash, never parse a legacy shape) anything that
+  fails CloudEvents validation.
+
+Full standard and the fleet's cross-service type catalogue: ADR-0027
+(`docs/docs/adr/`).
 
 ## Architecture Decision Records
 
@@ -137,6 +164,9 @@ adapter (0008), product classification propagation (0009), gift-wrap as a
 process-path catalogue validation (0012), the standard metrics convention
 (0013), the transactional outbox (0014), and the two REST-identity /
 static-bearer-auth ADRs (0015 added it, 0016 records its fleet-wide removal),
-the facility-layout travel-distance lookup on CommitShiftPlan (0017), and the
-`PathCapacityChanged` integration event consumed by order-management (0018).
+the facility-layout travel-distance lookup on CommitShiftPlan (0017), the
+`PathCapacityChanged` integration event consumed by order-management (0018),
+and — among the later records (0019–0026) — the now-superseded CloudEvents
+dual-mode migration plan (0021). ADR-0027 makes CloudEvents 1.0 the mandatory
+envelope and supersedes 0021 and the envelope parts of 0004.
 Read the relevant ADR before reversing a documented decision.

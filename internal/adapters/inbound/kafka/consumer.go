@@ -5,22 +5,21 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	ce "github.com/cloudevents/sdk-go/v2/event"
 	kafkago "github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/otelkafka"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
@@ -46,10 +45,8 @@ type inventoryEventData struct {
 	DemandRef string `json:"demand_ref"`
 }
 
-// taskCompletedData is fulfillment-execution's TaskCompleted payload. The
-// shape is unchanged by ADR-0021's envelope migration: whether the message
-// arrives in the legacy flat envelope or the CloudEvents 1.0 envelope, this
-// struct decodes the identical `data` object either way.
+// taskCompletedData is fulfillment-execution's TaskCompleted payload (the
+// CloudEvents `data` object).
 type taskCompletedData struct {
 	TaskId     string `json:"task_id"`
 	StationId  string `json:"station_id"`
@@ -72,81 +69,6 @@ type orderLineData struct {
 	SKU      string `json:"sku"`
 	PathId   string `json:"path_id"`
 	GiftWrap bool   `json:"gift_wrap"`
-}
-
-// cloudEventProbe is a minimal decode target used only to detect whether a
-// raw warehouse.fulfillment.events message is CloudEvents 1.0-shaped
-// (specversion present) or the legacy flat envelope shape (specversion
-// absent). See ADR-0021 Phase 2, Design decision #3: specversion is the
-// sole dual-read discriminator and never appears on a flat message.
-type cloudEventProbe struct {
-	SpecVersion string `json:"specversion"`
-}
-
-// cloudEventEnvelope is the CloudEvents 1.0 structured envelope shape
-// documented in fulfillment-execution's apis/asyncapi.yaml (ADR-0021 and
-// its fulfillment-execution companion ADR-0027). Only the fields needed to
-// normalize back to the legacy envelope.Envelope shape are decoded here.
-type cloudEventEnvelope struct {
-	SpecVersion     string          `json:"specversion"`
-	Id              string          `json:"id"`
-	Type            string          `json:"type"`
-	Source          string          `json:"source"`
-	Subject         string          `json:"subject"`
-	Time            time.Time       `json:"time"`
-	DataContentType string          `json:"datacontenttype"`
-	Data            json.RawMessage `json:"data"`
-}
-
-// fulfillmentCloudEventTypePrefix is the reverse-DNS prefix
-// fulfillment-execution's TaskCompleted `type` string carries on the wire
-// (fulfillment-execution's apis/asyncapi.yaml,
-// components.messages.TaskCompleted.examples), stripped back to the bare
-// "TaskCompleted" name envelope.EventTypeTaskCompleted and
-// handleFulfillmentEvent's switch already key on.
-const fulfillmentCloudEventTypePrefix = "com.warehouse.wes.fulfillment-execution.task."
-
-// decodeFulfillmentEnvelope dual-reads one warehouse.fulfillment.events
-// message in either the legacy flat envelope shape or the CloudEvents 1.0
-// structured envelope shape (ADR-0021 Phase 2, Task 2c), normalizing either
-// one to the identical envelope.Envelope representation
-// handleFulfillmentEvent already consumes unchanged — the `data` payload
-// itself is byte-identical either way, so no business logic is duplicated
-// across the two decode paths. A specversion that is present but not
-// exactly "1.0" is treated as malformed/unrecognized and returns an error,
-// which handleFulfillmentMessage handles the same way handleMessage already
-// handles any other unparseable message: log and commit, no redelivery
-// loop.
-func decodeFulfillmentEnvelope(raw []byte) (envelope.Envelope, error) {
-	var probe cloudEventProbe
-	if err := json.Unmarshal(raw, &probe); err != nil {
-		return envelope.Envelope{}, err
-	}
-
-	if probe.SpecVersion == "" {
-		var env envelope.Envelope
-		if err := json.Unmarshal(raw, &env); err != nil {
-			return envelope.Envelope{}, err
-		}
-		return env, nil
-	}
-
-	if probe.SpecVersion != "1.0" {
-		return envelope.Envelope{}, fmt.Errorf("unsupported CloudEvents specversion %q", probe.SpecVersion)
-	}
-
-	var ce cloudEventEnvelope
-	if err := json.Unmarshal(raw, &ce); err != nil {
-		return envelope.Envelope{}, err
-	}
-
-	return envelope.Envelope{
-		EventId:    ce.Id,
-		EventType:  strings.TrimPrefix(ce.Type, fulfillmentCloudEventTypePrefix),
-		OccurredAt: ce.Time,
-		Source:     ce.Source,
-		Data:       ce.Data,
-	}, nil
 }
 
 // dlqTopicSuffix names the dead-letter topic a poison message is
@@ -198,12 +120,12 @@ type Consumer struct {
 }
 
 func NewConsumer(brokers []string, groupID string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, recordCompletion *usecases.RecordCompletion, enqueueWorkUnit *usecases.EnqueueWorkUnit, processed ports.ProcessedEventRepo, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
-	return newConsumer(brokers, groupID, envelope.TopicFulfillmentEvents, observeLabor, observeInventory, recordCompletion, enqueueWorkUnit, processed, catalogue, logger)
+	return newConsumer(brokers, groupID, cloudevents.TopicFulfillmentEvents, observeLabor, observeInventory, recordCompletion, enqueueWorkUnit, processed, catalogue, logger)
 }
 
 // NewConsumerForFulfillmentTopic is NewConsumer with the
 // warehouse.fulfillment.events topic overridden — needed so an integration
-// test can point the real dual-read replay/idempotency logic at a
+// test can point the real replay/idempotency logic at a
 // throwaway, uniquely-named topic instead of the pinned production
 // constant, mirroring this fleet's standing testcontainers pattern (see
 // inventory-storage's facilitycache consumer).
@@ -212,7 +134,7 @@ func NewConsumerForFulfillmentTopic(brokers []string, groupID string, fulfillmen
 }
 
 func newConsumer(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, recordCompletion *usecases.RecordCompletion, enqueueWorkUnit *usecases.EnqueueWorkUnit, processed ports.ProcessedEventRepo, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
-	topics := []string{envelope.TopicWorkforceEvents, envelope.TopicInventoryEvents, fulfillmentTopic, envelope.TopicOrderManagementEvents}
+	topics := []string{cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, fulfillmentTopic, cloudevents.TopicOrderManagementEvents}
 	dlqWriters := make(map[string]*kafkago.Writer, len(topics))
 	for _, topic := range topics {
 		dlqWriters[topic] = &kafkago.Writer{
@@ -224,12 +146,12 @@ func newConsumer(brokers []string, groupID string, fulfillmentTopic string, obse
 		workforceReader: kafkago.NewReader(kafkago.ReaderConfig{
 			Brokers: brokers,
 			GroupID: groupID,
-			Topic:   envelope.TopicWorkforceEvents,
+			Topic:   cloudevents.TopicWorkforceEvents,
 		}),
 		inventoryReader: kafkago.NewReader(kafkago.ReaderConfig{
 			Brokers: brokers,
 			GroupID: groupID,
-			Topic:   envelope.TopicInventoryEvents,
+			Topic:   cloudevents.TopicInventoryEvents,
 		}),
 		fulfillmentReader: kafkago.NewReader(kafkago.ReaderConfig{
 			Brokers: brokers,
@@ -239,7 +161,7 @@ func newConsumer(brokers []string, groupID string, fulfillmentTopic string, obse
 		orderManagementReader: kafkago.NewReader(kafkago.ReaderConfig{
 			Brokers: brokers,
 			GroupID: groupID,
-			Topic:   envelope.TopicOrderManagementEvents,
+			Topic:   cloudevents.TopicOrderManagementEvents,
 		}),
 		dlqWriters:       dlqWriters,
 		observeLabor:     observeLabor,
@@ -269,7 +191,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	errCh := make(chan error, 4)
 	go func() { errCh <- c.consumeLoop(ctx, c.workforceReader, c.handleWorkforceEvent) }()
 	go func() { errCh <- c.consumeLoop(ctx, c.inventoryReader, c.handleInventoryEvent) }()
-	go func() { errCh <- c.consumeFulfillmentLoop(ctx, c.fulfillmentReader, c.handleFulfillmentEvent) }()
+	go func() { errCh <- c.consumeLoop(ctx, c.fulfillmentReader, c.handleFulfillmentEvent) }()
 	go func() { errCh <- c.consumeLoop(ctx, c.orderManagementReader, c.handleOrderManagementEvent) }()
 
 	for i := 0; i < 4; i++ {
@@ -280,7 +202,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	return nil
 }
 
-func (c *Consumer) consumeLoop(ctx context.Context, reader *kafkago.Reader, handle func(context.Context, envelope.Envelope) error) error {
+func (c *Consumer) consumeLoop(ctx context.Context, reader *kafkago.Reader, handle func(context.Context, ce.Event) error) error {
 	for {
 		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
@@ -296,79 +218,14 @@ func (c *Consumer) consumeLoop(ctx context.Context, reader *kafkago.Reader, hand
 	}
 }
 
-// consumeFulfillmentLoop is consumeLoop's counterpart for the
-// warehouse.fulfillment.events topic: it dual-reads either the legacy flat
-// envelope or the CloudEvents 1.0 envelope (ADR-0021 Phase 2, Task 2c) via
-// decodeFulfillmentEnvelope before handing off to the identical envelope-
-// shaped handling logic every other topic's consumeLoop already uses.
-func (c *Consumer) consumeFulfillmentLoop(ctx context.Context, reader *kafkago.Reader, handle func(context.Context, envelope.Envelope) error) error {
-	for {
-		msg, err := reader.FetchMessage(ctx)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return nil
-			}
-			return err
-		}
-
-		if err := c.handleFulfillmentMessage(ctx, reader, msg, handle); err != nil {
-			return err
-		}
-	}
-}
-
-// handleFulfillmentMessage mirrors handleMessage exactly, except the raw
-// message is decoded via decodeFulfillmentEnvelope (dual-read: legacy flat
-// envelope or CloudEvents 1.0) rather than a single json.Unmarshal into
-// envelope.Envelope. An unparseable message, or one whose specversion is
-// present but not "1.0", is logged and committed rather than redelivered
-// forever — the same fail-soft posture handleMessage already applies to any
-// other malformed message on any other topic.
-func (c *Consumer) handleFulfillmentMessage(ctx context.Context, reader *kafkago.Reader, msg kafkago.Message, handle func(context.Context, envelope.Envelope) error) error {
-	topic := reader.Config().Topic
-
-	msgCtx, span := otelkafka.StartConsumeSpan(otelkafka.Extract(ctx, &msg), topic,
-		semconv.MessagingKafkaOffset(int(msg.Offset)),
-		semconv.MessagingDestinationPartitionID(strconv.Itoa(msg.Partition)),
-	)
-	defer span.End()
-
-	env, err := decodeFulfillmentEnvelope(msg.Value)
-	if err != nil {
-		recordSpanError(span, err)
-		c.log(msgCtx, "skipping unparseable kafka message", "topic", topic, "error", err)
-		_ = reader.CommitMessages(ctx, msg)
-		return nil
-	}
-
-	span.SetAttributes(
-		attribute.String("messaging.message.event_id", env.EventId),
-		attribute.String("messaging.message.event_type", env.EventType),
-		attribute.String("messaging.message.source", env.Source),
-	)
-
-	if err := c.handleWithRetry(msgCtx, handle, env); err != nil {
-		recordSpanError(span, err)
-		c.log(msgCtx, "exhausted retries, sending to dead-letter topic",
-			"topic", topic, "dlq_topic", topic+dlqTopicSuffix,
-			"event_id", env.EventId, "event_type", env.EventType, "attempts", maxHandlerAttempts, "error", err)
-		if dlqErr := c.dlqPublish(ctx, topic, msg, err); dlqErr != nil {
-			return fmt.Errorf("kafka: publish to dead-letter topic: %w", dlqErr)
-		}
-	}
-
-	if err := reader.CommitMessages(ctx, msg); err != nil {
-		recordSpanError(span, err)
-		return err
-	}
-	return nil
-}
-
 // handleMessage processes one fetched message inside a
 // "kafka.consume <topic>" span whose parent is the producing service's
 // publish span, recovered from the message's W3C trace-context headers.
-// An unparseable message is logged and committed immediately (never
-// redelivered — retrying a decode failure can never succeed). An
+// A message that is not a valid CloudEvents 1.0 event (bad JSON, the
+// retired flat envelope, a missing required attribute) is a deterministic
+// poison message: it is published straight to "<topic>.dlq" (no retry —
+// retrying a decode failure can never succeed) and committed, never
+// parsed as any legacy shape (ADR-0027). An
 // unhandleable message (a genuine infrastructure error from the use
 // case, e.g. a Postgres hiccup) is retried in-process with jittered
 // backoff up to maxHandlerAttempts total attempts — a transient blip
@@ -379,7 +236,7 @@ func (c *Consumer) handleFulfillmentMessage(ctx context.Context, reader *kafkago
 // it on this partition (mirrors order-management's RepromiseConsumer
 // DLQ design, ADR-0025 there). Only a commit failure or a DLQ publish
 // failure aborts the consume loop, which is the error this returns.
-func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, msg kafkago.Message, handle func(context.Context, envelope.Envelope) error) error {
+func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, msg kafkago.Message, handle func(context.Context, ce.Event) error) error {
 	topic := reader.Config().Topic
 
 	msgCtx, span := otelkafka.StartConsumeSpan(otelkafka.Extract(ctx, &msg), topic,
@@ -388,25 +245,33 @@ func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, ms
 	)
 	defer span.End()
 
-	var env envelope.Envelope
-	if err := json.Unmarshal(msg.Value, &env); err != nil {
+	env, err := cloudevents.Decode(msg.Value)
+	if err != nil {
 		recordSpanError(span, err)
-		c.log(msgCtx, "skipping unparseable kafka message", "topic", topic, "error", err)
-		_ = reader.CommitMessages(ctx, msg)
+		c.log(msgCtx, "invalid CloudEvent, sending to dead-letter topic",
+			"topic", topic, "partition", msg.Partition, "offset", msg.Offset,
+			"dlq_topic", topic+dlqTopicSuffix, "error", err)
+		if dlqErr := c.dlqPublish(ctx, topic, msg, err); dlqErr != nil {
+			return fmt.Errorf("kafka: publish to dead-letter topic: %w", dlqErr)
+		}
+		if err := reader.CommitMessages(ctx, msg); err != nil {
+			recordSpanError(span, err)
+			return err
+		}
 		return nil
 	}
 
 	span.SetAttributes(
-		attribute.String("messaging.message.event_id", env.EventId),
-		attribute.String("messaging.message.event_type", env.EventType),
-		attribute.String("messaging.message.source", env.Source),
+		attribute.String("messaging.message.id", env.ID()),
+		attribute.String("cloudevents.event_type", env.Type()),
+		attribute.String("cloudevents.event_source", env.Source()),
 	)
 
 	if err := c.handleWithRetry(msgCtx, handle, env); err != nil {
 		recordSpanError(span, err)
 		c.log(msgCtx, "exhausted retries, sending to dead-letter topic",
 			"topic", topic, "dlq_topic", topic+dlqTopicSuffix,
-			"event_id", env.EventId, "event_type", env.EventType, "attempts", maxHandlerAttempts, "error", err)
+			"id", env.ID(), "type", env.Type(), "attempts", maxHandlerAttempts, "error", err)
 		if dlqErr := c.dlqPublish(ctx, topic, msg, err); dlqErr != nil {
 			return fmt.Errorf("kafka: publish to dead-letter topic: %w", dlqErr)
 		}
@@ -423,7 +288,7 @@ func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, ms
 // jittered exponential backoff, bounded by ctx's own
 // deadline/cancellation — mirrors order-management's
 // RepromiseConsumer.handleWithRetry (ADR-0025).
-func (c *Consumer) handleWithRetry(ctx context.Context, handle func(context.Context, envelope.Envelope) error, env envelope.Envelope) error {
+func (c *Consumer) handleWithRetry(ctx context.Context, handle func(context.Context, ce.Event) error, env ce.Event) error {
 	policy := backoff.NewExponentialBackOff(
 		backoff.WithInitialInterval(retryInitialInterval),
 		backoff.WithMaxInterval(retryMaxInterval),
@@ -466,13 +331,13 @@ func recordSpanError(span trace.Span, err error) {
 	span.SetStatus(codes.Error, err.Error())
 }
 
-func (c *Consumer) handleWorkforceEvent(ctx context.Context, env envelope.Envelope) error {
-	if env.EventType != envelope.EventTypeShiftPlanCommitted {
+func (c *Consumer) handleWorkforceEvent(ctx context.Context, env ce.Event) error {
+	if env.Type() != cloudevents.TypeShiftPlanCommitted {
 		return nil
 	}
 
 	var data shiftPlanCommittedData
-	if err := json.Unmarshal(env.Data, &data); err != nil {
+	if err := env.DataAs(&data); err != nil {
 		return err
 	}
 	pathId, err := shared.NewPathId(data.PathId)
@@ -493,37 +358,37 @@ func (c *Consumer) handleWorkforceEvent(ctx context.Context, env envelope.Envelo
 	}
 
 	return c.observeLabor.Execute(ctx, usecases.ObserveLaborPlanRequest{
-		EventId:      env.EventId,
+		EventId:      env.ID(),
 		PathId:       pathId,
 		PlannedHeads: data.PlannedHeads,
 		PlannedRate:  data.PlannedRate,
 		PlannedHours: data.PlannedHours,
-		ObservedAt:   env.OccurredAt,
+		ObservedAt:   env.Time(),
 	})
 }
 
-func (c *Consumer) handleInventoryEvent(ctx context.Context, env envelope.Envelope) error {
+func (c *Consumer) handleInventoryEvent(ctx context.Context, env ce.Event) error {
 	var delta int
-	switch env.EventType {
-	case envelope.EventTypeStockReserved:
+	switch env.Type() {
+	case cloudevents.TypeStockReserved:
 		delta = -1
-	case envelope.EventTypeReservationRevoked:
+	case cloudevents.TypeReservationRevoked:
 		delta = 1
 	default:
 		return nil
 	}
 
 	var data inventoryEventData
-	if err := json.Unmarshal(env.Data, &data); err != nil {
+	if err := env.DataAs(&data); err != nil {
 		return err
 	}
 
 	_, err := c.observeInventory.Execute(ctx, usecases.ObserveInventoryChangeRequest{
-		EventId:    env.EventId,
+		EventId:    env.ID(),
 		SKU:        data.SKU,
 		Quantity:   data.Quantity,
 		Delta:      delta * data.Quantity,
-		ObservedAt: env.OccurredAt,
+		ObservedAt: env.Time(),
 	})
 	return err
 }
@@ -532,18 +397,18 @@ func (c *Consumer) handleInventoryEvent(ctx context.Context, env envelope.Envelo
 // existing RecordCompletion use case. Idempotency reuses the same
 // processed_events mechanism as the Task 7 projectors: RecordCompletion
 // itself already rejects a double-complete at the domain level, but marking
-// the event_id here avoids a spurious error/retry on mere redelivery.
-func (c *Consumer) handleFulfillmentEvent(ctx context.Context, env envelope.Envelope) error {
-	if env.EventType != envelope.EventTypeTaskCompleted {
+// the CloudEvents id here avoids a spurious error/retry on mere redelivery.
+func (c *Consumer) handleFulfillmentEvent(ctx context.Context, env ce.Event) error {
+	if env.Type() != cloudevents.TypeTaskCompleted {
 		return nil
 	}
 
 	var data taskCompletedData
-	if err := json.Unmarshal(env.Data, &data); err != nil {
+	if err := env.DataAs(&data); err != nil {
 		return err
 	}
 
-	alreadyProcessed, err := c.processed.TryMarkProcessed(ctx, env.EventId, env.OccurredAt)
+	alreadyProcessed, err := c.processed.TryMarkProcessed(ctx, env.ID(), env.Time())
 	if err != nil {
 		return err
 	}
@@ -564,21 +429,21 @@ func (c *Consumer) handleFulfillmentEvent(ctx context.Context, env envelope.Enve
 // POST /paths/{pathId}/work-units: order-management now publishes here
 // instead of calling this service's HTTP API directly.
 //
-// Idempotency mirrors handleFulfillmentEvent exactly: the event_id is
+// Idempotency mirrors handleFulfillmentEvent exactly: the CloudEvents id is
 // marked processed BEFORE any EnqueueWorkUnit call, so a redelivery of the
-// same OrderAllocated/OrderPartiallyAllocated message does not attempt to
+// same OrderAllocated/OrderPartiallyAllocated event does not attempt to
 // re-enqueue its lines.
-func (c *Consumer) handleOrderManagementEvent(ctx context.Context, env envelope.Envelope) error {
-	if env.EventType != envelope.EventTypeOrderAllocated && env.EventType != envelope.EventTypeOrderPartiallyAllocated {
+func (c *Consumer) handleOrderManagementEvent(ctx context.Context, env ce.Event) error {
+	if env.Type() != cloudevents.TypeOrderAllocated && env.Type() != cloudevents.TypeOrderPartiallyAllocated {
 		return nil
 	}
 
 	var data orderAllocatedData
-	if err := json.Unmarshal(env.Data, &data); err != nil {
+	if err := env.DataAs(&data); err != nil {
 		return err
 	}
 
-	alreadyProcessed, err := c.processed.TryMarkProcessed(ctx, env.EventId, env.OccurredAt)
+	alreadyProcessed, err := c.processed.TryMarkProcessed(ctx, env.ID(), env.Time())
 	if err != nil {
 		return err
 	}
@@ -615,9 +480,9 @@ func (c *Consumer) handleOrderManagementEvent(ctx context.Context, env envelope.
 		// release.ErrDuplicateEntry means WorkPool.Enqueue saw this
 		// WorkUnitId already present in the pool. The processed_events
 		// guard above already covers the common cause (redelivery of the
-		// exact same event_id), but a collision could in principle also
+		// exact same CloudEvents id), but a collision could in principle also
 		// arise some other way (e.g. a prior partial-allocation event for
-		// the same order/line reprocessed under a different event_id, or
+		// the same order/line reprocessed under a different id, or
 		// operator replay). Since the deterministic WorkUnitId means a
 		// duplicate can only ever refer to the SAME logical work unit,
 		// treating it as a benign no-op here (rather than a hard failure)

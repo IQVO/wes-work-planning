@@ -2,17 +2,17 @@ package kafka_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
+	ce "github.com/cloudevents/sdk-go/v2/event"
 	kafkago "github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 )
@@ -59,12 +59,12 @@ func TestPublisher_Encode_ProducesIntegrationWireForm(t *testing.T) {
 	}
 	e := encoded[0]
 
-	var env envelope.Envelope
-	if err := json.Unmarshal(e.Value, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
+	env, err := cloudevents.Decode(e.Value)
+	if err != nil {
+		t.Fatalf("decode CloudEvent: %v", err)
 	}
 	var data map[string]any
-	if err := json.Unmarshal(env.Data, &data); err != nil {
+	if err := env.DataAs(&data); err != nil {
 		t.Fatalf("unmarshal data: %v", err)
 	}
 
@@ -72,7 +72,7 @@ func TestPublisher_Encode_ProducesIntegrationWireForm(t *testing.T) {
 		assertEncodedRouting(t, e)
 	})
 
-	t.Run("wraps the shared integration envelope", func(t *testing.T) {
+	t.Run("wraps the payload in a CloudEvents 1.0 event", func(t *testing.T) {
 		assertEncodedEnvelope(t, env, at)
 	})
 
@@ -87,21 +87,26 @@ func TestPublisher_Encode_ProducesIntegrationWireForm(t *testing.T) {
 
 func assertEncodedRouting(t *testing.T, e outboundkafka.Encoded) {
 	t.Helper()
-	if e.Topic != envelope.TopicWorkPlanningEvents {
-		t.Fatalf("topic = %q, want %q", e.Topic, envelope.TopicWorkPlanningEvents)
+	if e.Topic != cloudevents.TopicWorkPlanningEvents {
+		t.Fatalf("topic = %q, want %q", e.Topic, cloudevents.TopicWorkPlanningEvents)
 	}
-	if e.EventType != "WorkReleased" {
-		t.Fatalf("event type = %q, want WorkReleased", e.EventType)
+	if e.EventType != "com.warehouse.wes.work-planning.workunit.WorkReleased" {
+		t.Fatalf("event type = %q, want the full CloudEvents type", e.EventType)
 	}
 	if string(e.Key) != "evt-enc" {
 		t.Fatalf("key = %q, want the event id", e.Key)
 	}
 }
 
-func assertEncodedEnvelope(t *testing.T, env envelope.Envelope, at time.Time) {
+func assertEncodedEnvelope(t *testing.T, env ce.Event, at time.Time) {
 	t.Helper()
-	if env.EventId != "evt-enc" || env.EventType != "WorkReleased" || env.Source != envelope.Source || !env.OccurredAt.Equal(at) {
-		t.Fatalf("unexpected envelope %+v", env)
+	if env.ID() != "evt-enc" ||
+		env.Type() != "com.warehouse.wes.work-planning.workunit.WorkReleased" ||
+		env.Source() != "/warehouse/wes-work-planning" ||
+		env.Subject() != "wu-enc" ||
+		env.DataSchema() != "urn:warehouse:wes-work-planning:events:WorkReleased:v1" ||
+		!env.Time().Equal(at) {
+		t.Fatalf("unexpected CloudEvent %s", env)
 	}
 }
 
@@ -119,9 +124,12 @@ func assertEncodedTraceHeaders(t *testing.T, e outboundkafka.Encoded) {
 	if _, ok := headerValue(e.Headers, "traceparent"); !ok {
 		t.Fatalf("expected a traceparent header when a span is active, got %v", e.Headers)
 	}
+	if ct, _ := headerValue(e.Headers, "content-type"); ct != cloudevents.MediaType {
+		t.Fatalf("content-type header = %q, want %q", ct, cloudevents.MediaType)
+	}
 }
 
-func TestPublisher_Encode_NoSpan_NoHeaders(t *testing.T) {
+func TestPublisher_Encode_NoSpan_OnlyContentTypeHeader(t *testing.T) {
 	workUnits := newReleasedWorkUnit(t, "wu-1", "")
 	pub := outboundkafka.NewPublisherWithWriter(&fakeWriter{}, workUnits, nil, func() string { return "evt-1" })
 	pathId := mustPathId(t, "pick-a")
@@ -130,8 +138,8 @@ func TestPublisher_Encode_NoSpan_NoHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(encoded) != 1 || len(encoded[0].Headers) != 0 {
-		t.Fatalf("expected one header-less message, got %+v", encoded)
+	if len(encoded) != 1 || len(encoded[0].Headers) != 1 || encoded[0].Headers[0].Key != "content-type" {
+		t.Fatalf("expected one message carrying only the content-type header, got %+v", encoded)
 	}
 }
 
@@ -165,15 +173,15 @@ func TestAnalyticsPublisher_Encode_ProducesAnalyticsWireFormAndSkipsUnknown(t *t
 		t.Fatalf("got %d encoded, want 1 (unknown event skipped)", len(encoded))
 	}
 	e := encoded[0]
-	if e.Topic != outboundkafka.AnalyticsTopic || e.EventType != "WorkReleased" || string(e.Key) != "wu-9" {
+	if e.Topic != outboundkafka.AnalyticsTopic || e.EventType != "com.warehouse.wes.work-planning.workunit.WorkReleased" || string(e.Key) != "wu-9" {
 		t.Fatalf("unexpected encoded %+v", e)
 	}
-	var env analyticsEnv
-	if err := json.Unmarshal(e.Value, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
+	env, err := cloudevents.Decode(e.Value)
+	if err != nil {
+		t.Fatalf("decode CloudEvent: %v", err)
 	}
-	if env.EventId != "evt-a" || env.SchemaVersion != 1 || env.Source != "wes-work-planning" {
-		t.Fatalf("unexpected analytics envelope %+v", env)
+	if env.ID() != "evt-a" || env.DataSchema() != "urn:warehouse:wes-work-planning:analytics:WorkReleased:v1" || env.Source() != "/warehouse/wes-work-planning" {
+		t.Fatalf("unexpected analytics CloudEvent %s", env)
 	}
 	if _, ok := headerValue(e.Headers, "traceparent"); !ok {
 		t.Fatalf("expected a traceparent header, got %v", e.Headers)

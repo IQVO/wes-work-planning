@@ -12,7 +12,7 @@ incident happened IN THIS REPO.
 
 Not every domain event this service raises belongs on the wire. Check
 `internal/adapters/outbound/kafka/publisher.go`'s doc comment and
-`envelope.TopicWorkPlanningEvents` (`internal/adapters/kafka/envelope/envelope.go`)
+`cloudevents.TopicWorkPlanningEvents` (`internal/adapters/kafka/cloudevents/cloudevents.go`)
 — this repo publishes to `warehouse.work-planning.events`, and only events
 a sibling context genuinely needs (e.g. `WorkReleased`, consumed downstream
 by fulfillment-execution, or `PathCapacityChanged`, consumed by
@@ -21,30 +21,39 @@ Kafka publisher, confirm who's actually downstream — check
 `docs/docs/adr/0004-kafka-integration-events.md` and
 `apis/asyncapi.yaml` for the existing contract and its consumers.
 
-### 2. Envelope: the shared, duplicated shape (ADR-0004)
+### 2. Envelope: CloudEvents 1.0, mandatory (ADR-0027)
 
-Every message uses the shared, platform-wide envelope, defined locally in
-`internal/adapters/kafka/envelope` and deliberately NOT extracted into a
-shared library (a shared library would force coordinated redeploys —
-exactly the coupling the async boundary exists to avoid):
+Every message is a CloudEvents 1.0 event in structured content mode, built
+ONLY through `internal/adapters/kafka/cloudevents` (`cloudevents.New`), which
+uses the official `github.com/cloudevents/sdk-go/v2/event` package. No flat
+envelope, no dual mode, no envelope env var, no hand-rolled struct:
 
 ```json
 {
-  "event_id": "uuid-v4",
-  "event_type": "WorkReleased",
-  "occurred_at": "2026-08-21T22:00:00Z",
-  "source": "wes-work-planning",
+  "specversion": "1.0",
+  "id": "uuid-v4",
+  "source": "/warehouse/wes-work-planning",
+  "type": "com.warehouse.wes.work-planning.workunit.WorkReleased",
+  "subject": "wu-10231",
+  "time": "2026-08-21T22:00:00Z",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:wes-work-planning:events:WorkReleased:v1",
   "data": { }
 }
 ```
 
-`event_id` is a UUID v4 minted at publish time and doubles as the Kafka
-message key. `occurred_at` comes from the domain clock (`ports.Clock`),
-never from publish wall-clock time. The documented target contract (not yet
-what the running adapters emit — see ADR-0004 §3's "Recorded honestly" note)
-is a CloudEvents-style reverse-DNS `type`:
-`com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`, e.g.
-`com.warehouse.wes.work-planning.workunit.WorkReleased`.
+- `type` = `com.warehouse.wes.work-planning.<entity>.<EventName>`; add the
+  event's entity to `eventTypeEntity` in `publisher.go` (entities:
+  `charge`, `plan`, `workunit`, `workpool` — take it from the AsyncAPI tag).
+- `id` is a UUID v4 minted ONCE in `Encode` (the outbox persists it, the relay
+  republishes it unchanged) and is the integration-topic Kafka key.
+- `subject` = aggregate id (add a case to `subjectFor`); never empty.
+- `time` = domain occurred-at (`ports.Clock`), never publish wall-clock.
+- `dataschema` = `urn:warehouse:wes-work-planning:events:<EventName>:v1`
+  (analytics: `...:analytics:<EventName>:v1`).
+- Every produced message carries `cloudevents.ContentTypeHeader()`.
+- A breaking payload change = new `.v2` type + new dataschema version,
+  published as a new event; never mutate an existing type.
 
 ### 3. Implementation
 
@@ -59,17 +68,19 @@ comment for how `WorkReleased` gets enriched with `cpt`/`ref` (by reading
 belongs in the adapter, never in the domain event itself.
 
 - Give the message a partition key that keeps ordering where it matters —
-  this repo currently keys by `event_id` (see ADR-0004 §"Harder": no
+  this repo currently keys the integration topic by the CloudEvents `id`
+  (see ADR-0004 §"Harder": no
   cross-event ordering guarantee, tolerable today because downstream
   projections apply commutative/last-writer-wins updates)
-- Use `envelope.TopicWorkPlanningEvents` — this service's own topic
+- Use `cloudevents.TopicWorkPlanningEvents` — this service's own topic
   constant, never a sibling's
 
 ### 4. Contract + docs
 
 - Add the message to `apis/asyncapi.yaml` under this service's channel,
   grouped by aggregate (matching the existing convention), not
-  chronologically.
+  chronologically, with its exact `type` const and `dataschema` const (and
+  the analytics counterpart if it goes to `warehouse.wes.analytics`).
 - `docs/docs/api/events.md` and `docs/docs/ecosystem/integration-events.md`
   are hand-written from the AsyncAPI contract in this repo (no generated
   AsyncAPI static site here) — update both by hand whenever a
@@ -77,7 +88,11 @@ belongs in the adapter, never in the domain event itself.
 
 ### 5. Test
 
-Unit test the marshal shape against a fake `Writer` (see
+Add the event to `goldenCases` in
+`internal/adapters/outbound/kafka/cloudevents_golden_test.go`, run
+`go test ./internal/adapters/outbound/kafka -run Golden -update`, and review
+the new `testdata/ce_*.golden.json` — they are the exact-JSON wire contract.
+Unit test the payload against a fake `Writer` (see
 `internal/adapters/outbound/kafka/publisher_test.go` — never a real broker
 in a unit test; `Writer` is a small interface over `*kafkago.Writer` for
 exactly this reason). If this event now needs an `_integration_test.go`
@@ -89,6 +104,16 @@ and fails the build if it doesn't also import
 `testcontainers-go/modules/kafka`.
 
 ## Consuming an integration event from a sibling context
+
+### 0. Dispatch on the full CloudEvents `type`
+
+Add the producer's exact `type` string (from the fleet catalogue in ADR-0027
+/ the producer's AsyncAPI) as a constant in
+`internal/adapters/kafka/cloudevents`, decode with `cloudevents.Decode`, read
+the payload with `evt.DataAs`, `time`/`subject` from the attributes, dedupe on
+`evt.ID()`. Never match a short name or a suffix. Invalid CloudEvents go to
+the DLQ (main consumer) or are WARN-skipped (cache consumers). Add a
+legacy-flat-message-rejected test.
 
 ### 1. Never import the sibling's Go packages
 

@@ -10,40 +10,21 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/otelkafka"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 )
 
 // AnalyticsTopic is the dedicated topic the analytics data product consumes.
-// It is separate from the integration topic (envelope.TopicWorkPlanningEvents)
+// It is separate from the integration topic (cloudevents.TopicWorkPlanningEvents)
 // so the OLTP integration contract and the analytical read-model stream evolve
-// independently (ADR-0011).
-const AnalyticsTopic = "warehouse.wes.analytics"
-
-// analyticsSource identifies this service in the "source" field of every
-// analytics envelope it publishes.
-const analyticsSource = "wes-work-planning"
-
-// analyticsSchemaVersion is the schema version stamped onto every analytics
-// envelope this publisher emits.
-const analyticsSchemaVersion = 1
-
-// AnalyticsEnvelope is the Envelope v1 wrapper for the analytics stream.
-// Unlike the integration envelope it carries the payload as a
-// json.RawMessage so a single publisher can emit the event_type-specific
-// data object for every domain event without a bespoke struct per type.
-type AnalyticsEnvelope struct {
-	EventId       string          `json:"event_id"`
-	EventType     string          `json:"event_type"`
-	OccurredAt    time.Time       `json:"occurred_at"`
-	Source        string          `json:"source"`
-	SchemaVersion int             `json:"schema_version"`
-	Data          json.RawMessage `json:"data"`
-}
+// independently (ADR-0011). Every message on it is a CloudEvents 1.0 event
+// whose dataschema is urn:warehouse:wes-work-planning:analytics:<Event>:v1.
+const AnalyticsTopic = cloudevents.TopicAnalytics
 
 // AnalyticsPublisher publishes every wes-work-planning domain event onto
-// AnalyticsTopic as an AnalyticsEnvelope. It satisfies ports.EventPublisher
+// AnalyticsTopic as a CloudEvents 1.0 event. It satisfies ports.EventPublisher
 // and is a SEPARATE adapter from Publisher: the integration publisher
 // (publisher.go) and warehouse.work-planning.events are left untouched.
 //
@@ -58,7 +39,7 @@ type AnalyticsPublisher struct {
 }
 
 // NewAnalyticsPublisher constructs an AnalyticsPublisher writing to
-// AnalyticsTopic on brokers. newID mints the envelope event_id.
+// AnalyticsTopic on brokers. newID mints the CloudEvents id.
 //
 // Balancer is kafkago.Hash, matching Publisher.NewPublisher's choice (see
 // its doc comment): this publisher already keys every message by its
@@ -127,97 +108,82 @@ func (p *AnalyticsPublisher) Publish(ctx context.Context, events ...shared.Domai
 }
 
 // Encode builds the analytics-topic wire form of every event in the
-// analytics contract — envelope, aggregate-id key, W3C trace headers of
+// analytics contract — CloudEvent, aggregate-id key, content-type header, W3C trace headers of
 // whatever span is active on ctx — and silently drops the rest, so the
 // returned slice may be shorter than events. It never touches the broker.
 func (p *AnalyticsPublisher) Encode(ctx context.Context, events ...shared.DomainEvent) ([]Encoded, error) {
 	out := make([]Encoded, 0, len(events))
 	for _, e := range events {
-		eventType, key, data, ok := marshalAnalyticsData(e)
+		key, data, ok := marshalAnalyticsData(e)
 		if !ok {
 			continue
 		}
-		env := AnalyticsEnvelope{
-			EventId:       p.newID(),
-			EventType:     eventType,
-			OccurredAt:    e.OccurredAt(),
-			Source:        analyticsSource,
-			SchemaVersion: analyticsSchemaVersion,
-			Data:          data,
-		}
-		body, err := json.Marshal(env)
+		// subject == key: both are the aggregate id.
+		enc, err := encodeCloudEventKeyed(ctx, AnalyticsTopic, cloudevents.StreamAnalytics, p.newID(), key, e, key, data)
 		if err != nil {
-			return nil, fmt.Errorf("kafka: marshal analytics envelope: %w", err)
+			return nil, fmt.Errorf("kafka: encode analytics event: %w", err)
 		}
-		msg := kafkago.Message{Key: []byte(key), Value: body}
-		otelkafka.Inject(ctx, &msg)
-		out = append(out, Encoded{
-			Topic:     AnalyticsTopic,
-			EventType: eventType,
-			Key:       msg.Key,
-			Value:     msg.Value,
-			Headers:   msg.Headers,
-		})
+		out = append(out, enc)
 	}
 	return out, nil
 }
 
-// marshalAnalyticsData maps a domain event to its analytics event_type,
-// aggregate-id message key, and snake_case JSON payload. The bool return is
+// marshalAnalyticsData maps a domain event to its aggregate-id message key
+// (also the CloudEvents subject) and snake_case JSON payload. The bool return is
 // false for an event type outside the analytics contract, so Publish skips
 // it. The message key is the aggregate id: PathId for path-scoped events and
 // the WorkUnit id for work-unit events, so a partition holds an aggregate's
 // events in order.
-func marshalAnalyticsData(e shared.DomainEvent) (eventType, key string, data json.RawMessage, ok bool) {
+func marshalAnalyticsData(e shared.DomainEvent) (key string, data json.RawMessage, ok bool) {
 	switch ev := e.(type) {
 	case shared.WorkReleased:
-		return "WorkReleased", ev.WorkUnitId, mustMarshal(map[string]any{
+		return ev.WorkUnitId, mustMarshal(map[string]any{
 			"path_id":      ev.PathId.String(),
 			"work_unit_id": ev.WorkUnitId,
 		}), true
 	case shared.WorkUnitCompleted:
-		return "WorkUnitCompleted", ev.WorkUnitId, mustMarshal(map[string]any{
+		return ev.WorkUnitId, mustMarshal(map[string]any{
 			"path_id":      ev.PathId.String(),
 			"work_unit_id": ev.WorkUnitId,
 		}), true
 	case shared.WorkUnitCreated:
-		return "WorkUnitCreated", ev.WorkUnitId, mustMarshal(map[string]any{
+		return ev.WorkUnitId, mustMarshal(map[string]any{
 			"path_id":      ev.PathId.String(),
 			"work_unit_id": ev.WorkUnitId,
 		}), true
 	case shared.BacklogThresholdBreached:
-		return "BacklogThresholdBreached", ev.PathId.String(), mustMarshal(map[string]any{
+		return ev.PathId.String(), mustMarshal(map[string]any{
 			"path_id": ev.PathId.String(),
 		}), true
 	case shared.PathThrottled:
-		return "PathThrottled", ev.PathId.String(), mustMarshal(map[string]any{
+		return ev.PathId.String(), mustMarshal(map[string]any{
 			"path_id": ev.PathId.String(),
 		}), true
 	case shared.RateDeviationDetected:
-		return "RateDeviationDetected", ev.PathId.String(), mustMarshal(map[string]any{
+		return ev.PathId.String(), mustMarshal(map[string]any{
 			"path_id": ev.PathId.String(),
 		}), true
 	case shared.ChargeForecastReceived:
-		return "ChargeForecastReceived", ev.PathId.String(), mustMarshal(map[string]any{
+		return ev.PathId.String(), mustMarshal(map[string]any{
 			"path_id": ev.PathId.String(),
 		}), true
 	case shared.ShiftPlanCommitted:
-		return "ShiftPlanCommitted", ev.PathId.String(), mustMarshal(map[string]any{
+		return ev.PathId.String(), mustMarshal(map[string]any{
 			"path_id": ev.PathId.String(),
 		}), true
 	case shared.LaborReassignmentFlagged:
-		return "LaborReassignmentFlagged", ev.PathId.String(), mustMarshal(map[string]any{
+		return ev.PathId.String(), mustMarshal(map[string]any{
 			"path_id": ev.PathId.String(),
 		}), true
 	case shared.PathCapacityChanged:
-		return "PathCapacityChanged", ev.PathId.String(), mustMarshal(map[string]any{
+		return ev.PathId.String(), mustMarshal(map[string]any{
 			"path_id":         ev.PathId.String(),
 			"cutoff_at":       ev.CutoffAt.Format(time.RFC3339),
 			"remaining_units": ev.RemainingUnits,
 			"known":           ev.Known,
 		}), true
 	default:
-		return "", "", nil, false
+		return "", nil, false
 	}
 }
 

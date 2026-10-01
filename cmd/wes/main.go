@@ -19,7 +19,7 @@ import (
 
 	inboundhttp "github.com/claudioed/wes-work-planning/internal/adapters/inbound/http"
 	inboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/inbound/kafka"
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/filecatalog"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
@@ -74,15 +74,6 @@ func run() error {
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
 	eventPublisherKind := getenv("EVENT_PUBLISHER", "log")
-	// EVENT_ENVELOPE_MODE selects the integration-topic wire shape(s) the
-	// outbound Publisher's Encode produces (ADR-0021): "flat" (default,
-	// unset -- today's byte-identical envelope), "cloudevents" (the new
-	// CloudEvents 1.0 shape), or "dual" (both, two physical messages per
-	// event). Unset/unrecognized values fall back to "flat" -- zero
-	// behavior change unless this is explicitly set, mirroring this
-	// fleet's PRODUCT_CLASSIFICATION_MODE/PATH_CATALOGUE_SOURCE
-	// convention.
-	envelopeMode := outboundkafka.ParseEnvelopeMode(getenv("EVENT_ENVELOPE_MODE", "flat"))
 	otelServiceName := getenv("OTEL_SERVICE_NAME", serviceName)
 
 	// catalogueConsumerCtx/cancelCatalogueConsumer are declared here
@@ -127,7 +118,7 @@ func run() error {
 		defer repos.pgPool.Close()
 	}
 
-	publisher, relay, stopPublisher, err := wireEventPublisher(logger, eventPublisherKind, kafkaBrokers, envelopeMode, repos.workUnits, repos.classificationLookup(logger), repos.pgPool)
+	publisher, relay, stopPublisher, err := wireEventPublisher(logger, eventPublisherKind, kafkaBrokers, repos.workUnits, repos.classificationLookup(logger), repos.pgPool)
 	if err != nil {
 		return err
 	}
@@ -359,7 +350,7 @@ func wireRepositories(databaseURL, migrationsDatabaseURL, migrationsPath string,
 // without Postgres a MultiPublisher emits each event to BOTH topics
 // directly. The returned stop func releases every Kafka writer opened;
 // the caller defers it.
-func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers string, envelopeMode outboundkafka.EnvelopeMode, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, pgPool *pgxpool.Pool) (ports.EventPublisher, *postgres.OutboxRelay, func(), error) {
+func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers string, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, pgPool *pgxpool.Pool) (ports.EventPublisher, *postgres.OutboxRelay, func(), error) {
 	if eventPublisherKind != "kafka" {
 		logger.Info("event publisher configured", "publisher", "log")
 		return events.NewLogPublisher(logger), nil, func() {}, nil
@@ -368,8 +359,7 @@ func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers st
 		return nil, nil, func() {}, fmt.Errorf("EVENT_PUBLISHER=kafka requires KAFKA_BROKERS to be set")
 	}
 	brokers := brokerList(kafkaBrokers)
-	integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID, outboundkafka.WithEnvelopeMode(envelopeMode))
-	logger.Info("event envelope mode", "mode", string(envelopeMode))
+	integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID)
 	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID)
 	closers := []func(){func() { _ = integrationPublisher.Close() }, func() { _ = analyticsPublisher.Close() }}
 
@@ -461,7 +451,7 @@ func (s *serving) run() error {
 	if s.relay != nil {
 		go func() {
 			defer close(relayDone)
-			s.logger.Info("outbox relay running", "topics", []string{envelope.TopicWorkPlanningEvents, outboundkafka.AnalyticsTopic})
+			s.logger.Info("outbox relay running", "topics", []string{cloudevents.TopicWorkPlanningEvents, outboundkafka.AnalyticsTopic})
 			if err := s.relay.Run(relayCtx); err != nil && !errors.Is(err, context.Canceled) {
 				errCh <- err
 			}

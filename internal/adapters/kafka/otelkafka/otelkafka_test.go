@@ -67,7 +67,7 @@ func TestTraceContextPropagatesAcrossTheMessageBoundary(t *testing.T) {
 	t.Cleanup(func() { _ = tracerProvider.Shutdown(context.Background()) })
 
 	producerCtx, publishSpan := otelkafka.StartPublishSpan(context.Background(), "warehouse.work-planning.events")
-	msg := kafkago.Message{Value: []byte(`{"event_type":"WorkReleased"}`)}
+	msg := kafkago.Message{Value: []byte(`{"specversion":"1.0","type":"com.warehouse.wes.work-planning.workunit.WorkReleased"}`)}
 	otelkafka.Inject(producerCtx, &msg)
 	publishSpan.End()
 

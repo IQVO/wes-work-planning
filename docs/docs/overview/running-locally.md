@@ -113,16 +113,19 @@ KAFKA_BROKERS=localhost:9092 EVENT_PUBLISHER=kafka \
   KAFKA_CONSUMER_GROUP=wes-work-planning-local-$USER go run ./cmd/wes
 ```
 
-Smoke-test the consumer by hand — publish a `ShiftPlanCommitted`-shaped
-message onto the workforce topic and read back the projection:
+Smoke-test the consumer by hand — publish a `ShiftPlanCommitted` CloudEvent
+(the only envelope the consumer accepts, see
+[ADR-0027](../adr/0027-cloudevents-mandatory-event-envelope.md)) onto the
+workforce topic and read back the projection:
 
 ```sh
-echo '{"event_id":"11111111-1111-4111-8111-111111111111",
-       "event_type":"ShiftPlanCommitted",
-       "occurred_at":"2026-08-23T09:00:00Z",
-       "source":"workforce-management",
+echo '{"specversion":"1.0","id":"11111111-1111-4111-8111-111111111111",
+       "type":"com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted",
+       "source":"/warehouse/workforce-management","subject":"S1",
+       "time":"2026-08-23T09:00:00Z","datacontenttype":"application/json",
+       "dataschema":"urn:warehouse:workforce-management:events:ShiftPlanCommitted:v1",
        "data":{"building_id":"BLD1","shift_id":"S1","path_id":"pick-a",
-               "planned_heads":7,"planned_rate":95.5,"planned_hours":8}}' \
+               "planned_heads":7,"planned_rate":95.5,"planned_hours":8}}' | tr -d '\n' \
 | kubectl --context kind-warehouse -n warehouse-systems exec -i kafka-controller-0 -c kafka -- \
     kafka-console-producer.sh --bootstrap-server localhost:9092 \
     --topic warehouse.workforce.events

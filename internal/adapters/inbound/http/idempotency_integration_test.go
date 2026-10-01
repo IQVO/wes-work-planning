@@ -119,6 +119,7 @@ func newIdempotencyRouter(t *testing.T, pool *pgxpool.Pool) http.Handler {
 		SampleBacklog:           usecases.NewSampleBacklog(pools, publisher, clock).WithUnitOfWork(uow),
 		RebalanceDecision:       usecases.NewRebalanceDecision(pools, publisher, clock).WithUnitOfWork(uow),
 		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(workUnits),
+		GetWorkUnit:             usecases.NewGetWorkUnit(workUnits),
 		IdempotencyPool:         pool,
 	}
 	return inboundhttp.NewRouter(handlers, "wes-work-planning-test", nil)

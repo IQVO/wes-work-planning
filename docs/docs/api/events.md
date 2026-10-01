@@ -172,7 +172,7 @@ Keyed by SKU, not by path — Inventory reservations are SKU-scoped.
 
 | `type` | `data` | Effect here |
 |---|---|---|
-| `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `task_id`, `station_id`, `work_unit_id` | `data.work_unit_id` is passed to the existing `RecordCompletion` use case |
+| `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `task_id`, `station_id`, `work_unit_id` (+ optional `task_type`) | `data.work_unit_id` is passed to the existing `RecordCompletion` use case; an unknown work unit (e.g. a PACK task keyed by order id) is an INFO-logged, processed skip, never DLQ'd |
 
 This closes the control loop's feedback edge. No new use case was introduced —
 the inbound adapter calls exactly the same code path that
@@ -294,6 +294,10 @@ Kafka is at-least-once, so **every** consumer path here is idempotent. Before
 applying an event's effect, its CloudEvents `id` is inserted into `processed_events`
 (Postgres) or a thread-safe set (in-memory). A primary-key collision means
 "already processed": the effect is skipped and the message is acked anyway.
+The insert runs in the **same transaction** as the effect
+([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)). If the
+effect fails, the mark rolls back with it, so the retry really re-applies the
+event and a failure that never heals ends in `<topic>.dlq`.
 
 Consequences worth knowing:
 

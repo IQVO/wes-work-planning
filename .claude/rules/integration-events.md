@@ -146,6 +146,18 @@ if already present.
 `RecordCompletion` additionally rejects double-complete at the domain level
 as defense in depth.
 
+The mark and the effect MUST commit atomically (ADR-0028): every inbound
+event goes through an application-layer use case (`ObserveLaborPlan`,
+`ObserveInventoryChange`, `ApplyTaskCompleted`, `ApplyOrderAllocated`) that
+calls `onceAtomically` and is wired `.WithUnitOfWork(repos.uow)` in
+`cmd/wes`. Never call `TryMarkProcessed` from the Kafka adapter or outside
+the effect's scope, because a mark committed before a failed effect turns the
+consumer's retry into a silent "already processed" success and the event is
+lost (it never reaches the DLQ). A `TaskCompleted` whose `work_unit_id` is
+unknown here (`ErrNotFound`, e.g. a PACK task keyed by the order id) is an
+INFO-logged, processed skip, neither retried nor DLQ'd. Every other error
+propagates.
+
 ### Transactional outbox (ADR-0014)
 
 With `EVENT_PUBLISHER=kafka` **and** `DATABASE_URL` set, events are written

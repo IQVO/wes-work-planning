@@ -98,7 +98,10 @@ func TestConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPartition(t 
 	})
 
 	groupID := fmt.Sprintf("wes-dlq-itest-%d", time.Now().UnixNano())
-	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory, recordCompletion, enqueue, realProcessed, catalogue, nil)
+	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory,
+		usecases.NewApplyTaskCompleted(recordCompletion, realProcessed),
+		usecases.NewApplyOrderAllocated(enqueue, realProcessed, catalogue),
+		catalogue, nil)
 	defer func() { _ = consumer.Close() }()
 
 	consumeCtx, consumeCancel := context.WithCancel(ctx)

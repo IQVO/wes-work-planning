@@ -171,10 +171,19 @@ SKU-scoped, and a SKU-to-path mapping does not exist in the domain.
 }
 ```
 
-`data.work_unit_id` maps to `RecordCompletionRequest.WorkUnitId` and calls the
-**existing** `RecordCompletion` use case — the exact code path
-`POST /work-units/{id}/complete` uses. No new use case; the inbound adapter is
-the only new thing.
+`data.work_unit_id` maps to `RecordCompletionRequest.WorkUnitId` and reaches
+the **existing** `RecordCompletion` use case — the exact code path
+`POST /work-units/{id}/complete` uses — through `ApplyTaskCompleted`, which only
+adds the atomic processed-event mark (see Idempotency below).
+
+`work_unit_id` is the completed task's `orderRef`. For a PICK task released by
+this service that is a real work unit. For a PACK task fulfillment-execution
+created itself during rebin consolidation it is the **order id**, which this
+context never planned. `RecordCompletion` then returns `ErrNotFound`, and the
+consumer treats that as a deliberate skip: an INFO log with `event_id`,
+`work_unit_id`, `task_id` and `task_type` (optional `data.task_type`, read for
+logging only), marked processed, and neither retried nor dead-lettered. Any
+other error is retried and then dead-lettered.
 
 ### `warehouse.order-management.events` — `com.warehouse.wes.order-management.order.OrderAllocated`, `...OrderPartiallyAllocated`
 
@@ -234,11 +243,18 @@ consumer path here is idempotent by construction:
 
 ```mermaid
 flowchart LR
-    M["message arrives"] --> P{"insert CloudEvents id into<br/>processed_events"}
+    M["message arrives"] --> TX["BEGIN (UnitOfWork)"]
+    TX --> P{"insert CloudEvents id into<br/>processed_events"}
     P -->|"primary-key collision<br/>(already processed)"| SKIP["skip the effect<br/><b>ack anyway</b>"]
     P -->|"inserted"| APPLY["apply the effect<br/>(projection or use case)"]
-    APPLY --> ACK["ack"]
+    APPLY -->|"ok"| COMMIT["COMMIT mark + effect"] --> ACK["ack"]
+    APPLY -->|"error"| RB["ROLLBACK mark + effect"] --> RETRY["retry (3 attempts),<br/>then &lt;topic&gt;.dlq"]
 ```
+
+The mark and the effect are **one transaction**
+([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)). Before
+that record the mark was committed first and on its own, so a failure after it
+turned the retry into a silent "already processed" success and lost the event.
 
 - **Postgres**: table `processed_events (event_id TEXT PRIMARY KEY, processed_at
   TIMESTAMPTZ)`, added by its own migration; the `event_id` column holds the

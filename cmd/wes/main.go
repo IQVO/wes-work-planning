@@ -465,11 +465,16 @@ func (s *serving) run() error {
 
 	if s.kafkaBrokers != "" {
 		s.logger.Info("consuming integration events", "brokers", s.kafkaBrokers)
-		observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts)
-		observeInventory := usecases.NewObserveInventoryChange(s.repos.inventoryViews, s.repos.processedEvts)
+		// Every inbound-event use case records the CloudEvents id as
+		// processed in the SAME UnitOfWork as its effect, so a failed
+		// attempt leaves no mark and is retried, never swallowed (ADR-0028).
+		observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
+		observeInventory := usecases.NewObserveInventoryChange(s.repos.inventoryViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
+		applyTaskCompleted := usecases.NewApplyTaskCompleted(s.recordCompletion, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
+		applyOrderAllocated := usecases.NewApplyOrderAllocated(s.enqueueWorkUnit, s.repos.processedEvts, s.catalogue).WithUnitOfWork(s.repos.uow)
 		groupID := consumerGroupID(os.Getenv("KAFKA_CONSUMER_GROUP"))
 		s.logger.Info("kafka consumer group", "group_id", groupID)
-		consumer = inboundkafka.NewConsumer(brokerList(s.kafkaBrokers), groupID, observeLabor, observeInventory, s.recordCompletion, s.enqueueWorkUnit, s.repos.processedEvts, s.catalogue, s.logger)
+		consumer = inboundkafka.NewConsumer(brokerList(s.kafkaBrokers), groupID, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, s.catalogue, s.logger)
 		go func() {
 			if err := consumer.Run(consumerCtx); err != nil {
 				s.logger.Error("kafka consumer stopped", "error", err)

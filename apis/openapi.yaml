@@ -581,6 +581,57 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /work-units/{id}:
+    get:
+      operationId: getWorkUnit
+      summary: Get one work unit by its own identity
+      description: >
+        Returns a single `WorkUnit` resolved by its own `workUnitId` — the
+        GetWorkUnit use case. This is the identity lookup, distinct from
+        `GET /work-units?reference=` (which looks units up by their
+        UPSTREAM order-line reference and always returns an array). A
+        client holding only a work unit id — e.g. an associate's RF gun
+        that claimed a PICK task from fulfillment-execution, whose
+        `orderRef` is this service's `workUnitId` — reads the unit's `sku`,
+        upstream `reference`, `pathId`, `cpt` and `state` here instead of
+        parsing the id string (ids are opaque to clients). Read-only and
+        side-effect-free; the response shape is the same
+        `WorkUnitResponse` the other work-unit endpoints return. An unknown
+        id returns `404` (`not-found`).
+      tags: [Work Units]
+      parameters:
+        - $ref: "#/components/parameters/WorkUnitId"
+      responses:
+        "200":
+          description: The work unit with this id, in its current state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkUnitResponse"
+              example:
+                id: order-77213-line-1
+                pathId: pick-a
+                cpt: "2026-08-21T12:00:00Z"
+                reference: order-77213
+                state: Released
+                giftWrap: false
+                sku: sku-482910
+                releasedAt: "2026-08-21T09:00:00Z"
+        "404":
+          description: No work unit exists with this id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://errors.wes-work-planning.warehouse-systems.dev/not-found
+                title: Resource not found
+                status: 404
+                detail: "resource not found"
+                instance: /work-units/order-77213-line-1
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /work-units/{id}/complete:
     post:
       operationId: recordCompletion

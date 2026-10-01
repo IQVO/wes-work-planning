@@ -60,6 +60,12 @@ const sidebar: SidebarsConfig = {
         },
         {
           type: "doc",
+          id: "api/rest/get-work-unit",
+          label: "Get one work unit by its own identity",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
           id: "api/rest/record-completion",
           label: "Record completion of a released work unit",
           className: "api-method post",

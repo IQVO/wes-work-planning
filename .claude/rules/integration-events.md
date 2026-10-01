@@ -1,6 +1,6 @@
 # Integration & REST reference — wes-work-planning
 
-## REST API (inbound adapter, 11 operationIds in apis/openapi.yaml)
+## REST API (inbound adapter, 12 operationIds in apis/openapi.yaml)
 
 - `GET  /healthz`                          → healthCheck
 - `POST /paths/{pathId}/charge`            → receiveChargeForecast
@@ -11,6 +11,7 @@
 - `GET  /paths/{pathId}/rebalance`         → rebalanceDecision
 - `GET  /paths/{pathId}/labor-plan-view`   → getLaborPlanView
 - `GET  /work-units?reference=`            → getWorkUnitsByReference
+- `GET  /work-units/{id}`                  → getWorkUnit
 - `POST /work-units/{id}/complete`         → recordCompletion
 - `GET  /inventory-view/{sku}`             → getInventoryView
 
@@ -21,9 +22,18 @@ cross-service Order Lifecycle console screen — see ADR-0002 in
 caller-supplied `reference` (order-management's `OrderId`), array-shaped,
 side-effect-free.
 
+`GET /work-units/{id}` is the identity lookup (GetWorkUnit use case, reuses
+`WorkUnitRepo.FindById`): one `WorkUnitResponse` (same schema as the other
+work-unit endpoints) or `404 not-found`. It exists so a client holding only
+a WorkUnitId — e.g. an RF gun resolving a fulfillment-execution PICK task's
+`orderRef`, which is this service's deterministic `<orderId>-line-<lineNo>`
+WorkUnitId — can read sku/reference/pathId/cpt/state without parsing the id
+string. chi routes the static `/complete` suffix separately, so it does not
+shadow `POST /work-units/{id}/complete`.
+
 Full request/response schemas, every status code, and the shared `Problem`
 error component: [`apis/openapi.yaml`](../../apis/openapi.yaml). The
-Docusaurus REST reference (`docs/docs/api/rest/*.api.mdx`, 11 files, one per
+Docusaurus REST reference (`docs/docs/api/rest/*.api.mdx`, 12 files, one per
 operationId + tag pages) is **generated** from this spec by
 `docusaurus-plugin-openapi-docs` — regenerate with
 `cd docs && npm run gen-api-docs` (or let the `prebuild` script do it as

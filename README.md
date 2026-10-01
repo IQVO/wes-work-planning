@@ -409,14 +409,25 @@ This service both publishes and consumes integration events over Kafka
 (`github.com/segmentio/kafka-go`), on the shared broker other warehouse-systems
 services also use — the in-cluster Kafka release in the `warehouse` kind
 cluster, reachable from the host at `localhost:9092`. This repo's
-`docker-compose.yml` runs Postgres only. Every service uses the same envelope:
+`docker-compose.yml` runs Postgres only. Every message on every topic
+(integration and analytics, produced and consumed) is a **CloudEvents 1.0**
+event in structured content mode — mandatory, with no flat envelope and no
+dual mode ([ADR-0027](./docs/docs/adr/0027-cloudevents-mandatory-event-envelope.md)).
+Produced messages carry the Kafka header
+`content-type: application/cloudevents+json; charset=UTF-8`; consumers
+dispatch on the full `type` and dead-letter anything that is not a valid
+CloudEvent:
 
 ```json
 {
-  "event_id": "uuid-v4",
-  "event_type": "WorkReleased",
-  "occurred_at": "2026-08-21T22:00:00Z",
-  "source": "wes-work-planning",
+  "specversion": "1.0",
+  "id": "uuid-v4",
+  "source": "/warehouse/wes-work-planning",
+  "type": "com.warehouse.wes.work-planning.workunit.WorkReleased",
+  "subject": "wu-10231",
+  "time": "2026-08-21T22:00:00Z",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:wes-work-planning:events:WorkReleased:v1",
   "data": { }
 }
 ```
@@ -521,14 +532,15 @@ does not compete with the deployed pod for the partition):
 ```sh
 kubectl --context kind-warehouse -n warehouse-systems exec -i kafka-controller-0 -c kafka -- \
   kafka-console-producer.sh --bootstrap-server localhost:9092 --topic warehouse.workforce.events <<'EOF'
-{"event_id":"evt-1","event_type":"ShiftPlanCommitted","occurred_at":"2026-08-21T20:00:00Z","source":"workforce-management","data":{"building_id":"bldg-1","shift_id":"shift-1","path_id":"pick-a","planned_heads":7,"planned_rate":95.5,"planned_hours":8}}
+{"specversion":"1.0","id":"evt-1","type":"com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted","source":"/warehouse/workforce-management","subject":"shift-1","time":"2026-08-21T20:00:00Z","datacontenttype":"application/json","dataschema":"urn:warehouse:workforce-management:events:ShiftPlanCommitted:v1","data":{"building_id":"bldg-1","shift_id":"shift-1","path_id":"pick-a","planned_heads":7,"planned_rate":95.5,"planned_hours":8}}
 EOF
 
 curl localhost:8080/paths/pick-a/labor-plan-view
 # {"pathId":"pick-a","plannedHeads":7,"plannedRate":95.5,"plannedHours":8,"observedAt":"..."}
 ```
 
-Same pattern for `warehouse.inventory.events` / `StockReserved` /
+Same pattern for `warehouse.inventory.events` /
+`com.warehouse.wms.inventory-storage.reservation.StockReserved` /
 `GET /inventory-view/{sku}`.
 
 For `TaskCompleted`, first get a work unit into Released state (enqueue then
@@ -542,7 +554,7 @@ curl -X POST localhost:8080/paths/pick-a/release
 
 kubectl --context kind-warehouse -n warehouse-systems exec -i kafka-controller-0 -c kafka -- \
   kafka-console-producer.sh --bootstrap-server localhost:9092 --topic warehouse.fulfillment.events <<'EOF'
-{"event_id":"evt-task-1","event_type":"TaskCompleted","occurred_at":"2026-08-21T23:05:00Z","source":"fulfillment-execution","data":{"task_id":"task-1","station_id":"station-1","work_unit_id":"wu-1"}}
+{"specversion":"1.0","id":"evt-task-1","type":"com.warehouse.wes.fulfillment-execution.task.TaskCompleted","source":"/warehouse/fulfillment-execution","subject":"task-1","time":"2026-08-21T23:05:00Z","datacontenttype":"application/json","dataschema":"urn:warehouse:fulfillment-execution:events:TaskCompleted:v1","data":{"task_id":"task-1","station_id":"station-1","work_unit_id":"wu-1"}}
 EOF
 
 curl localhost:8080/paths/pick-a/telemetry

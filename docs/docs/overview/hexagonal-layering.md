@@ -99,7 +99,7 @@ internal/
     outbound/traveldistance/    facility-layout REST lookup
     outbound/analyticsstore/    analytics Postgres store
     outbound/telemetry/         OpenTelemetry setup
-    kafka/envelope/             the wire envelope shared by both Kafka adapters
+    kafka/cloudevents/          CloudEvents 1.0 envelope helpers (New/Decode), topics, consumed types
   architecture/                 arch-go fitness tests
 migrations/                     golang-migrate SQL files (analytics/ for the projector)
 apis/                           openapi.yaml + asyncapi.yaml (the published contracts)

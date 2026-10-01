@@ -62,7 +62,11 @@ processes; one writer.**
 
 A new outbound adapter publishes the report-input event set to
 **`warehouse.wes.analytics`**, using the shared **Envelope v1** wrapper
-(`event_id`, `event_type`, `occurred_at`, `source`, `schema_version`, `data`)
+(`event_id`, `event_type`, `occurred_at`, `source`, `schema_version`, `data`;
+**superseded by [ADR-0027](./0027-cloudevents-mandatory-event-envelope.md)** —
+the analytics topic now carries CloudEvents 1.0 with `dataschema`
+`urn:warehouse:wes-work-planning:analytics:<EventName>:v1` instead of
+`schema_version`)
 with a per-`event_type` snake_case `data` payload. The existing integration
 publisher and `warehouse.work-planning.events` are **left untouched**, so no
 existing consumer is affected. The composition root fans each domain event to

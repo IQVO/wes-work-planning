@@ -67,7 +67,7 @@ Build the full bounded context described in CLAUDE.md. Work in this order; keep
 
 ## Task 8 — Consume TaskCompleted (additive, see CLAUDE.md's Task 8 section)
 - Add a THIRD topic subscription to the existing Task 7 Kafka consumer:
-  warehouse.fulfillment.events, filtering event_type "TaskCompleted".
+  warehouse.fulfillment.events, filtering type com.warehouse.wes.fulfillment-execution.task.TaskCompleted.
 - Map data.work_unit_id -> RecordCompletionRequest.WorkUnitId and call the
   existing RecordCompletion use case directly. Do not modify RecordCompletion.
 - Reuse the existing processed_events idempotency mechanism from Task 7.

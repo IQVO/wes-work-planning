@@ -34,15 +34,16 @@ hour the row aggregates. Metrics per row:
 ## Inputs (analytics topic events)
 
 Consumed from **`warehouse.wes.analytics`** (the dedicated analytics topic,
-separate from the integration topic — Envelope v1):
+separate from the integration topic — CloudEvents 1.0, see
+[ADR-0027](../adr/0027-cloudevents-mandatory-event-envelope.md)):
 
-| `event_type` | Contributes |
+| CloudEvents `type` | Contributes |
 |---|---|
-| `WorkReleased` | `workReleased` |
-| `WorkUnitCompleted` | `workUnitCompleted` |
-| `BacklogThresholdBreached` | `backlogThresholdBreached` |
-| `PathThrottled` | `pathThrottled` |
-| `RateDeviationDetected` | `rateDeviationDetected` |
+| `com.warehouse.wes.work-planning.workunit.WorkReleased` | `workReleased` |
+| `com.warehouse.wes.work-planning.workunit.WorkUnitCompleted` | `workUnitCompleted` |
+| `com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached` | `backlogThresholdBreached` |
+| `com.warehouse.wes.work-planning.workpool.PathThrottled` | `pathThrottled` |
+| `com.warehouse.wes.work-planning.workpool.RateDeviationDetected` | `rateDeviationDetected` |
 
 Every event carries its own `path_id` (the report's key dimension) directly, so
 no repo-lookup enrichment is needed. `WorkUnitCreated`, `ChargeForecastReceived`,
@@ -50,12 +51,17 @@ no repo-lookup enrichment is needed. `WorkUnitCreated`, `ChargeForecastReceived`
 but do not currently move this report; the projector acknowledges them without
 projecting.
 
-Envelope v1 fields: `event_id`, `event_type` (PascalCase), `occurred_at`
-(RFC3339 UTC), `source` = `wes-work-planning`, `schema_version` = `1`, `data`
-(snake_case). The Kafka message key is the aggregate id — the `PathId` for
-path-scoped events, the work-unit id for work-unit events. Consumers switch on
-`event_type`, ignore unknowns, and dedupe on `event_id` (idempotent
-projections).
+Every message is a CloudEvents 1.0 structured-mode event: `specversion` `1.0`,
+`id` (UUID), `source` `/warehouse/wes-work-planning`, `type` (above),
+`subject` = the aggregate id, `time` (domain occurred-at, UTC),
+`datacontenttype` `application/json`, `dataschema`
+`urn:warehouse:wes-work-planning:analytics:<EventName>:v1`, and a snake_case
+`data`. The Kafka message key is the aggregate id — the `PathId` for
+path-scoped events, the work-unit id for work-unit events — and every message
+carries `content-type: application/cloudevents+json; charset=UTF-8`. The
+projector dispatches on the full `type`, ignores unknowns, dedupes on the
+CloudEvents `id` (idempotent projections), and logs-and-skips anything that is
+not a valid CloudEvent.
 
 ## Interface
 
@@ -119,8 +125,9 @@ consistent with [ADR-0008](../adr/0008-mcp-inbound-adapter.md).
 
 - Additive fields (new optional row metric, new query filter) are non-breaking.
 - A breaking change to a row's shape or meaning is a new endpoint/tool version.
-- The analytics event contract versions independently via the Envelope
-  `schema_version` and the analytics topic name.
+- The analytics event contract versions independently via the CloudEvents
+  `dataschema` (`urn:warehouse:wes-work-planning:analytics:<EventName>:v<N>`)
+  and the analytics topic name.
 
 ## Runbook notes
 

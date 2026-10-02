@@ -75,6 +75,7 @@ type Publisher struct {
 func NewPublisher(brokers []string, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, newID IDGenerator) *Publisher {
 	return NewPublisherWithWriter(&kafkago.Writer{
 		BatchTimeout:           syncWriterBatchTimeout,
+		RequiredAcks:           syncWriterRequiredAcks,
 		Addr:                   kafkago.TCP(brokers...),
 		Topic:                  cloudevents.TopicWorkPlanningEvents,
 		Balancer:               &kafkago.Hash{},

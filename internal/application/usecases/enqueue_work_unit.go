@@ -60,6 +60,23 @@ type EnqueueWorkUnitRequest struct {
 }
 
 func (uc *EnqueueWorkUnit) Execute(ctx context.Context, req EnqueueWorkUnitRequest) (*workunit.WorkUnit, error) {
+	var unit *workunit.WorkUnit
+	err := retryOnPoolConflict(ctx, func(ctx context.Context) error {
+		var err error
+		unit, err = uc.enqueueOnce(ctx, req)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return unit, nil
+}
+
+// enqueueOnce is one optimistic attempt: load (or create) the pool, add
+// the entry, and save the POOL FIRST so a lost race fails before anything
+// else is written -- the retry then starts clean even without a
+// transactional UnitOfWork.
+func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitRequest) (*workunit.WorkUnit, error) {
 	unit, err := workunit.NewWorkUnit(req.WorkUnitId, req.PathId, req.CPT, req.Reference)
 	if err != nil {
 		return nil, err
@@ -73,17 +90,16 @@ func (uc *EnqueueWorkUnit) Execute(ctx context.Context, req EnqueueWorkUnitReque
 	} else if err != nil {
 		return nil, err
 	}
-
 	if err := pool.Enqueue(unit.Id(), unit.CPT()); err != nil {
 		return nil, err
 	}
 
 	event := shared.NewWorkUnitCreated(unit.Id(), req.PathId, uc.clock.Now())
 	err = atomically(ctx, uc.uow, func(ctx context.Context) error {
-		if err := uc.workUnits.Save(ctx, unit); err != nil {
+		if err := uc.pools.Save(ctx, pool); err != nil {
 			return err
 		}
-		if err := uc.pools.Save(ctx, pool); err != nil {
+		if err := uc.workUnits.Save(ctx, unit); err != nil {
 			return err
 		}
 		return uc.publisher.Publish(ctx, event)
@@ -91,6 +107,5 @@ func (uc *EnqueueWorkUnit) Execute(ctx context.Context, req EnqueueWorkUnitReque
 	if err != nil {
 		return nil, err
 	}
-
 	return unit, nil
 }

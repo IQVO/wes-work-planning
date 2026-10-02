@@ -94,16 +94,18 @@ func TestConsumer_PoisonMessage_AutoCreatesMissingDeadLetterTopic(t *testing.T) 
 	publisher := events.NewLogPublisher(nil)
 	clock := memory.SystemClock{}
 	processed := memory.NewProcessedEventRepo()
+	enqueueWorkUnit := usecases.NewEnqueueWorkUnit(workUnits, pools, publisher, clock)
+	recordCompletion := usecases.NewRecordCompletion(workUnits, pools, publisher, clock)
+	catalogue := pathcatalog.New([]pathcatalog.PathDefinition{
+		{Id: "PICK", MatchPrefix: "pick", RequiredCapabilities: []string{"pick"}},
+	})
 	consumer := inboundkafka.NewConsumer(brokers,
 		fmt.Sprintf("wes-dlq-autocreate-itest-%d", time.Now().UnixNano()),
 		usecases.NewObserveLaborPlan(memory.NewLaborPlanViewRepo(), processed),
 		usecases.NewObserveInventoryChange(memory.NewInventoryViewRepo(), processed),
-		usecases.NewRecordCompletion(workUnits, pools, publisher, clock),
-		usecases.NewEnqueueWorkUnit(workUnits, pools, publisher, clock),
-		processed,
-		pathcatalog.New([]pathcatalog.PathDefinition{
-			{Id: "PICK", MatchPrefix: "pick", RequiredCapabilities: []string{"pick"}},
-		}),
+		usecases.NewApplyTaskCompleted(recordCompletion, processed),
+		usecases.NewApplyOrderAllocated(enqueueWorkUnit, processed, catalogue),
+		catalogue,
 		nil)
 	defer func() { _ = consumer.Close() }()
 

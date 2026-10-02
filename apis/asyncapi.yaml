@@ -108,7 +108,14 @@ info:
     replacement for order-management's former synchronous call to
     `POST /paths/{pathId}/work-units`; deliberately fire-and-forget, with no
     reply event published back). All consumer paths are idempotent under
-    at-least-once redelivery.
+    at-least-once redelivery: the CloudEvents `id` is recorded as processed
+    in the SAME transaction as the event's effect (ADR-0028), so a failed
+    attempt is retried and, once retries are exhausted, dead-lettered to
+    `<topic>.dlq` — never acknowledged as already processed. A `TaskCompleted`
+    whose `work_unit_id` names a work unit this context never planned (e.g.
+    a PACK task fulfillment-execution created during rebin consolidation,
+    which carries the order id) is a deliberate, INFO-logged skip: it is
+    marked processed and neither retried nor dead-lettered.
   contact:
     name: WES Work Planning Team
     url: https://warehouse-systems.internal/teams/wes-work-planning

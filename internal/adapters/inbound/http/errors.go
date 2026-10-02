@@ -33,6 +33,7 @@ func statusFor(err error) int {
 	case errors.Is(err, ports.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, release.ErrWIPLimitReached),
+		errors.Is(err, ports.ErrConcurrentModification),
 		errors.Is(err, release.ErrAlreadyReleased),
 		errors.Is(err, release.ErrDuplicateEntry),
 		errors.Is(err, release.ErrEmptyPool),
@@ -83,6 +84,7 @@ var problemCatalog = []problemCategory{
 	{errMalformedBody, "malformed-request-body", "Malformed request body"},
 	{errMissingReference, "reference-required", "Reference query parameter is required"},
 	{ports.ErrNotFound, "not-found", "Resource not found"},
+	{ports.ErrConcurrentModification, "concurrent-modification", "The work pool was modified concurrently; retry the request"},
 	{release.ErrWIPLimitReached, "wip-limit-reached", "Release-fed pool WIP limit reached"},
 	{release.ErrAlreadyReleased, "work-pool-entry-already-released", "Work pool entry already released"},
 	{release.ErrDuplicateEntry, "work-unit-already-enqueued", "Work unit already enqueued in this pool"},

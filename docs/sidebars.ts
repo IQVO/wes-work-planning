@@ -110,6 +110,7 @@ const sidebars: SidebarsConfig = {
         'adr/0025-horizontal-autoscaling-and-pgxpool-tuning',
         'adr/0026-migrations-direct-postgres-connection',
         'adr/0027-cloudevents-mandatory-event-envelope',
+        'adr/0028-processed-event-mark-atomic-with-handling',
         'adr/0029-work-pool-optimistic-concurrency',
       ],
     },

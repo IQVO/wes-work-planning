@@ -23,7 +23,6 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/otelkafka"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
-	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 )
 
@@ -46,11 +45,15 @@ type inventoryEventData struct {
 }
 
 // taskCompletedData is fulfillment-execution's TaskCompleted payload (the
-// CloudEvents `data` object).
+// CloudEvents `data` object). TaskType (PICK, PACK, SLAM, REBIN) is optional
+// on the wire and read only for logging: it explains why a completion names
+// a work unit this context never planned (a PACK task fulfillment-execution
+// created itself during rebin consolidation carries the ORDER id).
 type taskCompletedData struct {
 	TaskId     string `json:"task_id"`
 	StationId  string `json:"station_id"`
 	WorkUnitId string `json:"work_unit_id"`
+	TaskType   string `json:"task_type,omitempty"`
 }
 
 // orderAllocatedData is order-management's OrderAllocated /
@@ -79,6 +82,14 @@ type orderLineData struct {
 // automatically gets its own isolated DLQ topic for free.
 const dlqTopicSuffix = ".dlq"
 
+// dlqWriter is the slice of *kafkago.Writer the dead-letter path uses.
+// An interface (rather than the concrete writer) so the retry-then-DLQ
+// decision can be unit-tested with a fake, without a broker.
+type dlqWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafkago.Message) error
+	Close() error
+}
+
 // maxHandlerAttempts bounds a handler's in-process retry before a
 // message is dead-lettered: 1 initial attempt plus up to 2 retries.
 const maxHandlerAttempts = 3
@@ -91,12 +102,18 @@ const (
 // Consumer consumes warehouse.workforce.events, warehouse.inventory.events,
 // warehouse.fulfillment.events, and warehouse.order-management.events. The
 // first two are projected into the labor-plan-view and inventory-view read
-// models; TaskCompleted from the third is fed directly into the existing
-// RecordCompletion use case to close the control loop's feedback edge from
-// Execution back to this service; OrderAllocated/OrderPartiallyAllocated
-// from the fourth is fed directly into the existing EnqueueWorkUnit use
-// case, replacing order-management's former synchronous HTTP call to
-// POST /paths/{pathId}/work-units with event choreography.
+// models; TaskCompleted from the third is fed into ApplyTaskCompleted (which
+// wraps the existing RecordCompletion) to close the control loop's feedback
+// edge from Execution back to this service; OrderAllocated/
+// OrderPartiallyAllocated from the fourth is fed into ApplyOrderAllocated
+// (which wraps the existing EnqueueWorkUnit), replacing order-management's
+// former synchronous HTTP call to POST /paths/{pathId}/work-units with
+// event choreography.
+//
+// Idempotency lives in the use cases, never here: each one records the
+// CloudEvents id as processed in the SAME atomic scope as its effect, so a
+// failed attempt leaves no mark behind and the retry re-applies the event
+// rather than skipping it as a redelivery (ADR-0028).
 type Consumer struct {
 	workforceReader       *kafkago.Reader
 	inventoryReader       *kafkago.Reader
@@ -109,18 +126,17 @@ type Consumer struct {
 	// so handleMessage/handleFulfillmentMessage can look up the right
 	// writer generically regardless of which reader the message came
 	// from.
-	dlqWriters       map[string]*kafkago.Writer
-	observeLabor     *usecases.ObserveLaborPlan
-	observeInventory *usecases.ObserveInventoryChange
-	recordCompletion *usecases.RecordCompletion
-	enqueueWorkUnit  *usecases.EnqueueWorkUnit
-	processed        ports.ProcessedEventRepo
-	catalogue        ports.PathCatalogue
-	logger           *slog.Logger
+	dlqWriters          map[string]dlqWriter
+	observeLabor        *usecases.ObserveLaborPlan
+	observeInventory    *usecases.ObserveInventoryChange
+	applyTaskCompleted  *usecases.ApplyTaskCompleted
+	applyOrderAllocated *usecases.ApplyOrderAllocated
+	catalogue           ports.PathCatalogue
+	logger              *slog.Logger
 }
 
-func NewConsumer(brokers []string, groupID string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, recordCompletion *usecases.RecordCompletion, enqueueWorkUnit *usecases.EnqueueWorkUnit, processed ports.ProcessedEventRepo, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
-	return newConsumer(brokers, groupID, cloudevents.TopicFulfillmentEvents, observeLabor, observeInventory, recordCompletion, enqueueWorkUnit, processed, catalogue, logger)
+func NewConsumer(brokers []string, groupID string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, applyTaskCompleted *usecases.ApplyTaskCompleted, applyOrderAllocated *usecases.ApplyOrderAllocated, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
+	return newConsumer(brokers, groupID, cloudevents.TopicFulfillmentEvents, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, catalogue, logger)
 }
 
 // NewConsumerForFulfillmentTopic is NewConsumer with the
@@ -129,18 +145,15 @@ func NewConsumer(brokers []string, groupID string, observeLabor *usecases.Observ
 // throwaway, uniquely-named topic instead of the pinned production
 // constant, mirroring this fleet's standing testcontainers pattern (see
 // inventory-storage's facilitycache consumer).
-func NewConsumerForFulfillmentTopic(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, recordCompletion *usecases.RecordCompletion, enqueueWorkUnit *usecases.EnqueueWorkUnit, processed ports.ProcessedEventRepo, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
-	return newConsumer(brokers, groupID, fulfillmentTopic, observeLabor, observeInventory, recordCompletion, enqueueWorkUnit, processed, catalogue, logger)
+func NewConsumerForFulfillmentTopic(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, applyTaskCompleted *usecases.ApplyTaskCompleted, applyOrderAllocated *usecases.ApplyOrderAllocated, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
+	return newConsumer(brokers, groupID, fulfillmentTopic, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, catalogue, logger)
 }
 
-func newConsumer(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, recordCompletion *usecases.RecordCompletion, enqueueWorkUnit *usecases.EnqueueWorkUnit, processed ports.ProcessedEventRepo, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
+func newConsumer(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, applyTaskCompleted *usecases.ApplyTaskCompleted, applyOrderAllocated *usecases.ApplyOrderAllocated, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
 	topics := []string{cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, fulfillmentTopic, cloudevents.TopicOrderManagementEvents}
-	dlqWriters := make(map[string]*kafkago.Writer, len(topics))
+	dlqWriters := make(map[string]dlqWriter, len(topics))
 	for _, topic := range topics {
-		dlqWriters[topic] = &kafkago.Writer{
-			Addr:  kafkago.TCP(brokers...),
-			Topic: topic + dlqTopicSuffix,
-		}
+		dlqWriters[topic] = newDLQWriter(brokers, topic)
 	}
 	return &Consumer{
 		workforceReader: kafkago.NewReader(kafkago.ReaderConfig{
@@ -163,14 +176,13 @@ func newConsumer(brokers []string, groupID string, fulfillmentTopic string, obse
 			GroupID: groupID,
 			Topic:   cloudevents.TopicOrderManagementEvents,
 		}),
-		dlqWriters:       dlqWriters,
-		observeLabor:     observeLabor,
-		observeInventory: observeInventory,
-		recordCompletion: recordCompletion,
-		enqueueWorkUnit:  enqueueWorkUnit,
-		processed:        processed,
-		catalogue:        catalogue,
-		logger:           logger,
+		dlqWriters:          dlqWriters,
+		observeLabor:        observeLabor,
+		observeInventory:    observeInventory,
+		applyTaskCompleted:  applyTaskCompleted,
+		applyOrderAllocated: applyOrderAllocated,
+		catalogue:           catalogue,
+		logger:              logger,
 	}
 }
 
@@ -245,6 +257,23 @@ func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, ms
 	)
 	defer span.End()
 
+	if err := c.dispatch(ctx, msgCtx, span, topic, msg, handle); err != nil {
+		return err
+	}
+	if err := reader.CommitMessages(ctx, msg); err != nil {
+		recordSpanError(span, err)
+		return err
+	}
+	return nil
+}
+
+// dispatch is handleMessage minus the offset commit: decode, then either
+// dead-letter a non-CloudEvent immediately or run handle with bounded
+// retry and dead-letter it once every attempt has failed. It returns an
+// error only when the DLQ publish itself fails (the message must then NOT
+// be committed); a handled, skipped, or dead-lettered message returns nil
+// and the caller commits it.
+func (c *Consumer) dispatch(ctx, msgCtx context.Context, span trace.Span, topic string, msg kafkago.Message, handle func(context.Context, ce.Event) error) error {
 	env, err := cloudevents.Decode(msg.Value)
 	if err != nil {
 		recordSpanError(span, err)
@@ -253,10 +282,6 @@ func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, ms
 			"dlq_topic", topic+dlqTopicSuffix, "error", err)
 		if dlqErr := c.dlqPublish(ctx, topic, msg, err); dlqErr != nil {
 			return fmt.Errorf("kafka: publish to dead-letter topic: %w", dlqErr)
-		}
-		if err := reader.CommitMessages(ctx, msg); err != nil {
-			recordSpanError(span, err)
-			return err
 		}
 		return nil
 	}
@@ -275,11 +300,6 @@ func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, ms
 		if dlqErr := c.dlqPublish(ctx, topic, msg, err); dlqErr != nil {
 			return fmt.Errorf("kafka: publish to dead-letter topic: %w", dlqErr)
 		}
-	}
-
-	if err := reader.CommitMessages(ctx, msg); err != nil {
-		recordSpanError(span, err)
-		return err
 	}
 	return nil
 }
@@ -318,7 +338,7 @@ func (c *Consumer) dlqPublish(ctx context.Context, topic string, msg kafkago.Mes
 		kafkago.Header{Key: "x-dlq-error", Value: []byte(cause.Error())},
 		kafkago.Header{Key: "x-dlq-failed-at", Value: []byte(time.Now().UTC().Format(time.RFC3339))},
 	)
-	return writer.WriteMessages(ctx, kafkago.Message{
+	return writeDLQ(ctx, writer, kafkago.Message{
 		Key:     msg.Key,
 		Value:   msg.Value,
 		Headers: headers,
@@ -393,11 +413,19 @@ func (c *Consumer) handleInventoryEvent(ctx context.Context, env ce.Event) error
 	return err
 }
 
-// handleFulfillmentEvent filters for TaskCompleted and feeds it into the
-// existing RecordCompletion use case. Idempotency reuses the same
-// processed_events mechanism as the Task 7 projectors: RecordCompletion
-// itself already rejects a double-complete at the domain level, but marking
-// the CloudEvents id here avoids a spurious error/retry on mere redelivery.
+// handleFulfillmentEvent filters for TaskCompleted and feeds it into
+// ApplyTaskCompleted, which marks the CloudEvents id processed in the same
+// atomic scope as RecordCompletion (ADR-0028). Outcomes:
+//
+//   - applied / redelivery: nil.
+//   - unknown work unit (ports.ErrNotFound from RecordCompletion): a
+//     deliberate, INFO-logged skip returning nil — neither retried nor
+//     dead-lettered. warehouse.fulfillment.events is shared: a PACK task
+//     fulfillment-execution created itself during rebin consolidation
+//     carries the ORDER id as work_unit_id, which this context never
+//     planned. The event is still marked processed so redelivery is cheap.
+//   - any other error: returned with nothing committed, so handleMessage
+//     retries it and, once retries are exhausted, dead-letters it.
 func (c *Consumer) handleFulfillmentEvent(ctx context.Context, env ce.Event) error {
 	if env.Type() != cloudevents.TypeTaskCompleted {
 		return nil
@@ -408,31 +436,35 @@ func (c *Consumer) handleFulfillmentEvent(ctx context.Context, env ce.Event) err
 		return err
 	}
 
-	alreadyProcessed, err := c.processed.TryMarkProcessed(ctx, env.ID(), env.Time())
+	outcome, err := c.applyTaskCompleted.Execute(ctx, usecases.ApplyTaskCompletedRequest{
+		EventId:    env.ID(),
+		WorkUnitId: data.WorkUnitId,
+		OccurredAt: env.Time(),
+	})
 	if err != nil {
 		return err
 	}
-	if alreadyProcessed {
-		return nil
+	if outcome == usecases.TaskCompletedUnknownWorkUnit {
+		c.logInfo(ctx, "TaskCompleted for a work unit this context never planned; skipping",
+			"event_id", env.ID(), "work_unit_id", data.WorkUnitId,
+			"task_id", data.TaskId, "task_type", data.TaskType)
 	}
-
-	_, err = c.recordCompletion.Execute(ctx, usecases.RecordCompletionRequest{WorkUnitId: data.WorkUnitId})
-	return err
+	return nil
 }
 
 // handleOrderManagementEvent filters for OrderAllocated / OrderPartially-
 // Allocated — both event types share an identical payload shape and both
 // mean "these lines are ready to enqueue", so this handler does not
-// distinguish between them — and feeds each line in the payload into the
-// existing EnqueueWorkUnit use case. This is the event-choreography
-// replacement for order-management's former synchronous call to
-// POST /paths/{pathId}/work-units: order-management now publishes here
-// instead of calling this service's HTTP API directly.
+// distinguish between them — and feeds the payload into
+// ApplyOrderAllocated, which enqueues one WorkUnit per line through the
+// existing EnqueueWorkUnit. This is the event-choreography replacement for
+// order-management's former synchronous call to
+// POST /paths/{pathId}/work-units.
 //
-// Idempotency mirrors handleFulfillmentEvent exactly: the CloudEvents id is
-// marked processed BEFORE any EnqueueWorkUnit call, so a redelivery of the
-// same OrderAllocated/OrderPartiallyAllocated event does not attempt to
-// re-enqueue its lines.
+// The processed-event mark and every line's enqueue commit atomically
+// (ADR-0028): if any line fails, nothing is committed, the error is
+// returned, and the event is retried and finally dead-lettered rather than
+// silently dropped with its order released but never worked.
 func (c *Consumer) handleOrderManagementEvent(ctx context.Context, env ce.Event) error {
 	if env.Type() != cloudevents.TypeOrderAllocated && env.Type() != cloudevents.TypeOrderPartiallyAllocated {
 		return nil
@@ -443,61 +475,23 @@ func (c *Consumer) handleOrderManagementEvent(ctx context.Context, env ce.Event)
 		return err
 	}
 
-	alreadyProcessed, err := c.processed.TryMarkProcessed(ctx, env.ID(), env.Time())
-	if err != nil {
-		return err
-	}
-	if alreadyProcessed {
-		return nil
-	}
-
-	cpt := shared.NewCPT(data.PromiseDate)
+	lines := make([]usecases.OrderAllocatedLine, 0, len(data.Lines))
 	for _, line := range data.Lines {
-		pathId, err := shared.NewPathId(line.PathId)
-		if err != nil {
-			return err
-		}
-		// Validate against the declared process-path catalogue before
-		// ever creating a WorkPool for this pathId: an unrecognized
-		// path_id from order-management (e.g. a typo or a stale
-		// deploy referencing a path that was retired) must fail loud
-		// here rather than silently seed a real WorkPool queue nothing
-		// downstream will ever service. See fulfillment-execution's
-		// ADR-0017 for the full catalogue rationale.
-		if _, err := c.catalogue.Lookup(pathId.String()); err != nil {
-			return err
-		}
-
-		workUnitId := fmt.Sprintf("%s-line-%d", data.OrderId, line.LineNo)
-		_, err = c.enqueueWorkUnit.Execute(ctx, usecases.EnqueueWorkUnitRequest{
-			WorkUnitId: workUnitId,
-			PathId:     pathId,
-			CPT:        cpt,
-			Reference:  data.OrderId,
-			SKU:        line.SKU,
-			GiftWrap:   line.GiftWrap,
+		lines = append(lines, usecases.OrderAllocatedLine{
+			LineNo:   line.LineNo,
+			SKU:      line.SKU,
+			PathId:   line.PathId,
+			GiftWrap: line.GiftWrap,
 		})
-		// release.ErrDuplicateEntry means WorkPool.Enqueue saw this
-		// WorkUnitId already present in the pool. The processed_events
-		// guard above already covers the common cause (redelivery of the
-		// exact same CloudEvents id), but a collision could in principle also
-		// arise some other way (e.g. a prior partial-allocation event for
-		// the same order/line reprocessed under a different id, or
-		// operator replay). Since the deterministic WorkUnitId means a
-		// duplicate can only ever refer to the SAME logical work unit,
-		// treating it as a benign no-op here (rather than a hard failure)
-		// is the safe, idempotent choice — it must never crash or stall
-		// the consumer for what is, by construction, the same unit of
-		// work already known to the pool.
-		if errors.Is(err, release.ErrDuplicateEntry) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
 	}
-
-	return nil
+	_, err := c.applyOrderAllocated.Execute(ctx, usecases.ApplyOrderAllocatedRequest{
+		EventId:     env.ID(),
+		OccurredAt:  env.Time(),
+		OrderId:     data.OrderId,
+		PromiseDate: data.PromiseDate,
+		Lines:       lines,
+	})
+	return err
 }
 
 // log emits a structured record through the configured logger, carrying the
@@ -506,5 +500,87 @@ func (c *Consumer) handleOrderManagementEvent(ctx context.Context, env ce.Event)
 func (c *Consumer) log(ctx context.Context, msg string, args ...any) {
 	if c.logger != nil {
 		c.logger.WarnContext(ctx, msg, args...)
+	}
+}
+
+// newDLQWriter builds the dead-letter writer for topic. It MUST set
+// AllowAutoTopicCreation: the fleet creates every topic on first write
+// (warehouse-infra kafka.tf, num.partitions=8) and "<topic>.dlq" is only
+// written on the rare poison path, so it usually does not exist yet.
+// Without the flag the first poison message fails its DLQ publish with
+// "[3] Unknown Topic Or Partition", the offset is (correctly) not
+// committed, and Run returns -- observed live: the consumer stopped and
+// no OrderAllocated ever became a work unit.
+func newDLQWriter(brokers []string, topic string) *kafkago.Writer {
+	return &kafkago.Writer{
+		Addr:                   kafkago.TCP(brokers...),
+		Topic:                  topic + dlqTopicSuffix,
+		AllowAutoTopicCreation: true,
+		// BatchTimeout: a DLQ write is a synchronous single message; with
+		// kafka-go's 1s default the writer holds every write for a full second
+		// waiting to fill a batch, capping dead-lettering at ~1 msg/s/partition
+		// (observed live: a backlog of legacy messages took hours to drain while
+		// the consumer processed nothing else).
+		BatchTimeout: dlqBatchTimeout,
+	}
+}
+
+// dlqTopicReadyAttempts / dlqTopicReadyBackoff bound how long a DLQ publish
+// waits for an auto-created "<topic>.dlq" to become writable.
+const (
+	dlqTopicReadyAttempts = 40
+	dlqTopicReadyBackoff  = 250 * time.Millisecond
+)
+
+// dlqMessageWriter is the slice of *kafkago.Writer writeDLQ needs.
+type dlqMessageWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafkago.Message) error
+}
+
+// writeDLQ publishes msg to the dead-letter topic, retrying (bounded) while
+// the topic is still being auto-created. AllowAutoTopicCreation alone is not
+// enough: the first write races partition leader election and the broker
+// answers UnknownTopicOrPartition / LeaderNotAvailable for a few hundred
+// milliseconds. Any other error -- or exhausting the budget -- is returned,
+// so the caller still refuses to commit the offset (no message loss).
+func writeDLQ(ctx context.Context, w dlqMessageWriter, msg kafkago.Message) error {
+	var err error
+	for attempt := 0; attempt < dlqTopicReadyAttempts; attempt++ {
+		if err = w.WriteMessages(ctx, msg); err == nil || !isTopicNotReady(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(dlqTopicReadyBackoff):
+		}
+	}
+	return err
+}
+
+// isTopicNotReady reports whether err only means the (auto-created) topic
+// has no leader yet.
+func isTopicNotReady(err error) bool {
+	var werrs kafkago.WriteErrors
+	if errors.As(err, &werrs) {
+		for _, e := range werrs {
+			if e != nil && !isTopicNotReady(e) {
+				return false
+			}
+		}
+		return werrs.Count() > 0
+	}
+	return errors.Is(err, kafkago.UnknownTopicOrPartition) || errors.Is(err, kafkago.LeaderNotAvailable)
+}
+
+// dlqBatchTimeout flushes a dead-letter write almost immediately.
+const dlqBatchTimeout = 10 * time.Millisecond
+
+// logInfo is log at INFO: for deliberate, expected skips that are not
+// failures (e.g. a TaskCompleted for a work unit this context never
+// planned).
+func (c *Consumer) logInfo(ctx context.Context, msg string, args ...any) {
+	if c.logger != nil {
+		c.logger.InfoContext(ctx, msg, args...)
 	}
 }

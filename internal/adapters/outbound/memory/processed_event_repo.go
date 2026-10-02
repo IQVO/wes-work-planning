@@ -26,3 +26,13 @@ func (r *ProcessedEventRepo) TryMarkProcessed(ctx context.Context, eventId strin
 	r.seen[eventId] = struct{}{}
 	return false, nil
 }
+
+// ReleaseProcessed forgets eventId, implementing ports.ProcessedEventReleaser:
+// the in-memory stand-in for a rolled-back processed-event insert, used
+// when the effect the mark guarded failed (ADR-0028).
+func (r *ProcessedEventRepo) ReleaseProcessed(ctx context.Context, eventId string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.seen, eventId)
+	return nil
+}

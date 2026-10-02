@@ -135,7 +135,10 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 	catalogue := pathcatalog.New([]pathcatalog.PathDefinition{
 		{Id: "PICK", MatchPrefix: "pick", RequiredCapabilities: []string{"pick"}},
 	})
-	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory, recordCompletion, enqueue, processed, catalogue, nil)
+	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory,
+		usecases.NewApplyTaskCompleted(recordCompletion, processed),
+		usecases.NewApplyOrderAllocated(enqueue, processed, catalogue),
+		catalogue, nil)
 	defer consumer.Close()
 
 	consumeCtx, cancel := context.WithCancel(context.Background())

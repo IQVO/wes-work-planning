@@ -45,12 +45,7 @@ func (r *WorkPoolRepo) Save(ctx context.Context, wp *release.WorkPool) error {
 	}
 	defer func() { _ = rollback(ctx) }()
 
-	_, err = tx.Exec(ctx, `
-		INSERT INTO work_pools (path_id, mode, wip_limit, alarm_threshold)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (path_id) DO UPDATE SET mode = $2, wip_limit = $3, alarm_threshold = $4
-	`, wp.PathId().String(), modeToString(wp.Mode()), wp.WIPLimit(), wp.AlarmThreshold())
-	if err != nil {
+	if err := saveVersionedPoolRow(ctx, tx, wp); err != nil {
 		return err
 	}
 
@@ -74,14 +69,53 @@ func (r *WorkPoolRepo) Save(ctx context.Context, wp *release.WorkPool) error {
 		}
 	}
 
-	return commit(ctx)
+	if err := commit(ctx); err != nil {
+		return err
+	}
+	wp.SetVersion(wp.Version() + 1)
+	return nil
+}
+
+// saveVersionedPoolRow writes the work_pools row guarded by the version the
+// aggregate was loaded at: a first save inserts version 1, and every later
+// save only matches `version = loaded`. Zero rows affected means another
+// writer saved this pool in between -- ports.ErrConcurrentModification,
+// returned before any entry row is touched (the caller's transaction rolls
+// back, nothing is lost, and the caller re-loads and retries).
+func saveVersionedPoolRow(ctx context.Context, tx querier, wp *release.WorkPool) error {
+	if wp.Version() == 0 {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO work_pools (path_id, mode, wip_limit, alarm_threshold, version)
+			VALUES ($1, $2, $3, $4, 1)
+			ON CONFLICT (path_id) DO NOTHING
+		`, wp.PathId().String(), modeToString(wp.Mode()), wp.WIPLimit(), wp.AlarmThreshold())
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ports.ErrConcurrentModification
+		}
+		return nil
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE work_pools SET mode = $2, wip_limit = $3, alarm_threshold = $4, version = version + 1
+		WHERE path_id = $1 AND version = $5
+	`, wp.PathId().String(), modeToString(wp.Mode()), wp.WIPLimit(), wp.AlarmThreshold(), wp.Version())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ports.ErrConcurrentModification
+	}
+	return nil
 }
 
 func (r *WorkPoolRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (*release.WorkPool, error) {
 	var modeStr string
 	var wipLimit, alarmThreshold int
-	row := querierFrom(ctx, r.pool).QueryRow(ctx, `SELECT mode, wip_limit, alarm_threshold FROM work_pools WHERE path_id = $1`, pathId.String())
-	if err := row.Scan(&modeStr, &wipLimit, &alarmThreshold); err != nil {
+	var version int64
+	row := querierFrom(ctx, r.pool).QueryRow(ctx, `SELECT mode, wip_limit, alarm_threshold, version FROM work_pools WHERE path_id = $1`, pathId.String())
+	if err := row.Scan(&modeStr, &wipLimit, &alarmThreshold, &version); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ports.ErrNotFound
 		}
@@ -89,6 +123,7 @@ func (r *WorkPoolRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (
 	}
 
 	wp := release.NewWorkPool(pathId, stringToMode(modeStr), wipLimit, alarmThreshold)
+	wp.SetVersion(version)
 
 	if err := hydratePoolEntries(ctx, querierFrom(ctx, r.pool), pathId, wp); err != nil {
 		return nil, err
@@ -131,18 +166,5 @@ func hydratePoolEntries(ctx context.Context, q querier, pathId shared.PathId, wp
 // then release for "released"/"completed" states, then complete for
 // "completed" — the inverse of Save's state column derivation.
 func enqueueEntryState(wp *release.WorkPool, workUnitId string, cpt time.Time, state string) error {
-	if err := wp.Enqueue(workUnitId, shared.NewCPT(cpt)); err != nil {
-		return err
-	}
-	if state == "released" || state == "completed" {
-		if err := wp.Release(workUnitId); err != nil {
-			return err
-		}
-	}
-	if state == "completed" {
-		if err := wp.Complete(workUnitId); err != nil {
-			return err
-		}
-	}
-	return nil
+	return wp.RestoreEntry(workUnitId, shared.NewCPT(cpt), state == "released" || state == "completed", state == "completed")
 }

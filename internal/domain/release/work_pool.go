@@ -37,6 +37,10 @@ type WorkPool struct {
 	wipLimit       int // only enforced when mode == ReleaseFed
 	alarmThreshold int // only informative when mode == FlowFed
 	entries        []poolEntry
+	// version is the persisted optimistic-concurrency version (0 = never
+	// saved). A repository's Save must only succeed against the version it
+	// loaded -- see ports.ErrConcurrentModification.
+	version int64
 }
 
 // NewWorkPool constructs an empty WorkPool for a path.
@@ -223,4 +227,63 @@ func (p *WorkPool) Complete(workUnitId string) error {
 		return nil
 	}
 	return ErrUnknownEntry
+}
+
+// Version is the persisted optimistic-concurrency version this pool was
+// loaded at (0 for a pool that has never been saved).
+func (p *WorkPool) Version() int64 { return p.version }
+
+// SetVersion is for repositories only: it records the version a pool was
+// rehydrated at, or the new version after a successful Save.
+func (p *WorkPool) SetVersion(v int64) { p.version = v }
+
+// RestoreEntry re-adds a persisted entry exactly as stored, for
+// repositories rehydrating a pool. Unlike Enqueue + Release it does not
+// re-check the WIP limit: rehydration must reproduce what is stored, even
+// if the limit has since been lowered below the current WIP.
+func (p *WorkPool) RestoreEntry(workUnitId string, cpt shared.CPT, isReleased, isCompleted bool) error {
+	for _, e := range p.entries {
+		if e.workUnitId == workUnitId {
+			return ErrDuplicateEntry
+		}
+	}
+	st := pending
+	switch {
+	case isCompleted:
+		st = completed
+	case isReleased:
+		st = released
+	}
+	p.entries = append(p.entries, poolEntry{workUnitId: workUnitId, cpt: cpt, state: st})
+	return nil
+}
+
+// Reconcile moves an entry FORWARD to match its work unit's authoritative
+// lifecycle (the WorkUnit aggregate, not the pool, is the source of truth
+// for a unit's state). It never moves an entry backwards and is a no-op
+// when the entry already agrees. Used to heal a pool entry left behind by
+// a lost update, and by completion to finish an entry that missed its
+// release transition.
+func (p *WorkPool) Reconcile(workUnitId string, unitReleased, unitCompleted bool) error {
+	for i, e := range p.entries {
+		if e.workUnitId != workUnitId {
+			continue
+		}
+		p.entries[i].state = reconciledState(e.state, unitReleased, unitCompleted)
+		return nil
+	}
+	return ErrUnknownEntry
+}
+
+// reconciledState is the forward-only merge of an entry's stored state with
+// its work unit's lifecycle: completion always wins, a pending entry follows
+// a released unit, and nothing ever moves backwards.
+func reconciledState(stored entryState, unitReleased, unitCompleted bool) entryState {
+	if unitCompleted {
+		return completed
+	}
+	if unitReleased && stored == pending {
+		return released
+	}
+	return stored
 }

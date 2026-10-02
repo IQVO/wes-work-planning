@@ -49,27 +49,44 @@ func (uc *ReleaseNextWork) WithUnitOfWork(u ports.UnitOfWork) *ReleaseNextWork {
 	return uc
 }
 
+// Execute releases the next pending work unit of the path. The pool is
+// loaded, advanced and saved inside retryOnPoolConflict, so two concurrent
+// releases (or a release racing an enqueue/completion) can never write a
+// stale pool over a newer one.
 func (uc *ReleaseNextWork) Execute(ctx context.Context, req ReleaseNextWorkRequest) (*workunit.WorkUnit, error) {
+	var unit *workunit.WorkUnit
+	err := retryOnPoolConflict(ctx, func(ctx context.Context) error {
+		var err error
+		unit, err = uc.releaseOnce(ctx, req)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Counted here rather than in the HTTP handler so the metric tracks the
+	// real domain event — a work unit actually released — not the request.
+	uc.released.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrPathId, req.PathId.String())))
+	return unit, nil
+}
+
+// releaseOnce is one optimistic attempt. A pool entry still "pending" whose
+// work unit has already moved on (left behind by a lost update before this
+// pool was versioned) is healed in the same save and skipped, rather than
+// blocking every future release with 409 work-unit-already-released.
+func (uc *ReleaseNextWork) releaseOnce(ctx context.Context, req ReleaseNextWorkRequest) (*workunit.WorkUnit, error) {
 	pool, err := uc.pools.FindByPathId(ctx, req.PathId)
 	if err != nil {
 		return nil, err
 	}
-
-	workUnitId, err := uc.policy.Apply(pool)
+	unit, err := uc.nextReleasableUnit(ctx, pool)
 	if err != nil {
 		return nil, err
 	}
-
-	unit, err := uc.workUnits.FindById(ctx, workUnitId)
-	if err != nil {
-		return nil, err
-	}
-
 	now := uc.clock.Now()
 	if err := unit.Release(now); err != nil {
 		return nil, err
 	}
-
 	// The WorkUnit Save precedes Publish INSIDE the scope on purpose: the
 	// integration publisher enriches WorkReleased by reading the work unit
 	// back, and under the outbox that read must see this transaction's row.
@@ -86,10 +103,29 @@ func (uc *ReleaseNextWork) Execute(ctx context.Context, req ReleaseNextWorkReque
 	if err != nil {
 		return nil, err
 	}
-
-	// Counted here rather than in the HTTP handler so the metric tracks the
-	// real domain event — a work unit actually released — not the request.
-	uc.released.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrPathId, req.PathId.String())))
-
 	return unit, nil
+}
+
+// nextReleasableUnit advances the pool to its next pending entry whose
+// work unit is still Pending. A pending entry whose unit already moved on
+// (left behind by a lost update before pools were versioned) is healed in
+// place and skipped; the healed entries are persisted by the same save as
+// the release itself.
+func (uc *ReleaseNextWork) nextReleasableUnit(ctx context.Context, pool *release.WorkPool) (*workunit.WorkUnit, error) {
+	for {
+		workUnitId, err := uc.policy.Apply(pool)
+		if err != nil {
+			return nil, err
+		}
+		unit, err := uc.workUnits.FindById(ctx, workUnitId)
+		if err != nil {
+			return nil, err
+		}
+		if unit.State() == workunit.Pending {
+			return unit, nil
+		}
+		if err := pool.Reconcile(workUnitId, true, unit.State() == workunit.Completed); err != nil {
+			return nil, err
+		}
+	}
 }

@@ -21,7 +21,7 @@ func NewWorkUnitRepo() *WorkUnitRepo {
 func (r *WorkUnitRepo) Save(ctx context.Context, unit *workunit.WorkUnit) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.byId[unit.Id()] = unit
+	r.byId[unit.Id()] = cloneWorkUnit(unit)
 	return nil
 }
 
@@ -32,7 +32,7 @@ func (r *WorkUnitRepo) FindById(ctx context.Context, id string) (*workunit.WorkU
 	if !ok {
 		return nil, ports.ErrNotFound
 	}
-	return u, nil
+	return cloneWorkUnit(u), nil
 }
 
 func (r *WorkUnitRepo) FindByPathId(ctx context.Context, pathId shared.PathId) ([]*workunit.WorkUnit, error) {
@@ -41,7 +41,7 @@ func (r *WorkUnitRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (
 	var out []*workunit.WorkUnit
 	for _, u := range r.byId {
 		if u.PathId().Equals(pathId) {
-			out = append(out, u)
+			out = append(out, cloneWorkUnit(u))
 		}
 	}
 	return out, nil
@@ -57,8 +57,28 @@ func (r *WorkUnitRepo) FindByReference(ctx context.Context, reference string) ([
 	var out []*workunit.WorkUnit
 	for _, u := range r.byId {
 		if u.Reference() == reference {
-			out = append(out, u)
+			out = append(out, cloneWorkUnit(u))
 		}
 	}
 	return out, nil
+}
+
+// cloneWorkUnit returns an independent copy of u, rebuilt exactly the way
+// the Postgres adapter rehydrates a row. Handing out the stored pointer let
+// concurrent use cases mutate one aggregate in place -- a data race no
+// real database exhibits, which hid lost-update bugs from the tests.
+func cloneWorkUnit(u *workunit.WorkUnit) *workunit.WorkUnit {
+	cp, err := workunit.NewWorkUnit(u.Id(), u.PathId(), u.CPT(), u.Reference())
+	if err != nil {
+		return u // unreachable: u was itself built by NewWorkUnit
+	}
+	cp.SetSKU(u.SKU())
+	cp.SetGiftWrap(u.GiftWrap())
+	if at := u.ReleasedAt(); at != nil {
+		_ = cp.Release(*at)
+	}
+	if at := u.CompletedAt(); at != nil {
+		_ = cp.Complete(*at)
+	}
+	return cp
 }

@@ -63,6 +63,7 @@ type RelaySink struct {
 // placement on the second hop too.
 func NewRelaySink(brokers []string) *RelaySink {
 	return NewRelaySinkWithWriter(&kafkago.Writer{
+		BatchTimeout:           syncWriterBatchTimeout,
 		Addr:                   kafkago.TCP(brokers...),
 		Balancer:               &kafkago.Hash{},
 		AllowAutoTopicCreation: true,

@@ -66,6 +66,7 @@ func newServer() (*httptest.Server, *harness) {
 		LaborPlanView:           usecases.NewLaborPlanView(laborPlanViews),
 		InventoryView:           usecases.NewInventoryView(inventoryViews),
 		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(workUnits),
+		GetWorkUnit:             usecases.NewGetWorkUnit(workUnits),
 	}
 
 	return httptest.NewServer(inboundhttp.NewRouter(h, "wes-work-planning", nil)), &harness{
@@ -350,6 +351,21 @@ func (w *world) requestInventoryView(sku string) error {
 
 func (w *world) lookupWorkUnitsByReference(reference string) error {
 	return w.do(http.MethodGet, "/work-units?reference="+reference, nil)
+}
+
+func (w *world) requestWorkUnitById(workUnitId string) error {
+	return w.do(http.MethodGet, "/work-units/"+workUnitId, nil)
+}
+
+func (w *world) responseWorkUnitField(field, want string) error {
+	got, err := w.stringField(field)
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("got work unit %s %q, want %q", field, got, want)
+	}
+	return nil
 }
 
 func (w *world) lookupWorkUnitsWithoutReference() error {
@@ -723,6 +739,8 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the inventory view is requested for SKU "([^"]*)"$`, w.requestInventoryView)
 	sc.Step(`^work units are looked up by reference "([^"]*)"$`, w.lookupWorkUnitsByReference)
 	sc.Step(`^work units are looked up without a reference$`, w.lookupWorkUnitsWithoutReference)
+	sc.Step(`^the WorkUnit "([^"]*)" is requested by its id$`, w.requestWorkUnitById)
+	sc.Step(`^the WorkUnit in the response has (id|reference|pathId|cpt|state) "([^"]*)"$`, w.responseWorkUnitField)
 	sc.Step(`^the Work Pool telemetry for process path "([^"]*)" is sampled with a CPT cutoff of "([^"]*)"$`, w.sampleTelemetryWithCutoff)
 
 	sc.Step(`^the request is accepted with status (\d+)$`, w.requestAccepted)

@@ -19,7 +19,7 @@ import (
 
 	inboundhttp "github.com/claudioed/wes-work-planning/internal/adapters/inbound/http"
 	inboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/inbound/kafka"
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/filecatalog"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
@@ -74,15 +74,6 @@ func run() error {
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
 	eventPublisherKind := getenv("EVENT_PUBLISHER", "log")
-	// EVENT_ENVELOPE_MODE selects the integration-topic wire shape(s) the
-	// outbound Publisher's Encode produces (ADR-0021): "flat" (default,
-	// unset -- today's byte-identical envelope), "cloudevents" (the new
-	// CloudEvents 1.0 shape), or "dual" (both, two physical messages per
-	// event). Unset/unrecognized values fall back to "flat" -- zero
-	// behavior change unless this is explicitly set, mirroring this
-	// fleet's PRODUCT_CLASSIFICATION_MODE/PATH_CATALOGUE_SOURCE
-	// convention.
-	envelopeMode := outboundkafka.ParseEnvelopeMode(getenv("EVENT_ENVELOPE_MODE", "flat"))
 	otelServiceName := getenv("OTEL_SERVICE_NAME", serviceName)
 
 	// catalogueConsumerCtx/cancelCatalogueConsumer are declared here
@@ -127,7 +118,7 @@ func run() error {
 		defer repos.pgPool.Close()
 	}
 
-	publisher, relay, stopPublisher, err := wireEventPublisher(logger, eventPublisherKind, kafkaBrokers, envelopeMode, repos.workUnits, repos.classificationLookup(logger), repos.pgPool)
+	publisher, relay, stopPublisher, err := wireEventPublisher(logger, eventPublisherKind, kafkaBrokers, repos.workUnits, repos.classificationLookup(logger), repos.pgPool)
 	if err != nil {
 		return err
 	}
@@ -359,7 +350,7 @@ func wireRepositories(databaseURL, migrationsDatabaseURL, migrationsPath string,
 // without Postgres a MultiPublisher emits each event to BOTH topics
 // directly. The returned stop func releases every Kafka writer opened;
 // the caller defers it.
-func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers string, envelopeMode outboundkafka.EnvelopeMode, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, pgPool *pgxpool.Pool) (ports.EventPublisher, *postgres.OutboxRelay, func(), error) {
+func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers string, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, pgPool *pgxpool.Pool) (ports.EventPublisher, *postgres.OutboxRelay, func(), error) {
 	if eventPublisherKind != "kafka" {
 		logger.Info("event publisher configured", "publisher", "log")
 		return events.NewLogPublisher(logger), nil, func() {}, nil
@@ -368,8 +359,7 @@ func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers st
 		return nil, nil, func() {}, fmt.Errorf("EVENT_PUBLISHER=kafka requires KAFKA_BROKERS to be set")
 	}
 	brokers := brokerList(kafkaBrokers)
-	integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID, outboundkafka.WithEnvelopeMode(envelopeMode))
-	logger.Info("event envelope mode", "mode", string(envelopeMode))
+	integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID)
 	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID)
 	closers := []func(){func() { _ = integrationPublisher.Close() }, func() { _ = analyticsPublisher.Close() }}
 
@@ -412,6 +402,7 @@ func newHandlers(repos repositories, publisher ports.EventPublisher, clock memor
 		LaborPlanView:           usecases.NewLaborPlanView(repos.laborPlanViews),
 		InventoryView:           usecases.NewInventoryView(repos.inventoryViews),
 		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(repos.workUnits),
+		GetWorkUnit:             usecases.NewGetWorkUnit(repos.workUnits),
 		// IdempotencyPool wires RequireIdempotencyKey onto POST
 		// /paths/{pathId}/work-units (see idempotency.go's ADR). nil in
 		// the in-memory configuration (pgPool nil), matching every other
@@ -460,7 +451,7 @@ func (s *serving) run() error {
 	if s.relay != nil {
 		go func() {
 			defer close(relayDone)
-			s.logger.Info("outbox relay running", "topics", []string{envelope.TopicWorkPlanningEvents, outboundkafka.AnalyticsTopic})
+			s.logger.Info("outbox relay running", "topics", []string{cloudevents.TopicWorkPlanningEvents, outboundkafka.AnalyticsTopic})
 			if err := s.relay.Run(relayCtx); err != nil && !errors.Is(err, context.Canceled) {
 				errCh <- err
 			}
@@ -475,11 +466,16 @@ func (s *serving) run() error {
 
 	if s.kafkaBrokers != "" {
 		s.logger.Info("consuming integration events", "brokers", s.kafkaBrokers)
-		observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts)
-		observeInventory := usecases.NewObserveInventoryChange(s.repos.inventoryViews, s.repos.processedEvts)
+		// Every inbound-event use case records the CloudEvents id as
+		// processed in the SAME UnitOfWork as its effect, so a failed
+		// attempt leaves no mark and is retried, never swallowed (ADR-0028).
+		observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
+		observeInventory := usecases.NewObserveInventoryChange(s.repos.inventoryViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
+		applyTaskCompleted := usecases.NewApplyTaskCompleted(s.recordCompletion, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
+		applyOrderAllocated := usecases.NewApplyOrderAllocated(s.enqueueWorkUnit, s.repos.processedEvts, s.catalogue).WithUnitOfWork(s.repos.uow)
 		groupID := consumerGroupID(os.Getenv("KAFKA_CONSUMER_GROUP"))
 		s.logger.Info("kafka consumer group", "group_id", groupID)
-		consumer = inboundkafka.NewConsumer(brokerList(s.kafkaBrokers), groupID, observeLabor, observeInventory, s.recordCompletion, s.enqueueWorkUnit, s.repos.processedEvts, s.catalogue, s.logger)
+		consumer = inboundkafka.NewConsumer(brokerList(s.kafkaBrokers), groupID, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, s.catalogue, s.logger)
 		go func() {
 			if err := consumer.Run(consumerCtx); err != nil {
 				s.logger.Error("kafka consumer stopped", "error", err)

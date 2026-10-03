@@ -16,10 +16,19 @@ import (
 type ObserveLaborPlan struct {
 	views     ports.LaborPlanViewRepo
 	processed ports.ProcessedEventRepo
+	uow       ports.UnitOfWork
 }
 
 func NewObserveLaborPlan(views ports.LaborPlanViewRepo, processed ports.ProcessedEventRepo) *ObserveLaborPlan {
 	return &ObserveLaborPlan{views: views, processed: processed}
+}
+
+// WithUnitOfWork brackets the processed-event mark and the view Save in
+// one atomic scope (ADR-0028), so a failed Save never leaves the event
+// marked processed.
+func (uc *ObserveLaborPlan) WithUnitOfWork(u ports.UnitOfWork) *ObserveLaborPlan {
+	uc.uow = u
+	return uc
 }
 
 type ObserveLaborPlanRequest struct {
@@ -32,19 +41,14 @@ type ObserveLaborPlanRequest struct {
 }
 
 func (uc *ObserveLaborPlan) Execute(ctx context.Context, req ObserveLaborPlanRequest) error {
-	alreadyProcessed, err := uc.processed.TryMarkProcessed(ctx, req.EventId, req.ObservedAt)
-	if err != nil {
-		return err
-	}
-	if alreadyProcessed {
-		return nil
-	}
-
-	return uc.views.Save(ctx, laborview.LaborPlanObserved{
-		PathId:       req.PathId,
-		PlannedHeads: req.PlannedHeads,
-		PlannedRate:  req.PlannedRate,
-		PlannedHours: req.PlannedHours,
-		ObservedAt:   req.ObservedAt,
+	_, err := onceAtomically(ctx, uc.uow, uc.processed, req.EventId, req.ObservedAt, func(ctx context.Context) error {
+		return uc.views.Save(ctx, laborview.LaborPlanObserved{
+			PathId:       req.PathId,
+			PlannedHeads: req.PlannedHeads,
+			PlannedRate:  req.PlannedRate,
+			PlannedHours: req.PlannedHours,
+			ObservedAt:   req.ObservedAt,
+		})
 	})
+	return err
 }

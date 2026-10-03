@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"errors"
 
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
@@ -43,43 +44,62 @@ type RecordCompletionRequest struct {
 }
 
 func (uc *RecordCompletion) Execute(ctx context.Context, req RecordCompletionRequest) (*workunit.WorkUnit, error) {
+	var unit *workunit.WorkUnit
+	err := retryOnPoolConflict(ctx, func(ctx context.Context) error {
+		var err error
+		unit, err = uc.completeOnce(ctx, req)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return unit, nil
+}
+
+// completeOnce is one optimistic attempt. The pool entry is RECONCILED to
+// completed (not just Complete()d): an entry a lost update left at
+// "pending" used to make pool.Complete fail with ErrNotReleased, which was
+// silently ignored -- the entry then stayed pending forever and wedged
+// every later release on the path. The pool is saved first so a lost race
+// fails before the work unit is written.
+func (uc *RecordCompletion) completeOnce(ctx context.Context, req RecordCompletionRequest) (*workunit.WorkUnit, error) {
 	unit, err := uc.workUnits.FindById(ctx, req.WorkUnitId)
 	if err != nil {
 		return nil, err
 	}
-
 	now := uc.clock.Now()
 	if err := unit.Complete(now); err != nil {
 		return nil, err
 	}
-
 	event := shared.NewWorkUnitCompleted(unit.Id(), unit.PathId(), now)
 	err = atomically(ctx, uc.uow, func(ctx context.Context) error {
+		if err := uc.completePoolEntry(ctx, unit); err != nil {
+			return err
+		}
 		if err := uc.workUnits.Save(ctx, unit); err != nil {
 			return err
 		}
-
-		// Free this unit's WIP slot on its work pool. Best-effort against a
-		// pool that predates this fix or was never release-fed for this path
-		// (ErrNotFound): the WorkUnit's own completion above is the source of
-		// truth and must not be skipped just because the pool side-effect
-		// couldn't be applied. A pool Save FAILURE, though, still fails (and
-		// under a UnitOfWork rolls back) the whole scope.
-		if pool, err := uc.pools.FindByPathId(ctx, unit.PathId()); err == nil {
-			if err := pool.Complete(unit.Id()); err == nil {
-				if err := uc.pools.Save(ctx, pool); err != nil {
-					return err
-				}
-			}
-		} else if err != ports.ErrNotFound {
-			return err
-		}
-
 		return uc.publisher.Publish(ctx, event)
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	return unit, nil
+}
+
+// completePoolEntry frees the unit's WIP slot. A path with no pool, or a
+// pool that never held this unit, is not an error (best-effort secondary
+// aggregate, as before); a lost optimistic race is, so it gets retried.
+func (uc *RecordCompletion) completePoolEntry(ctx context.Context, unit *workunit.WorkUnit) error {
+	pool, err := uc.pools.FindByPathId(ctx, unit.PathId())
+	if errors.Is(err, ports.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := pool.Reconcile(unit.Id(), true, true); err != nil {
+		return nil // ErrUnknownEntry: this pool never held the unit
+	}
+	return uc.pools.Save(ctx, pool)
 }

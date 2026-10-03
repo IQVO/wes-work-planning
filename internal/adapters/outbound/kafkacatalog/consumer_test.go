@@ -3,11 +3,17 @@ package kafkacatalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
+	ce "github.com/cloudevents/sdk-go/v2/event"
 	kafkago "github.com/segmentio/kafka-go"
 
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
 )
 
@@ -35,18 +41,24 @@ func (r *fakeReader) Close() error {
 	return nil
 }
 
-func envelopeMsg(t *testing.T, partition int, offset int64, eventType string, data any) kafkago.Message {
+// envelopeMsg builds a CloudEvents 1.0 message as process-path-management
+// publishes it, carrying the full `type` string ceType.
+func envelopeMsg(t *testing.T, partition int, offset int64, ceType string, data any) kafkago.Message {
 	t.Helper()
-	rawData, err := json.Marshal(data)
-	if err != nil {
-		t.Fatalf("marshal data: %v", err)
+	e := ce.New(ce.CloudEventsVersionV1)
+	e.SetID(fmt.Sprintf("evt-%d-%d", partition, offset))
+	e.SetSource("/warehouse/process-path-management")
+	e.SetType(ceType)
+	e.SetSubject("path")
+	e.SetTime(time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC))
+	if err := e.SetData(ce.ApplicationJSON, data); err != nil {
+		t.Fatalf("set data: %v", err)
 	}
-	env := envelope{EventType: eventType, Data: rawData}
-	rawEnv, err := json.Marshal(env)
+	raw, err := json.Marshal(e)
 	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
+		t.Fatalf("marshal CloudEvent: %v", err)
 	}
-	return kafkago.Message{Partition: partition, Offset: offset, Value: rawEnv}
+	return kafkago.Message{Partition: partition, Offset: offset, Value: raw}
 }
 
 func newTestConsumer(reader Reader, target targetOffsets) *Consumer {
@@ -180,10 +192,14 @@ func TestConsumer_Revised_UpdatesMatchPrefix(t *testing.T) {
 // stand-in — and carries it into the local PathDefinition unchanged.
 func TestConsumer_Created_DecodesDestinationLocationRole(t *testing.T) {
 	realisticEnvelope := []byte(`{
-		"event_id": "6a2d3b8f-0e42-4b7c-9f1d-7c3e2f6b8a91",
-		"event_type": "ProcessPathCreated",
-		"occurred_at": "2026-09-13T00:00:00Z",
-		"source": "process-path-management",
+		"specversion": "1.0",
+		"id": "6a2d3b8f-0e42-4b7c-9f1d-7c3e2f6b8a91",
+		"source": "/warehouse/process-path-management",
+		"type": "com.warehouse.wes.process-path-management.processpath.ProcessPathCreated",
+		"subject": "PACK",
+		"time": "2026-09-13T00:00:00Z",
+		"datacontenttype": "application/json",
+		"dataschema": "urn:warehouse:process-path-management:events:ProcessPathCreated:v1",
 		"data": {
 			"path_id": "PACK",
 			"match_prefix": "pack",
@@ -248,7 +264,7 @@ func TestConsumer_Created_OmittedDestinationLocationRole_IsEmptyString(t *testin
 func TestConsumer_UnknownEventType_IsIgnored(t *testing.T) {
 	reader := &fakeReader{
 		messages: []kafkago.Message{
-			envelopeMsg(t, 0, 0, "SomeFutureEventType", map[string]any{}),
+			envelopeMsg(t, 0, 0, "com.warehouse.wes.process-path-management.processpath.SomeFutureEventType", map[string]any{}),
 		},
 	}
 	c := newTestConsumer(reader, targetOffsets{0: 1})
@@ -259,5 +275,31 @@ func TestConsumer_UnknownEventType_IsIgnored(t *testing.T) {
 
 	if err := c.WaitReady(ctx); err != nil {
 		t.Fatalf("expected Ready before timeout even for an unrecognized event type, got: %v", err)
+	}
+}
+
+// TestConsumer_LegacyFlatEnvelope_IsRejectedNotParsed: a retired
+// flat-envelope ProcessPathCreated (event_type, no specversion) must be
+// skipped as an invalid CloudEvent — never parsed into the catalogue — and
+// the readiness watermark must still advance past it.
+func TestConsumer_LegacyFlatEnvelope_IsRejectedNotParsed(t *testing.T) {
+	legacy := []byte(`{"event_id":"e1","event_type":"ProcessPathCreated","occurred_at":"2026-09-13T00:00:00Z","source":"process-path-management","data":{"path_id":"LEGACY","match_prefix":"legacy","required_capabilities":["x"]}}`)
+	if err := (&Consumer{}).handle(kafkago.Message{Value: legacy}); !errors.Is(err, cloudevents.ErrNotCloudEvent) {
+		t.Fatalf("handle(legacy) error = %v, want ErrNotCloudEvent", err)
+	}
+
+	reader := &fakeReader{messages: []kafkago.Message{{Partition: 0, Offset: 0, Value: legacy}}}
+	c := newTestConsumer(reader, targetOffsets{0: 1})
+	c.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+
+	if err := c.WaitReady(ctx); err != nil {
+		t.Fatalf("expected Ready past the legacy message, got: %v", err)
+	}
+	if _, err := c.Lookup("legacy"); err == nil {
+		t.Fatal("legacy flat message must not populate the catalogue")
 	}
 }

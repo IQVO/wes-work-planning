@@ -2,17 +2,16 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/otelkafka"
 	"github.com/claudioed/wes-work-planning/internal/analytics/report"
 )
@@ -22,18 +21,19 @@ import (
 // pipelines track their offsets independently.
 const AnalyticsConsumerGroup = "wes-analytics"
 
-// analyticsEnvelope is the inbound decode shape of the Envelope v1 wrapper on
-// the analytics topic. The data payload is left as a RawMessage and decoded
-// per event_type. It is declared here (rather than imported from the outbound
-// publisher) so this inbound adapter does not depend on an outbound adapter.
-type analyticsEnvelope struct {
-	EventId       string          `json:"event_id"`
-	EventType     string          `json:"event_type"`
-	OccurredAt    time.Time       `json:"occurred_at"`
-	Source        string          `json:"source"`
-	SchemaVersion int             `json:"schema_version"`
-	Data          json.RawMessage `json:"data"`
-}
+// Full CloudEvents `type` strings of this service's own analytics events
+// the projector applies. Same type on the analytics and integration topics;
+// the dataschema (urn:warehouse:wes-work-planning:analytics:<Event>:v1)
+// names the analytics payload shape. Declared here rather than imported
+// from the outbound publisher so this inbound adapter does not depend on
+// an outbound adapter.
+var (
+	typeWorkReleased             = cloudevents.Type("workunit", "WorkReleased")
+	typeWorkUnitCompleted        = cloudevents.Type("workunit", "WorkUnitCompleted")
+	typeBacklogThresholdBreached = cloudevents.Type("workpool", "BacklogThresholdBreached")
+	typePathThrottled            = cloudevents.Type("workpool", "PathThrottled")
+	typeRateDeviationDetected    = cloudevents.Type("workpool", "RateDeviationDetected")
+)
 
 // analyticsData is the union of fields the projecting event payloads carry.
 // Every event this report is built from carries its own path_id.
@@ -43,7 +43,7 @@ type analyticsData struct {
 }
 
 // AnalyticsConsumer reads analytics events off the analytics topic and
-// applies each to the throughput ProjectionStore, exactly once per event_id
+// applies each to the throughput ProjectionStore, exactly once per CloudEvents id
 // despite Kafka's at-least-once delivery.
 type AnalyticsConsumer struct {
 	Reader     *kafkago.Reader
@@ -88,6 +88,13 @@ func (c *AnalyticsConsumer) Run(ctx context.Context) error {
 			return err
 		}
 		if err := c.Handle(ctx, msg); err != nil {
+			if errors.Is(err, cloudevents.ErrNotCloudEvent) {
+				// Deterministic poison message (e.g. the retired flat
+				// envelope): skip it — ReadMessage already committed.
+				c.Logger.WarnContext(ctx, "skipping invalid CloudEvent on analytics topic",
+					"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", err)
+				continue
+			}
 			c.Logger.ErrorContext(ctx, "analytics message handling failed", "error", err)
 		}
 	}
@@ -117,29 +124,31 @@ func (c *AnalyticsConsumer) Handle(ctx context.Context, msg kafkago.Message) err
 	return nil
 }
 
-// HandleMessage decodes raw as an analyticsEnvelope and applies the matching
-// projection method for its event_type. Event types outside the projection
-// contract are ignored (and not marked processed). For a projecting event it
-// dedupes on event_id via ProcessedEvents before applying, so a redelivery is
-// a no-op. It is exported separately from Run so tests can feed raw envelopes
-// without a live broker.
+// HandleMessage decodes raw as a CloudEvents 1.0 event and applies the
+// matching projection method for its full `type`. Event types outside the
+// projection contract are ignored (and not marked processed). For a
+// projecting event it dedupes on the CloudEvents id via ProcessedEvents
+// before applying, so a redelivery is a no-op. A message that is not a
+// valid CloudEvent returns an error wrapping cloudevents.ErrNotCloudEvent
+// and is never parsed as a legacy shape. It is exported separately from Run
+// so tests can feed raw events without a live broker.
 func (c *AnalyticsConsumer) HandleMessage(ctx context.Context, raw []byte) error {
-	var env analyticsEnvelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return fmt.Errorf("analytics: decode envelope: %w", err)
+	evt, err := cloudevents.Decode(raw)
+	if err != nil {
+		return fmt.Errorf("analytics: decode event: %w", err)
 	}
 
 	// Only the five throughput-moving events project; everything else
 	// (WorkUnitCreated, ChargeForecastReceived, ShiftPlanCommitted,
-	// LaborReassignmentFlagged) is acknowledged without touching the read
-	// model or the processed set.
-	switch env.EventType {
-	case "WorkReleased", "WorkUnitCompleted", "BacklogThresholdBreached", "PathThrottled", "RateDeviationDetected":
+	// LaborReassignmentFlagged, PathCapacityChanged) is acknowledged without
+	// touching the read model or the processed set.
+	switch evt.Type() {
+	case typeWorkReleased, typeWorkUnitCompleted, typeBacklogThresholdBreached, typePathThrottled, typeRateDeviationDetected:
 	default:
 		return nil
 	}
 
-	isNew, err := c.Processed.MarkProcessed(ctx, env.EventId)
+	isNew, err := c.Processed.MarkProcessed(ctx, evt.ID())
 	if err != nil {
 		return fmt.Errorf("analytics: mark processed: %w", err)
 	}
@@ -148,21 +157,22 @@ func (c *AnalyticsConsumer) HandleMessage(ctx context.Context, raw []byte) error
 	}
 
 	var data analyticsData
-	if err := json.Unmarshal(env.Data, &data); err != nil {
+	if err := evt.DataAs(&data); err != nil {
 		return fmt.Errorf("analytics: decode data: %w", err)
 	}
 
-	switch env.EventType {
-	case "WorkReleased":
-		return c.Projection.ApplyWorkReleased(ctx, env.EventId, data.PathId, env.OccurredAt)
-	case "WorkUnitCompleted":
-		return c.Projection.ApplyWorkUnitCompleted(ctx, env.EventId, data.PathId, env.OccurredAt)
-	case "BacklogThresholdBreached":
-		return c.Projection.ApplyBacklogThresholdBreached(ctx, env.EventId, data.PathId, env.OccurredAt)
-	case "PathThrottled":
-		return c.Projection.ApplyPathThrottled(ctx, env.EventId, data.PathId, env.OccurredAt)
-	case "RateDeviationDetected":
-		return c.Projection.ApplyRateDeviationDetected(ctx, env.EventId, data.PathId, env.OccurredAt)
+	id, at := evt.ID(), evt.Time()
+	switch evt.Type() {
+	case typeWorkReleased:
+		return c.Projection.ApplyWorkReleased(ctx, id, data.PathId, at)
+	case typeWorkUnitCompleted:
+		return c.Projection.ApplyWorkUnitCompleted(ctx, id, data.PathId, at)
+	case typeBacklogThresholdBreached:
+		return c.Projection.ApplyBacklogThresholdBreached(ctx, id, data.PathId, at)
+	case typePathThrottled:
+		return c.Projection.ApplyPathThrottled(ctx, id, data.PathId, at)
+	case typeRateDeviationDetected:
+		return c.Projection.ApplyRateDeviationDetected(ctx, id, data.PathId, at)
 	default:
 		return nil
 	}

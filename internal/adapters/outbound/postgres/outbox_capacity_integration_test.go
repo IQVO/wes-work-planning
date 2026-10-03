@@ -4,7 +4,6 @@ package postgres_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -14,7 +13,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
 
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
@@ -30,7 +29,9 @@ import (
 // testcontainers, never a skip-gated external check per this repo's own
 // integration-test convention), and a plain kafka-go consumer reads the
 // message back off the wire and decodes it exactly as a real consumer
-// would: envelope -> event_type == "PathCapacityChanged" -> data fields.
+// would: CloudEvent -> type == com.warehouse.wes.work-planning.workpool.PathCapacityChanged
+// -> data fields, and checks the CloudEvents id the relay published is the
+// one minted at encode time and persisted with the outbox row.
 func TestOutboxRelay_PathCapacityChanged_RoundTripsThroughRealKafka(t *testing.T) {
 	ctx := context.Background()
 
@@ -50,7 +51,7 @@ func TestOutboxRelay_PathCapacityChanged_RoundTripsThroughRealKafka(t *testing.T
 	if err != nil {
 		t.Fatalf("Kafka brokers: %v", err)
 	}
-	if err := createCapacityTopic(ctx, brokers, envelope.TopicWorkPlanningEvents); err != nil {
+	if err := createCapacityTopic(ctx, brokers, cloudevents.TopicWorkPlanningEvents); err != nil {
 		t.Fatalf("create Kafka topic: %v", err)
 	}
 	if err := createCapacityTopic(ctx, brokers, outboundkafka.AnalyticsTopic); err != nil {
@@ -94,7 +95,7 @@ func TestOutboxRelay_PathCapacityChanged_RoundTripsThroughRealKafka(t *testing.T
 	if !snapshot.RemainingCapacityKnown || snapshot.RemainingCapacityUnits != 3 {
 		t.Fatalf("got known=%v remaining=%d, want known=true remaining=3", snapshot.RemainingCapacityKnown, snapshot.RemainingCapacityUnits)
 	}
-	if got := countOutbox(t, pool, "event_type = 'PathCapacityChanged' AND published_at IS NULL"); got != 2 {
+	if got := countOutbox(t, pool, "event_type = 'com.warehouse.wes.work-planning.workpool.PathCapacityChanged' AND published_at IS NULL"); got != 2 {
 		t.Fatalf("expected 2 pending PathCapacityChanged outbox rows (integration + analytics topics), got %d", got)
 	}
 
@@ -105,16 +106,36 @@ func TestOutboxRelay_PathCapacityChanged_RoundTripsThroughRealKafka(t *testing.T
 	if _, err := relay.RelayOnce(ctx); err != nil {
 		t.Fatalf("RelayOnce: %v", err)
 	}
-	if got := countOutbox(t, pool, "event_type = 'PathCapacityChanged' AND published_at IS NULL"); got != 0 {
+	if got := countOutbox(t, pool, "event_type = 'com.warehouse.wes.work-planning.workpool.PathCapacityChanged' AND published_at IS NULL"); got != 0 {
 		t.Fatalf("expected the PathCapacityChanged row to be marked published, %d still pending", got)
 	}
+
+	// The ids persisted with the outbox rows, read straight from the stored
+	// CloudEvent bytes: the relay must republish exactly these.
+	persistedIDs := map[string]bool{}
+	rows, err := pool.Query(ctx, "SELECT value FROM outbox_events WHERE topic = $1", cloudevents.TopicWorkPlanningEvents)
+	if err != nil {
+		t.Fatalf("read outbox values: %v", err)
+	}
+	for rows.Next() {
+		var v []byte
+		if err := rows.Scan(&v); err != nil {
+			t.Fatalf("scan outbox value: %v", err)
+		}
+		stored, err := cloudevents.Decode(v)
+		if err != nil {
+			t.Fatalf("outbox row is not a CloudEvent: %v", err)
+		}
+		persistedIDs[stored.ID()] = true
+	}
+	rows.Close()
 
 	// Consume it back off the REAL broker exactly like a real consumer
 	// would: read raw bytes, decode the shared envelope, then the
 	// event-type-specific data payload.
 	reader := kafkago.NewReader(kafkago.ReaderConfig{
 		Brokers:   brokers,
-		Topic:     envelope.TopicWorkPlanningEvents,
+		Topic:     cloudevents.TopicWorkPlanningEvents,
 		Partition: 0,
 		MinBytes:  1,
 		MaxBytes:  10e6,
@@ -133,20 +154,30 @@ func TestOutboxRelay_PathCapacityChanged_RoundTripsThroughRealKafka(t *testing.T
 		if err != nil {
 			t.Fatalf("ReadMessage (never saw PathCapacityChanged before timeout): %v", err)
 		}
-		var env envelope.Envelope
-		if err := json.Unmarshal(msg.Value, &env); err != nil {
-			t.Fatalf("unmarshal envelope: %v", err)
+		env, err := cloudevents.Decode(msg.Value)
+		if err != nil {
+			t.Fatalf("decode CloudEvent: %v", err)
 		}
-		if env.EventType != "PathCapacityChanged" {
+		if env.Type() != "com.warehouse.wes.work-planning.workpool.PathCapacityChanged" {
 			continue
 		}
 		found = true
 
-		if env.Source != "wes-work-planning" {
-			t.Fatalf("got source %q, want wes-work-planning", env.Source)
+		if env.Source() != "/warehouse/wes-work-planning" || env.Subject() != "pick-capacity-itest" ||
+			env.DataSchema() != "urn:warehouse:wes-work-planning:events:PathCapacityChanged:v1" {
+			t.Fatalf("unexpected CloudEvent attributes %s", env)
+		}
+		if !persistedIDs[env.ID()] {
+			t.Fatalf("published id %q is not an id persisted in outbox_events %v", env.ID(), persistedIDs)
+		}
+		if string(msg.Key) != env.ID() {
+			t.Fatalf("key = %q, want the CloudEvents id %q", msg.Key, env.ID())
+		}
+		if ct := capacityHeader(msg.Headers, "content-type"); ct != cloudevents.MediaType {
+			t.Fatalf("content-type header = %q, want %q", ct, cloudevents.MediaType)
 		}
 		var data map[string]any
-		if err := json.Unmarshal(env.Data, &data); err != nil {
+		if err := env.DataAs(&data); err != nil {
 			t.Fatalf("unmarshal data: %v", err)
 		}
 		if data["path_id"] != "pick-capacity-itest" {
@@ -195,4 +226,13 @@ func createCapacityTopic(ctx context.Context, brokers []string, topic string) er
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func capacityHeader(headers []kafkago.Header, key string) string {
+	for _, h := range headers {
+		if h.Key == key {
+			return string(h.Value)
+		}
+	}
+	return ""
 }

@@ -1,1 +1,0 @@
-{"event_id":"evt-golden-2","event_type":"PathCapacityChanged","occurred_at":"2026-08-21T12:00:00Z","source":"wes-work-planning","data":{"cutoff_at":"2026-08-21T15:00:00Z","known":true,"path_id":"pick-a","remaining_units":17}}

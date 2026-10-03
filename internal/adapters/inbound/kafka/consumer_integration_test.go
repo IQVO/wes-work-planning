@@ -4,17 +4,17 @@ package kafka_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
+	ce "github.com/cloudevents/sdk-go/v2/event"
 	kafkago "github.com/segmentio/kafka-go"
 	"github.com/testcontainers/testcontainers-go"
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
 
 	inboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/inbound/kafka"
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
@@ -38,7 +38,7 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Kafka brokers: %v", err)
 	}
-	if err := createTopics(ctx, brokers, envelope.TopicWorkforceEvents, envelope.TopicInventoryEvents, envelope.TopicFulfillmentEvents, envelope.TopicOrderManagementEvents); err != nil {
+	if err := createTopics(ctx, brokers, cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, cloudevents.TopicFulfillmentEvents, cloudevents.TopicOrderManagementEvents); err != nil {
 		t.Fatalf("create Kafka topics: %v", err)
 	}
 
@@ -71,11 +71,12 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 	publishCtx, publishCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer publishCancel()
 
-	workforceWriter := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: envelope.TopicWorkforceEvents, AllowAutoTopicCreation: false}
+	workforceWriter := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: cloudevents.TopicWorkforceEvents, AllowAutoTopicCreation: false}
 	defer workforceWriter.Close()
 	if err := workforceWriter.WriteMessages(publishCtx, kafkago.Message{
-		Key: []byte("evt-shift-" + pathIdValue),
-		Value: mustEnvelopeJSON(t, "evt-shift-"+pathIdValue, envelope.EventTypeShiftPlanCommitted, "workforce-management", map[string]any{
+		Key:     []byte("evt-shift-" + pathIdValue),
+		Headers: cloudEventHeaders(),
+		Value: mustCloudEventJSON(t, "evt-shift-"+pathIdValue, cloudevents.TypeShiftPlanCommitted, "workforce-management", map[string]any{
 			"building_id": "bldg-1", "shift_id": "shift-1", "path_id": pathIdValue,
 			"planned_heads": 6, "planned_rate": 100.0, "planned_hours": 8.0,
 		}),
@@ -83,22 +84,24 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 		t.Fatalf("publish ShiftPlanCommitted: %v", err)
 	}
 
-	inventoryWriter := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: envelope.TopicInventoryEvents, AllowAutoTopicCreation: false}
+	inventoryWriter := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: cloudevents.TopicInventoryEvents, AllowAutoTopicCreation: false}
 	defer inventoryWriter.Close()
 	if err := inventoryWriter.WriteMessages(publishCtx, kafkago.Message{
-		Key: []byte("evt-reserve-" + sku),
-		Value: mustEnvelopeJSON(t, "evt-reserve-"+sku, "StockReserved", "inventory-storage", map[string]any{
+		Key:     []byte("evt-reserve-" + sku),
+		Headers: cloudEventHeaders(),
+		Value: mustCloudEventJSON(t, "evt-reserve-"+sku, cloudevents.TypeStockReserved, "inventory-storage", map[string]any{
 			"sku": sku, "quantity": 5, "demand_ref": "demand-1",
 		}),
 	}); err != nil {
 		t.Fatalf("publish StockReserved: %v", err)
 	}
 
-	fulfillmentWriter := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: envelope.TopicFulfillmentEvents, AllowAutoTopicCreation: false}
+	fulfillmentWriter := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: cloudevents.TopicFulfillmentEvents, AllowAutoTopicCreation: false}
 	defer fulfillmentWriter.Close()
 	if err := fulfillmentWriter.WriteMessages(publishCtx, kafkago.Message{
-		Key: []byte("evt-task-" + workUnitIdValue),
-		Value: mustEnvelopeJSON(t, "evt-task-"+workUnitIdValue, envelope.EventTypeTaskCompleted, "fulfillment-execution", map[string]any{
+		Key:     []byte("evt-task-" + workUnitIdValue),
+		Headers: cloudEventHeaders(),
+		Value: mustCloudEventJSON(t, "evt-task-"+workUnitIdValue, cloudevents.TypeTaskCompleted, "fulfillment-execution", map[string]any{
 			"task_id": "task-1", "station_id": "station-1", "work_unit_id": workUnitIdValue,
 		}),
 	}); err != nil {
@@ -106,11 +109,12 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 	}
 
 	orderId := fmt.Sprintf("integration-kafka-order-%d", time.Now().UnixNano())
-	orderManagementWriter := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: envelope.TopicOrderManagementEvents, AllowAutoTopicCreation: false}
+	orderManagementWriter := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: cloudevents.TopicOrderManagementEvents, AllowAutoTopicCreation: false}
 	defer orderManagementWriter.Close()
 	if err := orderManagementWriter.WriteMessages(publishCtx, kafkago.Message{
-		Key: []byte("evt-order-" + orderId),
-		Value: mustEnvelopeJSON(t, "evt-order-"+orderId, envelope.EventTypeOrderAllocated, "order-management", map[string]any{
+		Key:     []byte("evt-order-" + orderId),
+		Headers: cloudEventHeaders(),
+		Value: mustCloudEventJSON(t, "evt-order-"+orderId, cloudevents.TypeOrderAllocated, "order-management", map[string]any{
 			"order_id": orderId, "promise_date": time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339),
 			"lines": []map[string]any{{"line_no": 1, "sku": sku, "path_id": pathIdValue, "gift_wrap": false}},
 		}),
@@ -131,7 +135,10 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 	catalogue := pathcatalog.New([]pathcatalog.PathDefinition{
 		{Id: "PICK", MatchPrefix: "pick", RequiredCapabilities: []string{"pick"}},
 	})
-	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory, recordCompletion, enqueue, processed, catalogue, nil)
+	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory,
+		usecases.NewApplyTaskCompleted(recordCompletion, processed),
+		usecases.NewApplyOrderAllocated(enqueue, processed, catalogue),
+		catalogue, nil)
 	defer consumer.Close()
 
 	consumeCtx, cancel := context.WithCancel(context.Background())
@@ -205,19 +212,30 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 	}
 }
 
-func mustEnvelopeJSON(t *testing.T, eventId, eventType, source string, data map[string]any) []byte {
+// mustCloudEventJSON builds the structured-mode CloudEvents 1.0 wire bytes
+// the upstream service (repo name `source`) publishes for ceType.
+func mustCloudEventJSON(t *testing.T, eventId, ceType, source string, data map[string]any) []byte {
 	t.Helper()
-	rawData, err := json.Marshal(data)
-	if err != nil {
-		t.Fatalf("marshal data: %v", err)
+	e := ce.New(ce.CloudEventsVersionV1)
+	e.SetID(eventId)
+	e.SetType(ceType)
+	e.SetSource("/warehouse/" + source)
+	e.SetSubject(eventId)
+	e.SetTime(time.Now().UTC())
+	if err := e.SetData(ce.ApplicationJSON, data); err != nil {
+		t.Fatalf("set data: %v", err)
 	}
-	body, err := json.Marshal(envelope.Envelope{
-		EventId: eventId, EventType: eventType, OccurredAt: time.Now().UTC(), Source: source, Data: rawData,
-	})
+	body, err := e.MarshalJSON()
 	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
+		t.Fatalf("marshal CloudEvent: %v", err)
 	}
 	return body
+}
+
+// cloudEventHeaders is the content-type header every producer in the fleet
+// stamps on a CloudEvents message.
+func cloudEventHeaders() []kafkago.Header {
+	return []kafkago.Header{cloudevents.ContentTypeHeader()}
 }
 
 func createTopics(ctx context.Context, brokers []string, topics ...string) error {

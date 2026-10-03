@@ -25,9 +25,17 @@ This page is written from that spec.
 
 ## The CloudEvents envelope
 
-The published contract is **CloudEvents 1.0 structured mode**: context
+Every message this service produces or consumes — on the integration topic
+**and** the analytics topic — is a **CloudEvents 1.0 structured-mode** event
+(mandatory fleet standard,
+[ADR-0027](../adr/0027-cloudevents-mandatory-event-envelope.md)). Context
 attributes and the event-specific `data` payload travel together in one JSON
-body.
+body; there is no other envelope, no dual mode and no envelope toggle. Events
+are built and decoded with the official
+`github.com/cloudevents/sdk-go/v2/event` package through
+`internal/adapters/kafka/cloudevents`. Every produced Kafka message carries
+the header `content-type: application/cloudevents+json; charset=UTF-8`
+alongside the W3C trace headers.
 
 ```json
 {
@@ -38,6 +46,7 @@ body.
   "subject": "wu-10231",
   "time": "2026-08-21T22:12:30Z",
   "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:wes-work-planning:events:WorkReleased:v1",
   "data": {
     "path_id": "pick-to-tote",
     "work_unit_id": "wu-10231",
@@ -50,12 +59,18 @@ body.
 | Attribute | Rule |
 |---|---|
 | `specversion` | always `"1.0"` |
-| `id` | UUID v4 generated at publish time; **with `source`, this is the de-duplication key** |
+| `id` | UUID v4 minted once per domain event and persisted with the outbox row (a redelivery carries the same id); **with `source`, this is the de-duplication key** |
 | `source` | always `/warehouse/wes-work-planning` on this channel |
 | `type` | see the naming convention below |
 | `subject` | the aggregate instance the event is about — a `path_id` for charge/plan/work-pool events, a `work_unit_id` for work-unit events |
 | `time` | RFC 3339, taken from the **domain clock**, not from publish time |
 | `datacontenttype` | always `application/json` |
+| `dataschema` | `urn:warehouse:wes-work-planning:events:<EventName>:v1` on this channel; `...:analytics:<EventName>:v1` on `warehouse.wes.analytics` |
+
+All attributes above are required. The same occurrence carries the same
+`type` on both topics; `dataschema` tells the integration payload from the
+analytics payload. A breaking payload change requires a new `.v2` type and a
+new `dataschema` version, published as a new event.
 
 Consumers should **ignore `type` values they do not recognise**: new event
 types may be added to this channel without a major version bump.
@@ -83,50 +98,23 @@ The `<entity>` segment names the aggregate that raised the event: `charge`
 (ChargeForecast), `plan` (ShiftPlan/PathPlan), `workpool` (WorkPool and the
 flow-balancing decisions taken against it), `workunit` (WorkUnit).
 
-:::caution The wire format in the running code differs from the published spec
-The AsyncAPI document describes the CloudEvents 1.0 structured-mode envelope
-above — that is the platform's **published contract**.
-
-The Go outbound adapter
-(`internal/adapters/outbound/kafka/publisher.go`, via
-`internal/adapters/kafka/envelope`) currently writes the platform's **earlier,
-simpler envelope**, which is what all four services actually exchange today:
-
-```json
-{
-  "event_id": "uuid-v4",
-  "event_type": "WorkReleased",
-  "occurred_at": "2026-08-21T22:00:00Z",
-  "source": "wes-work-planning",
-  "data": { }
-}
-```
-
-The two carry the same information under different attribute names
-(`event_id`↔`id`, `event_type`↔`type`, `occurred_at`↔`time`, `source` bare vs
-URI-reference). The migration of the running adapters to CloudEvents is not
-done in this repository, and the sibling services' consumers still expect the
-simpler shape — so if you are writing a consumer **today**, code against the
-JSON block immediately above. This is documented rather than papered over.
-:::
-
 ## Events published
 
 Topic `warehouse.work-planning.events`. Ten event types are catalogued; the
 `data` shape of each is below.
 
-| Event | `data` fields | Raised when |
+| Event (`type` suffix after `com.warehouse.wes.work-planning.`) | `data` fields | Raised when |
 |---|---|---|
-| `ChargeForecastReceived` | `path_id` | a charge forecast is recorded for a path |
-| `ShiftPlanCommitted` | `path_id` | **this** context commits its own rate × heads × hours plan |
-| `WorkUnitCreated` | `path_id`, `work_unit_id` | a work unit is enqueued into a pool |
-| **`WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` | the release policy admits the earliest-CPT unit |
-| `WorkUnitCompleted` | `path_id`, `work_unit_id` | a released unit completes |
-| `BacklogThresholdBreached` | `path_id` | backlog depth crosses the pool's alarm threshold |
-| `RateDeviationDetected` | `path_id` | *declared in the catalogue; **no use case raises it today*** |
-| `PathThrottled` | `path_id` | flow balancing decides to throttle upstream release |
-| `LaborReassignmentFlagged` | `path_id` | flow balancing recommends moving headcount |
-| `PathCapacityChanged` | `path_id`, `cutoff_at`, `remaining_units`, `known` | `SampleBacklog` is called with a `cutoffAt` query parameter (ADR-0018) |
+| `charge.ChargeForecastReceived` | `path_id` | a charge forecast is recorded for a path |
+| `plan.ShiftPlanCommitted` | `path_id` | **this** context commits its own rate × heads × hours plan |
+| `workunit.WorkUnitCreated` | `path_id`, `work_unit_id` | a work unit is enqueued into a pool |
+| **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` | the release policy admits the earliest-CPT unit |
+| `workunit.WorkUnitCompleted` | `path_id`, `work_unit_id` | a released unit completes |
+| `workpool.BacklogThresholdBreached` | `path_id` | backlog depth crosses the pool's alarm threshold |
+| `workpool.RateDeviationDetected` | `path_id` | *declared in the catalogue; **no use case raises it today*** |
+| `workpool.PathThrottled` | `path_id` | flow balancing decides to throttle upstream release |
+| `workpool.LaborReassignmentFlagged` | `path_id` | flow balancing recommends moving headcount |
+| `workpool.PathCapacityChanged` | `path_id`, `cutoff_at`, `remaining_units`, `known` | `SampleBacklog` is called with a `cutoffAt` query parameter (ADR-0018) |
 
 **`WorkReleased` and `PathCapacityChanged` are the only ones any other
 service consumes today** — `fulfillment-execution` turns `WorkReleased` into a
@@ -152,11 +140,19 @@ services' own specs; they are listed here for orientation. Consumption starts
 automatically whenever `KAFKA_BROKERS` is set, independent of
 `EVENT_PUBLISHER`.
 
+Every consumer decodes with `cloudevents.Decode` and dispatches on the
+**full** `type` string below (never a short name or suffix match); unknown
+types are ignored. A message that is not a valid CloudEvents 1.0 event —
+including the retired flat envelope — is published raw to `<topic>.dlq` and
+committed past (no retries), never parsed as a legacy shape. `time` and the
+dedupe `id` come from the CloudEvents attributes; the payload from
+`DataAs`.
+
 ### `warehouse.workforce.events` — from `workforce-management`
 
-| `event_type` | `data` | Effect here |
+| `type` | `data` | Effect here |
 |---|---|---|
-| `ShiftPlanCommitted` | `building_id`, `shift_id`, `path_id`, `planned_heads`, `planned_rate`, `planned_hours` | Upserts the `LaborPlanObserved` projection for `path_id` |
+| `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `building_id`, `shift_id`, `path_id`, `planned_heads`, `planned_rate`, `planned_hours` | Upserts the `LaborPlanObserved` projection for `path_id` |
 
 Workforce publishes **one message per path line**, which is why the projection
 keys cleanly on `path_id`. This is *not* fed into this context's own
@@ -165,22 +161,36 @@ keys cleanly on `path_id`. This is *not* fed into this context's own
 
 ### `warehouse.inventory.events` — from `inventory-storage`
 
-| `event_type` | `data` | Effect here |
+| `type` | `data` | Effect here |
 |---|---|---|
-| `StockReserved` | `sku`, `quantity`, `demand_ref` | **Decrements** `UsableInventoryObserved` for that SKU |
-| `ReservationRevoked` | `sku`, `quantity`, `demand_ref` | **Increments** it back |
+| `com.warehouse.wms.inventory-storage.reservation.StockReserved` | `sku`, `quantity`, `demand_ref` | **Decrements** `UsableInventoryObserved` for that SKU |
+| `com.warehouse.wms.inventory-storage.reservation.ReservationRevoked` | `sku`, `quantity`, `demand_ref` | **Increments** it back |
 
 Keyed by SKU, not by path — Inventory reservations are SKU-scoped.
 
 ### `warehouse.fulfillment.events` — from `fulfillment-execution`
 
-| `event_type` | `data` | Effect here |
+| `type` | `data` | Effect here |
 |---|---|---|
-| `TaskCompleted` | `task_id`, `station_id`, `work_unit_id` | `data.work_unit_id` is passed to the existing `RecordCompletion` use case |
+| `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `task_id`, `station_id`, `work_unit_id` (+ optional `task_type`) | `data.work_unit_id` is passed to the existing `RecordCompletion` use case; an unknown work unit (e.g. a PACK task keyed by order id) is an INFO-logged, processed skip, never DLQ'd |
 
 This closes the control loop's feedback edge. No new use case was introduced —
 the inbound adapter calls exactly the same code path that
 `POST /work-units/{id}/complete` does.
+
+### `warehouse.order-management.events` — from `order-management`
+
+| `type` | `data` | Effect here |
+|---|---|---|
+| `com.warehouse.wes.order-management.order.OrderAllocated` | `order_id`, `promise_date`, `lines[]` (`line_no`, `sku`, `path_id`, `gift_wrap`) | One `EnqueueWorkUnit` call per line |
+| `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | same shape | same effect |
+
+### `warehouse.process-path-management.events` — from `process-path-management`
+
+With `PATH_CATALOGUE_SOURCE=kafka`, the catalogue cache replays
+`com.warehouse.wes.process-path-management.processpath.ProcessPathCreated`,
+`...ProcessPathUpdated` and `...ProcessPathDeactivated`. Invalid CloudEvents
+on this topic are logged at WARN and skipped.
 
 ## Product classification propagation (Task 9, synchronous HTTP)
 
@@ -250,10 +260,14 @@ this topic, correlated against the given CPT cutoff timestamp:
 
 ```json
 {
-  "event_id": "5c7d3f92-1b64-4a08-9e73-2f6a8c1d5b40",
-  "event_type": "PathCapacityChanged",
-  "occurred_at": "2026-08-21T22:40:00Z",
-  "source": "wes-work-planning",
+  "specversion": "1.0",
+  "id": "5c7d3f92-1b64-4a08-9e73-2f6a8c1d5b40",
+  "source": "/warehouse/wes-work-planning",
+  "type": "com.warehouse.wes.work-planning.workpool.PathCapacityChanged",
+  "subject": "pick-to-tote",
+  "time": "2026-08-21T22:40:00Z",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:wes-work-planning:events:PathCapacityChanged:v1",
   "data": {
     "path_id": "pick-to-tote",
     "cutoff_at": "2026-08-22T02:00:00Z",
@@ -277,9 +291,13 @@ process-path-management's `cptId` string.
 ## Idempotency
 
 Kafka is at-least-once, so **every** consumer path here is idempotent. Before
-applying an event's effect, its `event_id` is inserted into `processed_events`
+applying an event's effect, its CloudEvents `id` is inserted into `processed_events`
 (Postgres) or a thread-safe set (in-memory). A primary-key collision means
 "already processed": the effect is skipped and the message is acked anyway.
+The insert runs in the **same transaction** as the effect
+([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)). If the
+effect fails, the mark rolls back with it, so the retry really re-applies the
+event and a failure that never heals ends in `<topic>.dlq`.
 
 Consequences worth knowing:
 
@@ -293,13 +311,14 @@ Consequences worth knowing:
 ## Smoke-testing by hand
 
 ```sh
-# publish a workforce-shaped message onto the shared broker
-echo '{"event_id":"11111111-1111-4111-8111-111111111111",
-       "event_type":"ShiftPlanCommitted",
-       "occurred_at":"2026-08-23T09:00:00Z",
-       "source":"workforce-management",
+# publish a workforce-shaped CloudEvent onto the shared broker (one line)
+echo '{"specversion":"1.0","id":"11111111-1111-4111-8111-111111111111",
+       "type":"com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted",
+       "source":"/warehouse/workforce-management","subject":"S1",
+       "time":"2026-08-23T09:00:00Z","datacontenttype":"application/json",
+       "dataschema":"urn:warehouse:workforce-management:events:ShiftPlanCommitted:v1",
        "data":{"building_id":"BLD1","shift_id":"S1","path_id":"pick-a",
-               "planned_heads":7,"planned_rate":95.5,"planned_hours":8}}' \
+               "planned_heads":7,"planned_rate":95.5,"planned_hours":8}}' | tr -d '\n' \
 | kafka-console-producer.sh --bootstrap-server localhost:9092 \
     --topic warehouse.workforce.events
 

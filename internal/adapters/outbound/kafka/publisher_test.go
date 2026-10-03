@@ -2,14 +2,13 @@ package kafka_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
 
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/productclassification"
@@ -86,12 +85,12 @@ func newReleasedWorkUnitWithGiftWrap(t *testing.T, id, sku string, giftWrap bool
 
 func decodeWorkReleasedData(t *testing.T, msg kafkago.Message) map[string]any {
 	t.Helper()
-	var env envelope.Envelope
-	if err := json.Unmarshal(msg.Value, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
+	evt, err := cloudevents.Decode(msg.Value)
+	if err != nil {
+		t.Fatalf("decode CloudEvent: %v", err)
 	}
 	var data map[string]any
-	if err := json.Unmarshal(env.Data, &data); err != nil {
+	if err := evt.DataAs(&data); err != nil {
 		t.Fatalf("unmarshal data: %v", err)
 	}
 	return data

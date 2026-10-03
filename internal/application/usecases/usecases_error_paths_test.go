@@ -224,35 +224,54 @@ func TestReleaseNextWork_UnknownWorkUnitInRepo(t *testing.T) {
 	}
 }
 
-func TestReleaseNextWork_UnitAlreadyReleasedInconsistentState(t *testing.T) {
+// A pool entry left "pending" for a unit that already moved on (the
+// signature of a lost update before pools were versioned) used to make
+// every later release on the path fail with work-unit-already-released,
+// wedging the path forever -- observed live with 223 units stuck behind
+// one such entry. Release now heals the entry and moves to the next unit.
+func TestReleaseNextWork_StalePendingEntryIsHealedAndSkipped(t *testing.T) {
 	f := newFixture()
 	pathId, _ := shared.NewPathId("pick-a")
-	cpt := shared.NewCPT(f.clock.Now().Add(time.Hour))
 	ctx := context.Background()
+	early := shared.NewCPT(f.clock.Now().Add(time.Hour))
+	late := shared.NewCPT(f.clock.Now().Add(2 * time.Hour))
 
-	unit, err := workunit.NewWorkUnit("wu-1", pathId, cpt, "ref-1")
-	if err != nil {
-		t.Fatalf("unexpected error building fixture: %v", err)
-	}
-	if err := unit.Release(f.clock.Now()); err != nil {
+	stale, _ := workunit.NewWorkUnit("wu-stale", pathId, early, "ref-1")
+	if err := stale.Release(f.clock.Now()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if err := f.workUnits.Save(ctx, unit); err != nil {
+	if err := stale.Complete(f.clock.Now()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
+	next, _ := workunit.NewWorkUnit("wu-next", pathId, late, "ref-2")
+	for _, u := range []*workunit.WorkUnit{stale, next} {
+		if err := f.workUnits.Save(ctx, u); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
 	pool := release.NewWorkPool(pathId, release.ReleaseFed, 10, 0)
-	if err := pool.Enqueue("wu-1", cpt); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	_ = pool.Enqueue("wu-stale", early) // earliest CPT, but stale "pending"
+	_ = pool.Enqueue("wu-next", late)
 	if err := f.pools.Save(ctx, pool); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	uc := usecases.NewReleaseNextWork(f.pools, f.workUnits, f.publisher, f.clock)
-	_, err = uc.Execute(ctx, usecases.ReleaseNextWorkRequest{PathId: pathId})
-	if !errors.Is(err, workunit.ErrAlreadyReleased) {
-		t.Fatalf("got err %v, want %v", err, workunit.ErrAlreadyReleased)
+	got, err := uc.Execute(ctx, usecases.ReleaseNextWorkRequest{PathId: pathId})
+	if err != nil {
+		t.Fatalf("release should skip the stale entry, got %v", err)
+	}
+	if got.Id() != "wu-next" {
+		t.Fatalf("released %s, want wu-next", got.Id())
+	}
+	stored, _ := f.pools.FindByPathId(ctx, pathId)
+	for _, e := range stored.Entries() {
+		if e.WorkUnitId == "wu-stale" && !e.Completed {
+			t.Fatalf("stale entry not healed to completed: %+v", e)
+		}
+	}
+	if stored.WIP() != 1 {
+		t.Fatalf("WIP = %d, want 1 (only wu-next in flight)", stored.WIP())
 	}
 }
 

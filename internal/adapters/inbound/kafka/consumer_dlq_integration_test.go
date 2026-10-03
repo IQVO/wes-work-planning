@@ -13,7 +13,7 @@ import (
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
 
 	inboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/inbound/kafka"
-	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/envelope"
+	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
@@ -44,7 +44,8 @@ func (p *alwaysFailingProcessedFor) TryMarkProcessed(ctx context.Context, eventI
 }
 
 // TestConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPartition
-// is the ADR-0023 §DLQ acceptance test: a message whose handler ALWAYS
+// is the ADR-0023 §DLQ acceptance test (and the ADR-0027 legacy-flat
+// rejection test): a message whose handler ALWAYS
 // fails (a simulated infrastructure error from ProcessedEventRepo) must,
 // after exactly maxHandlerAttempts (3) in-process retries, land on
 // "<topic>.dlq" with the raw original payload plus error context, and
@@ -68,9 +69,9 @@ func TestConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPartition(t 
 		t.Fatalf("resolve Kafka brokers: %v", err)
 	}
 
-	topic := envelope.TopicWorkforceEvents
+	topic := cloudevents.TopicWorkforceEvents
 	dlqTopic := topic + ".dlq"
-	if err := createTopics(ctx, brokers, envelope.TopicWorkforceEvents, envelope.TopicInventoryEvents, envelope.TopicFulfillmentEvents, envelope.TopicOrderManagementEvents, dlqTopic); err != nil {
+	if err := createTopics(ctx, brokers, cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, cloudevents.TopicFulfillmentEvents, cloudevents.TopicOrderManagementEvents, dlqTopic); err != nil {
 		t.Fatalf("create Kafka topics: %v", err)
 	}
 
@@ -97,7 +98,10 @@ func TestConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPartition(t 
 	})
 
 	groupID := fmt.Sprintf("wes-dlq-itest-%d", time.Now().UnixNano())
-	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory, recordCompletion, enqueue, realProcessed, catalogue, nil)
+	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory,
+		usecases.NewApplyTaskCompleted(recordCompletion, realProcessed),
+		usecases.NewApplyOrderAllocated(enqueue, realProcessed, catalogue),
+		catalogue, nil)
 	defer func() { _ = consumer.Close() }()
 
 	consumeCtx, consumeCancel := context.WithCancel(ctx)
@@ -118,13 +122,24 @@ func TestConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPartition(t 
 	writer := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: topic}
 	defer func() { _ = writer.Close() }()
 	if err := writer.WriteMessages(ctx, kafkago.Message{
-		Key: []byte(poisonEventID),
-		Value: mustEnvelopeJSON(t, poisonEventID, envelope.EventTypeShiftPlanCommitted, "workforce-management", map[string]any{
+		Key:     []byte(poisonEventID),
+		Headers: cloudEventHeaders(),
+		Value: mustCloudEventJSON(t, poisonEventID, cloudevents.TypeShiftPlanCommitted, "workforce-management", map[string]any{
 			"building_id": "bldg-1", "shift_id": "shift-poison", "path_id": pathIdValue,
 			"planned_heads": 6, "planned_rate": 100.0, "planned_hours": 8.0,
 		}),
 	}); err != nil {
 		t.Fatalf("publish poison ShiftPlanCommitted: %v", err)
+	}
+
+	// A retired flat-envelope message right behind it: it is NOT a valid
+	// CloudEvent, so it must be dead-lettered immediately (no retries,
+	// never parsed as the legacy shape) and the partition must move on.
+	legacyKey := fmt.Sprintf("evt-dlq-legacy-%d", time.Now().UnixNano())
+	legacyPathIdValue := fmt.Sprintf("pick-dlq-legacy-%d", time.Now().UnixNano())
+	legacyValue := []byte(fmt.Sprintf(`{"event_id":%q,"event_type":"ShiftPlanCommitted","occurred_at":"2026-09-30T12:00:00Z","source":"workforce-management","data":{"path_id":%q,"planned_heads":9}}`, legacyKey, legacyPathIdValue))
+	if err := writer.WriteMessages(ctx, kafkago.Message{Key: []byte(legacyKey), Value: legacyValue}); err != nil {
+		t.Fatalf("publish legacy flat message: %v", err)
 	}
 
 	// Assert the poison message lands on the DLQ topic with the raw
@@ -146,14 +161,26 @@ func TestConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPartition(t 
 		t.Error("DLQ message missing x-dlq-failed-at header")
 	}
 
+	legacyMsg, err := dlqReader.ReadMessage(dlqCtx)
+	if err != nil {
+		t.Fatalf("read legacy DLQ message: %v", err)
+	}
+	if string(legacyMsg.Key) != legacyKey || string(legacyMsg.Value) != string(legacyValue) {
+		t.Errorf("legacy DLQ message = %q/%q, want the raw flat message", legacyMsg.Key, legacyMsg.Value)
+	}
+	if h := headerValue(legacyMsg.Headers, "x-dlq-error"); h == "" {
+		t.Error("legacy DLQ message missing x-dlq-error header")
+	}
+
 	// Now publish a well-formed message right after the poison one,
 	// and confirm it is projected without delay -- proving the
 	// partition was not blocked behind the poison message.
 	goodPathIdValue := fmt.Sprintf("pick-dlq-healthy-%d", time.Now().UnixNano())
 	goodEventID := fmt.Sprintf("evt-dlq-good-%d", time.Now().UnixNano())
 	if err := writer.WriteMessages(ctx, kafkago.Message{
-		Key: []byte(goodEventID),
-		Value: mustEnvelopeJSON(t, goodEventID, envelope.EventTypeShiftPlanCommitted, "workforce-management", map[string]any{
+		Key:     []byte(goodEventID),
+		Headers: cloudEventHeaders(),
+		Value: mustCloudEventJSON(t, goodEventID, cloudevents.TypeShiftPlanCommitted, "workforce-management", map[string]any{
 			"building_id": "bldg-1", "shift_id": "shift-good", "path_id": goodPathIdValue,
 			"planned_heads": 4, "planned_rate": 50.0, "planned_hours": 8.0,
 		}),
@@ -199,6 +226,13 @@ func TestConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPartition(t 
 	}
 	if _, err := laborViews.FindByPathId(context.Background(), poisonPathId); err != ports.ErrNotFound {
 		t.Errorf("poison path %s should not have a projected labor plan view, got err=%v", pathIdValue, err)
+	}
+	legacyPathId, err := shared.NewPathId(legacyPathIdValue)
+	if err != nil {
+		t.Fatalf("NewPathId: %v", err)
+	}
+	if _, err := laborViews.FindByPathId(context.Background(), legacyPathId); err != ports.ErrNotFound {
+		t.Errorf("legacy flat message must never be parsed/projected, got err=%v", err)
 	}
 }
 

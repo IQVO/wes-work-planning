@@ -54,6 +54,7 @@ func newTestHandlers() *inboundhttp.Handlers {
 		LaborPlanView:           usecases.NewLaborPlanView(laborPlanViews),
 		InventoryView:           usecases.NewInventoryView(inventoryViews),
 		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(workUnits),
+		GetWorkUnit:             usecases.NewGetWorkUnit(workUnits),
 		Catalogue:               testCatalogue,
 	}
 
@@ -781,5 +782,143 @@ func TestGetWorkUnitsByReference_EmptyReferenceReturns400(t *testing.T) {
 	rec := doJSON(t, router, http.MethodGet, "/work-units?reference=", nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("got status %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetWorkUnit_ReturnsTheUnitByItsOwnId(t *testing.T) {
+	router := newTestRouter()
+	body := map[string]any{
+		"workUnitId": "order-77213-line-1",
+		"cpt":        time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC),
+		"reference":  "order-77213",
+		"sku":        "sku-482910",
+	}
+	other := map[string]any{
+		"workUnitId": "order-77213-line-2",
+		"cpt":        time.Date(2026, 8, 21, 13, 0, 0, 0, time.UTC),
+		"reference":  "order-77213",
+	}
+	for _, b := range []map[string]any{body, other} {
+		if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", b); rec.Code != http.StatusCreated {
+			t.Fatalf("setup: got status %d, want 201, body=%s", rec.Code, rec.Body.String())
+		}
+	}
+
+	rec := doJSON(t, router, http.MethodGet, "/work-units/order-77213-line-1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("got Content-Type %q, want application/json", ct)
+	}
+	var unit map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &unit); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	want := map[string]any{
+		"id":        "order-77213-line-1",
+		"pathId":    "pick-a",
+		"cpt":       "2026-08-21T12:00:00Z",
+		"reference": "order-77213",
+		"state":     "Pending",
+		"giftWrap":  false,
+		"sku":       "sku-482910",
+	}
+	for k, v := range want {
+		if unit[k] != v {
+			t.Fatalf("got %s=%v, want %v (body=%s)", k, unit[k], v, rec.Body.String())
+		}
+	}
+	if _, ok := unit["releasedAt"]; ok {
+		t.Fatalf("expected releasedAt omitted while Pending, body=%s", rec.Body.String())
+	}
+}
+
+func TestGetWorkUnit_ReflectsReleasedState(t *testing.T) {
+	router := newTestRouter()
+	body := map[string]any{
+		"workUnitId": "wu-get-1",
+		"cpt":        time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC),
+		"reference":  "order-1",
+	}
+	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", body); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: got status %d, want 201, body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/release", nil); rec.Code != http.StatusOK {
+		t.Fatalf("setup: got status %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec := doJSON(t, router, http.MethodGet, "/work-units/wu-get-1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var unit map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &unit); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if unit["state"] != "Released" {
+		t.Fatalf("got state %v, want Released", unit["state"])
+	}
+	if _, ok := unit["releasedAt"]; !ok {
+		t.Fatalf("expected releasedAt once Released, body=%s", rec.Body.String())
+	}
+}
+
+func TestGetWorkUnit_UnknownIdReturns404Problem(t *testing.T) {
+	router := newTestRouter()
+
+	rec := doJSON(t, router, http.MethodGet, "/work-units/no-such-unit", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got status %d, want 404, body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("got Content-Type %q, want application/problem+json", ct)
+	}
+	var problem struct {
+		Type     string `json:"type"`
+		Title    string `json:"title"`
+		Status   int    `json:"status"`
+		Instance string `json:"instance"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("unmarshal problem+json body: %v", err)
+	}
+	if problem.Type != "https://errors.wes-work-planning.warehouse-systems.dev/not-found" {
+		t.Fatalf("got problem.type %q, want .../not-found", problem.Type)
+	}
+	if problem.Title != "Resource not found" {
+		t.Fatalf("got problem.title %q, want Resource not found", problem.Title)
+	}
+	if problem.Status != http.StatusNotFound {
+		t.Fatalf("got problem.status %d, want 404", problem.Status)
+	}
+	if problem.Instance != "/work-units/no-such-unit" {
+		t.Fatalf("got instance %q, want /work-units/no-such-unit", problem.Instance)
+	}
+}
+
+// TestGetWorkUnit_DoesNotShadowComplete pins the chi route ordering: adding
+// GET /work-units/{id} must leave POST /work-units/{id}/complete routed to
+// RecordCompletion (a 409 work-unit-not-released for a Pending unit, not a
+// 405 or the GET handler's 200).
+func TestGetWorkUnit_DoesNotShadowComplete(t *testing.T) {
+	router := newTestRouter()
+	body := map[string]any{
+		"workUnitId": "wu-shadow",
+		"cpt":        time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC),
+		"reference":  "order-1",
+	}
+	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", body); rec.Code != http.StatusCreated {
+		t.Fatalf("setup: got status %d, want 201, body=%s", rec.Code, rec.Body.String())
+	}
+
+	if rec := doJSON(t, router, http.MethodPost, "/work-units/wu-shadow/complete", nil); rec.Code != http.StatusConflict {
+		t.Fatalf("POST complete: got status %d, want 409, body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(t, router, http.MethodGet, "/work-units/wu-shadow/complete", nil); rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET complete: got status %d, want 405, body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(t, router, http.MethodGet, "/work-units/wu-shadow", nil); rec.Code != http.StatusOK {
+		t.Fatalf("GET by id: got status %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
 }

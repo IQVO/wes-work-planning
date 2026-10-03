@@ -38,7 +38,7 @@ no scheduler).
 | [0001](./0001-hexagonal-ports-and-adapters.md) | Hexagonal (ports & adapters) architecture | Accepted |
 | [0002](./0002-waveless-continuous-release.md) | Waveless continuous release over wave-based batching | Accepted |
 | [0003](./0003-flow-balancing-as-domain-service.md) | Flow balancing as a domain service, not a scheduled batch job | Accepted |
-| [0004](./0004-kafka-integration-events.md) | Kafka integration events with a shared envelope and a CloudEvents type convention | Accepted |
+| [0004](./0004-kafka-integration-events.md) | Kafka integration events with a shared envelope and a CloudEvents type convention | Superseded by 0027 (envelope) |
 | [0005](./0005-rfc-7807-problem-details.md) | RFC 7807 `application/problem+json` for every error response | Accepted |
 | [0006](./0006-labor-plan-view-not-shift-plan.md) | Project Workforce's `ShiftPlanCommitted` into a separate read model, not our `ShiftPlan` aggregate | Accepted |
 | [0007](./0007-arch-go-fitness-tests.md) | Executable architecture fitness tests with arch-go | Accepted |
@@ -55,10 +55,14 @@ no scheduler).
 | [0018](./0018-path-capacity-changed.md) | Publish per-path, per-CPT remaining admission capacity as `PathCapacityChanged`, correlated by CPT cutoff timestamp | Accepted |
 | [0019](./0019-labor-plan-committed-shift-plan-reconciliation.md) | Reconcile our committed `PathPlan` against Workforce's `LaborPlanObserved`, triggered on either side's commit | Accepted |
 | [0020](./0020-flowfed-path-observed-throughput-signal.md) | FlowFed paths stay `Known=false` permanently; an observed-throughput signal is proposed alongside, not instead | Accepted |
-| [0021](./0021-cloudevents-envelope-migration.md) | Migrate `warehouse.work-planning.events` to a CloudEvents 1.0 structured envelope via a dual-read/dual-write bake period; companion to fulfillment-execution's own envelope-migration ADR | Accepted |
+| [0021](./0021-cloudevents-envelope-migration.md) | Migrate `warehouse.work-planning.events` to a CloudEvents 1.0 structured envelope via a dual-read/dual-write bake period; companion to fulfillment-execution's own envelope-migration ADR | Superseded by 0027 |
 | [0022](./0022-idempotency-key-middleware.md) | Transactional Idempotency-Key middleware for `POST /paths/{pathId}/work-units`, ported from order-management's reference implementation | Accepted |
 | [0024](./0024-kafka-hash-balancer-partition-affinity.md) | Switch every outbound Kafka writer's `Balancer` from `LeastBytes` to `Hash`, so the existing per-aggregate `Message.Key` actually drives partition placement | Accepted |
 | [0025](./0025-horizontal-autoscaling-and-pgxpool-tuning.md) | Per-workload `HorizontalPodAutoscaler` (api/projector/reports/frontend, mcp excluded) and `pgxpool.MaxConns`/`statement_timeout` tuning, ported from order-management's reference PR #110 | Accepted |
+| [0026](./0026-migrations-direct-postgres-connection.md) | Run golang-migrate against a direct Postgres connection (`MIGRATIONS_DATABASE_URL`), not PgBouncer | Accepted |
+| [0027](./0027-cloudevents-mandatory-event-envelope.md) | CloudEvents 1.0 as the mandatory event envelope on every topic (no flat envelope, no dual mode) | Accepted |
+| [0028](./0028-processed-event-mark-atomic-with-handling.md) | The processed-event mark commits atomically with the handling it guards; `TaskCompleted` for an unknown work unit is a logged skip | Accepted |
+| [0029](./0029-work-pool-optimistic-concurrency.md) | Optimistic concurrency (version column + retry) for the WorkPool aggregate; release heals entries left behind by a lost update | Accepted |
 
 ## The template
 

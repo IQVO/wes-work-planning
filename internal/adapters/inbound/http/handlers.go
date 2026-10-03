@@ -49,6 +49,11 @@ type Handlers struct {
 	// reference, for cross-service console screens.
 	GetWorkUnitsByReference *usecases.GetWorkUnitsByReference
 
+	// Additive: read-only lookup of ONE work unit by its own identity
+	// (GET /work-units/{id}), so a client holding only a WorkUnitId never
+	// has to parse the id string to recover its sku/reference/path.
+	GetWorkUnit *usecases.GetWorkUnit
+
 	// IdempotencyPool, when non-nil, wires RequireIdempotencyKey onto
 	// POST /paths/{pathId}/work-units (see router.go and idempotency.go).
 	// A nil pool means "no transactional Postgres backing wired"
@@ -442,6 +447,18 @@ func (h *Handlers) getInventoryView(w http.ResponseWriter, r *http.Request) {
 
 func healthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) getWorkUnit(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	unit, err := h.GetWorkUnit.Execute(r.Context(), usecases.GetWorkUnitRequest{WorkUnitId: id})
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toWorkUnitResponseDTO(unit))
 }
 
 func (h *Handlers) getWorkUnitsByReference(w http.ResponseWriter, r *http.Request) {

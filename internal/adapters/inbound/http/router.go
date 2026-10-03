@@ -69,6 +69,10 @@ func NewRouter(h *Handlers, serviceName string, logger *slog.Logger) *chi.Mux {
 
 	r.Post("/work-units/{id}/complete", h.postComplete)
 	r.Get("/work-units", h.getWorkUnitsByReference)
+	// GET /work-units/{id} reads one work unit by its own identity. chi's
+	// radix tree matches the static "/complete" suffix as a distinct,
+	// longer route, so this never shadows POST /work-units/{id}/complete.
+	r.Get("/work-units/{id}", h.getWorkUnit)
 
 	r.Get("/inventory-view/{sku}", h.getInventoryView)
 

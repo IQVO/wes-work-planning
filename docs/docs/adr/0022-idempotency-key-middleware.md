@@ -6,7 +6,7 @@ sidebar_label: 22. Idempotency-Key middleware
 description: "ADR 0022 — POST /paths/{pathId}/work-units requires a caller-supplied Idempotency-Key header. A route-scoped middleware begins the outer Postgres transaction, joins it with EnqueueWorkUnit's own UnitOfWork via a new internal/pgtx package, and lets the database's own unique-index lock do request de-duplication with no polling, no timeout, and no in-progress state. Ported from order-management's reference implementation (order-management PR #105 / its ADR 0023)."
 ---
 
-# 22. Transactional Idempotency-Key middleware for POST /paths/{pathId}/work-units
+# 22. Transactional Idempotency-Key middleware for `POST /paths/{pathId}/work-units`
 
 ## Status
 
@@ -42,7 +42,7 @@ same now-already-`Released` unit (rejected by `workunit.ErrAlreadyReleased`,
 mapped to `409`) or, worse, releases a *different* unit than the one the
 first (successful, response-lost) call actually released, which an
 idempotency-key cache would not fix either (a replayed body carries no
-{id}, there is nothing to compare against a stored request to detect the
+`{id}`, there is nothing to compare against a stored request to detect the
 "same call" in the first place). `postWorkUnit`, by contrast, creates a
 brand-new `work_units` row via `WorkUnitRepo.Save`'s
 `INSERT ... ON CONFLICT (id) DO UPDATE` keyed by the CALLER-supplied

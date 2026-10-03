@@ -51,6 +51,38 @@ func TestNewPathPlan_ThroughputOverflowRejected(t *testing.T) {
 	}
 }
 
+// Zero planned heads is legal (heads <= installed) and yields zero throughput.
+// Kills the ARITHMETIC_BASE mutant rate*heads -> rate/heads, which would
+// compute +Inf for heads == 0 and wrongly reject the plan.
+func TestNewPathPlan_ZeroHeadsAccepted(t *testing.T) {
+	pathId, _ := shared.NewPathId("pick-a")
+	rate, _ := shared.NewRate(50)
+	heads, _ := shared.NewStationCount(0)
+	installed, _ := shared.NewStationCount(4)
+
+	p, err := NewPathPlan(pathId, heads, installed, rate, 8)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := p.PlannedThroughput(); got != 0 {
+		t.Fatalf("got throughput %v, want 0", got)
+	}
+}
+
+// The product rate*heads*hours overflows only because heads multiplies; with
+// the mutant rate/heads*hours the result would be finite and the plan would
+// wrongly be accepted.
+func TestNewPathPlan_ThroughputOverflowDependsOnHeads(t *testing.T) {
+	pathId, _ := shared.NewPathId("pick-a")
+	rate, _ := shared.NewRate(1e306)
+	heads, _ := shared.NewStationCount(1000)
+	installed, _ := shared.NewStationCount(1000)
+
+	if _, err := NewPathPlan(pathId, heads, installed, rate, 1); !errors.Is(err, ErrThroughputNotFinite) {
+		t.Fatalf("got err %v, want ErrThroughputNotFinite", err)
+	}
+}
+
 func TestPathPlan_PlannedThroughput(t *testing.T) {
 	pathId, _ := shared.NewPathId("pick-a")
 	rate, _ := shared.NewRate(50)

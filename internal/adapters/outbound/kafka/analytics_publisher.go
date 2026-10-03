@@ -49,6 +49,8 @@ type AnalyticsPublisher struct {
 // AnalyticsTopic has more than one partition.
 func NewAnalyticsPublisher(brokers []string, newID IDGenerator) *AnalyticsPublisher {
 	return NewAnalyticsPublisherWithWriter(&kafkago.Writer{
+		BatchTimeout:           syncWriterBatchTimeout,
+		RequiredAcks:           syncWriterRequiredAcks,
 		Addr:                   kafkago.TCP(brokers...),
 		Topic:                  AnalyticsTopic,
 		Balancer:               &kafkago.Hash{},

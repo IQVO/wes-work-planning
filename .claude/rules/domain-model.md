@@ -1,3 +1,12 @@
+---
+paths:
+  - "internal/**"
+  - "cmd/**"
+  - "features/**"
+  - "apis/**"
+  - "migrations/**"
+---
+
 # Domain model reference — wes-work-planning
 
 ## Ubiquitous Language (use these exact names)

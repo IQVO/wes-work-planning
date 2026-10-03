@@ -91,7 +91,7 @@ Topic `warehouse.work-planning.events`:
   `data`: `{"path_id","cutoff_at","remaining_units","known"}`. `known` is
   `false` for a FlowFed path (no hard admission ceiling) or a ReleaseFed
   path with no WIP limit provisioned. Consumed by order-management's
-  `internal/adapters/outbound/kafkapathcapacity` adapter, which backs its
+  path-capacity Kafka adapter (in the order-management repo), which backs its
   `ports.PathCapacity` port (own per-process consumer group; wired when
   order-management runs with `PATH_CATALOGUE_SOURCE=kafka`) (ADR-0018).
 - All other domain events are also published to this topic for

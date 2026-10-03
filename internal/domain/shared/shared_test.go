@@ -419,6 +419,18 @@ func TestStationCount_New(t *testing.T) {
 		}
 	})
 
+	// Boundary: exactly MaxInt32 is the largest legal count. Kills the
+	// CONDITIONALS_BOUNDARY mutant `value > MaxInt32` -> `value >= MaxInt32`.
+	t.Run("NewStationCount at int32 max boundary", func(t *testing.T) {
+		s, err := NewStationCount(math.MaxInt32)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if s.Value() != math.MaxInt32 {
+			t.Fatalf("got %d, want %d", s.Value(), math.MaxInt32)
+		}
+	})
+
 	t.Run("NewStationCount zero", func(t *testing.T) {
 		s, err := NewStationCount(0)
 		if err != nil {

@@ -53,20 +53,8 @@ func (r *WorkPoolRepo) Save(ctx context.Context, wp *release.WorkPool) error {
 		return err
 	}
 
-	for _, e := range wp.Entries() {
-		state := "pending"
-		switch {
-		case e.Completed:
-			state = "completed"
-		case e.Released:
-			state = "released"
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO work_pool_entries (path_id, work_unit_id, cpt, state)
-			VALUES ($1, $2, $3, $4)
-		`, wp.PathId().String(), e.WorkUnitId, e.CPT.Time(), state); err != nil {
-			return err
-		}
+	if err := insertPoolEntries(ctx, tx, wp); err != nil {
+		return err
 	}
 
 	if err := commit(ctx); err != nil {
@@ -167,4 +155,43 @@ func hydratePoolEntries(ctx context.Context, q querier, pathId shared.PathId, wp
 // "completed" — the inverse of Save's state column derivation.
 func enqueueEntryState(wp *release.WorkPool, workUnitId string, cpt time.Time, state string) error {
 	return wp.RestoreEntry(workUnitId, shared.NewCPT(cpt), state == "released" || state == "completed", state == "completed")
+}
+
+// insertPoolEntries writes every entry of wp in ONE statement (unnest over
+// parallel arrays). It used to be one INSERT round trip per entry: a pool
+// holds every unit it ever saw, so by mid-day a save was hundreds of round
+// trips -- long enough that concurrent release/enqueue/completion saves
+// exhausted their optimistic-concurrency retry budget (observed live:
+// POST /paths/pick/release took 9.9s and failed). One statement keeps the
+// race window, and the retry rate, small.
+func insertPoolEntries(ctx context.Context, tx querier, wp *release.WorkPool) error {
+	entries := wp.Entries()
+	if len(entries) == 0 {
+		return nil
+	}
+	ids := make([]string, len(entries))
+	cpts := make([]time.Time, len(entries))
+	states := make([]string, len(entries))
+	for i, e := range entries {
+		ids[i] = e.WorkUnitId
+		cpts[i] = e.CPT.Time()
+		states[i] = entryStateName(e)
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO work_pool_entries (path_id, work_unit_id, cpt, state)
+		SELECT $1, u.work_unit_id, u.cpt, u.state
+		FROM unnest($2::text[], $3::timestamptz[], $4::text[]) AS u(work_unit_id, cpt, state)
+	`, wp.PathId().String(), ids, cpts, states)
+	return err
+}
+
+func entryStateName(e release.PoolEntrySnapshot) string {
+	switch {
+	case e.Completed:
+		return "completed"
+	case e.Released:
+		return "released"
+	default:
+		return "pending"
+	}
 }

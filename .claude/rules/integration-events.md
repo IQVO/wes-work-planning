@@ -1,3 +1,10 @@
+---
+paths:
+  - "internal/adapters/**/kafka/**"
+  - "internal/adapters/outbound/events/**"
+  - "apis/asyncapi*"
+---
+
 # Integration & REST reference — wes-work-planning
 
 ## REST API (inbound adapter, 12 operationIds in apis/openapi.yaml)

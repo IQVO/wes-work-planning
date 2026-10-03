@@ -74,6 +74,8 @@ type Publisher struct {
 // this topic from 1 to 8 partitions.
 func NewPublisher(brokers []string, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, newID IDGenerator) *Publisher {
 	return NewPublisherWithWriter(&kafkago.Writer{
+		BatchTimeout:           syncWriterBatchTimeout,
+		RequiredAcks:           syncWriterRequiredAcks,
 		Addr:                   kafkago.TCP(brokers...),
 		Topic:                  cloudevents.TopicWorkPlanningEvents,
 		Balancer:               &kafkago.Hash{},

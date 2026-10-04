@@ -184,10 +184,12 @@ func (p *WorkPool) Release(workUnitId string) error {
 // (never provisioned for admission control), since a "remaining capacity
 // of 0" would be indistinguishable from a genuinely saturated pool.
 //
-// remaining is never negative: wipLimit is fixed at construction (no
-// setter exists) and both Release and ReleaseNext refuse to admit past it
-// (ErrWIPLimitReached), so WIP() can never exceed wipLimit under this
-// aggregate's own enforced invariant — there is nothing to clamp.
+// remaining is never negative (ADR-0018: max(0, wipLimit - WIP)). Release
+// and ReleaseNext refuse to admit past wipLimit (ErrWIPLimitReached), but
+// RestoreEntry deliberately rehydrates a pool exactly as stored even when
+// the limit has since been lowered below the current WIP — so WIP() CAN
+// exceed wipLimit, and the figure is clamped to 0 ("saturated") rather than
+// reported as a negative number of admissible units.
 //
 // The WIP limit is enforced pool-wide, not sub-allocated per CPT bucket
 // (WorkPool has no notion of a per-CPT admission ceiling — see
@@ -201,7 +203,7 @@ func (p *WorkPool) RemainingCapacity() (remaining int, known bool) {
 	if p.mode != ReleaseFed || p.wipLimit <= 0 {
 		return 0, false
 	}
-	return p.wipLimit - p.WIP(), true
+	return max(0, p.wipLimit-p.WIP()), true
 }
 
 // Complete marks a released entry as completed, freeing its WIP slot on a

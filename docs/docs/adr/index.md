@@ -42,7 +42,7 @@ no scheduler).
 | [0005](./0005-rfc-7807-problem-details.md) | RFC 7807 `application/problem+json` for every error response | Accepted |
 | [0006](./0006-labor-plan-view-not-shift-plan.md) | Project Workforce's `ShiftPlanCommitted` into a separate read model, not our `ShiftPlan` aggregate | Accepted |
 | [0007](./0007-arch-go-fitness-tests.md) | Executable architecture fitness tests with arch-go | Accepted |
-| [0008](./0008-mcp-inbound-adapter.md) | Model Context Protocol as an inbound adapter, not a new service | Accepted |
+| [0008](./0008-mcp-inbound-adapter.md) | Model Context Protocol as an inbound adapter, not a new service | Accepted — auth section superseded by 0016 |
 | [0009](./0009-product-classification-propagation-to-work-released.md) | Propagate inventory-storage's `ProductClassification` onto `WorkReleased` via a synchronous read at release time | Accepted |
 | [0010](./0010-gift-wrap-as-a-work-released-characteristic.md) | Gift wrap as a caller-stated `WorkReleased` characteristic, not a product attribute | Accepted |
 | [0011](./0011-analytical-data-product.md) | Per-service analytical data product (report) via a separate analytics topic | Accepted |
@@ -64,6 +64,8 @@ no scheduler).
 | [0027](./0027-cloudevents-mandatory-event-envelope.md) | CloudEvents 1.0 as the mandatory event envelope on every topic (no flat envelope, no dual mode) | Accepted |
 | [0028](./0028-processed-event-mark-atomic-with-handling.md) | The processed-event mark commits atomically with the handling it guards; `TaskCompleted` for an unknown work unit is a logged skip | Accepted |
 | [0029](./0029-work-pool-optimistic-concurrency.md) | Optimistic concurrency (version column + retry) for the WorkPool aggregate; release heals entries left behind by a lost update | Accepted |
+| [0030](./0030-kafka-sourced-path-catalogue.md) | Kafka-sourced process-path catalogue (`PATH_CATALOGUE_SOURCE=kafka`) behind `ports.PathCatalogue`, and boot-time dial retry | Accepted |
+| [0031](./0031-order-allocated-choreography.md) | Consume `OrderAllocated`/`OrderPartiallyAllocated` by choreography, fire-and-forget, with deterministic work unit ids | Accepted |
 
 ## The template
 

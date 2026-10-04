@@ -180,7 +180,7 @@ is mandatory on every topic, with no flat envelope and no dual mode.
 
 The CloudEvents migration referenced above as a future intent now has a
 concrete plan: [ADR-0021](./0021-cloudevents-envelope-migration.md)
-(Proposed), a companion to fulfillment-execution's own envelope-migration
+(Proposed at the time; since **Superseded** by ADR-0027), a companion to fulfillment-execution's own envelope-migration
 ADR. It implements the CloudEvents envelope this ADR documented but never
 shipped, via a non-breaking dual-read/dual-write bake period. See ADR-0021
 for the schema, phase sequence, and rollback plan.

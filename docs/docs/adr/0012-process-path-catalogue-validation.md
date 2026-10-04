@@ -10,7 +10,10 @@ description: ADR 0012 — validate every caller-supplied path_id (HTTP and Kafka
 
 ## Status
 
-Accepted.
+Accepted — amended by [ADR-0030](./0030-kafka-sourced-path-catalogue.md): the
+catalogue is consumed through `ports.PathCatalogue` and may also be sourced from
+Kafka (`PATH_CATALOGUE_SOURCE=kafka`). The file source described below remains
+the default.
 
 ## Context
 
@@ -99,7 +102,8 @@ func Load(path string) (*pathcatalog.Catalogue, error)
 Wiring, by entry point:
 
 - **HTTP** (`internal/adapters/inbound/http/handlers.go`): `Handlers`
-  gains a `Catalogue *pathcatalog.Catalogue` field and a
+  gains a `Catalogue ports.PathCatalogue` field (the port; `*pathcatalog.Catalogue`
+  satisfies it) and a
   `validatePathId` helper, called from `postChargeForecast`,
   `postShiftPlan`, and `postWorkUnit` — every handler that SEEDS a new
   aggregate keyed by a caller-supplied `path_id`. Read-only handlers
@@ -108,11 +112,13 @@ Wiring, by entry point:
   which is the correct signal for "ask about a path with no data yet,"
   distinct from "this path_id isn't even declared."
 - **Kafka** (`internal/adapters/inbound/kafka/consumer.go`): `Consumer`
-  gains a `catalogue *pathcatalog.Catalogue` field, checked in both
-  `handleWorkforceEvent` (before calling `ObserveLaborPlan`) and
-  `handleOrderManagementEvent`'s per-line loop (before calling
-  `EnqueueWorkUnit`) — an unrecognized `path_id` now fails the whole
-  message handling, the same fail-loud contract
+  gains a `catalogue ports.PathCatalogue` field, checked in
+  `handleWorkforceEvent` (before calling `ObserveLaborPlan`). For
+  `OrderAllocated`/`OrderPartiallyAllocated` the check lives in the
+  `ApplyOrderAllocated` use case (`enqueueRequests`, via its own
+  `ports.PathCatalogue`), validating every line **before** any is enqueued
+  ([ADR-0031](./0031-order-allocated-choreography.md)) — an unrecognized
+  `path_id` now fails the whole message handling, the same fail-loud contract
   `fulfillment-execution`'s `WorkReleased` consumer already has.
 
 `cmd/wes/main.go` loads the catalogue once, before any adapter stands

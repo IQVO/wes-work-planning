@@ -65,6 +65,7 @@ const sidebars: SidebarsConfig = {
         'ecosystem/context-map',
         'ecosystem/integration-events',
         'ecosystem/sibling-services',
+        'ecosystem/flowfed-observed-throughput',
       ],
     },
     {

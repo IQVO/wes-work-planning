@@ -138,6 +138,7 @@ func run() error {
 		server:                  server,
 		handlers:                handlers,
 		relay:                   relay,
+		housekeeper:             newHousekeeper(repos.pgPool, logger),
 		repos:                   repos,
 		catalogue:               catalogue,
 		kafkaBrokers:            kafkaBrokers,
@@ -438,6 +439,27 @@ type serving struct {
 	enqueueWorkUnit         *usecases.EnqueueWorkUnit
 	cancelCatalogueConsumer context.CancelFunc
 	kafkaCatalogue          *kafkacatalog.Consumer
+	housekeeper             *postgres.Housekeeper
+}
+
+// startHousekeeper runs the housekeeper (if wired) in the background and
+// returns a func that cancels it and waits for it to return.
+func (s *serving) startHousekeeper() (stopAndWait func()) {
+	if s.housekeeper == nil {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := s.housekeeper.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.logger.Error("housekeeper stopped", "error", err)
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // run serves until SIGINT/SIGTERM (or a component failure), then drains.
@@ -467,6 +489,11 @@ func (s *serving) run() error {
 	} else {
 		close(relayDone)
 	}
+
+	// The housekeeper (ADR-0032) bounds idempotency_keys / outbox_events. It
+	// is stopped, and awaited, before run returns so the deferred pool close
+	// in main never races an in-flight sweep.
+	defer s.startHousekeeper()()
 
 	var consumer *inboundkafka.Consumer
 	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
@@ -632,6 +659,34 @@ func getenv(key, fallback string) string {
 // durationEnv parses key as a time.Duration, falling back on absence or a
 // malformed/non-positive value: the relay interval is a tuning knob, not
 // a contract, so it must never fail the boot.
+// newHousekeeper builds the retention sweeper (ADR-0032) over the Postgres
+// pool, or nil when there is no pool (in-memory mode has nothing to sweep).
+// All knobs are optional; "0" disables that table's sweep:
+//
+//	HOUSEKEEPING_INTERVAL   time between sweeps          (default 1h)
+//	IDEMPOTENCY_KEY_TTL     idempotency_keys retention   (default 24h)
+//	OUTBOX_RETENTION        published outbox retention   (default 168h = 7d)
+func newHousekeeper(pool *pgxpool.Pool, logger *slog.Logger) *postgres.Housekeeper {
+	if pool == nil {
+		return nil
+	}
+	return postgres.NewHousekeeper(pool, logger,
+		postgres.WithHousekeepingInterval(durationEnv("HOUSEKEEPING_INTERVAL", postgres.DefaultHousekeepingInterval)),
+		postgres.WithIdempotencyKeyTTL(retentionEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)),
+		postgres.WithOutboxRetention(retentionEnv("OUTBOX_RETENTION", postgres.DefaultOutboxRetention)),
+	)
+}
+
+// retentionEnv is durationEnv except that an explicit zero ("0", "0s")
+// returns 0 — meaning "disabled" — instead of the fallback. An unset, invalid
+// or negative value still yields the fallback.
+func retentionEnv(key string, fallback time.Duration) time.Duration {
+	if d, err := time.ParseDuration(os.Getenv(key)); err == nil && d == 0 && os.Getenv(key) != "" {
+		return 0
+	}
+	return durationEnv(key, fallback)
+}
+
 func durationEnv(key string, fallback time.Duration) time.Duration {
 	v := os.Getenv(key)
 	if v == "" {

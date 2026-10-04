@@ -221,11 +221,11 @@ re-validating. Proven by
 - `internal/pgtx` is a new, tiny shared package; every future
   cross-cutting-transaction feature in this service should extend it
   rather than re-invent a parallel tx-in-context mechanism.
-- **Known follow-up, explicitly deferred (same as order-management's
-  ADR 0023):** no TTL/cleanup job exists yet for old `idempotency_keys`
-  rows; `idx_idempotency_keys_created_at` exists so a future scheduled
-  job can find old rows without a full table scan. Building that job is
-  out of scope here.
+- **Known follow-up (since built — [ADR-0032](./0032-housekeeping-retention-sweeper.md)):**
+  this change shipped no TTL/cleanup job for old `idempotency_keys` rows;
+  `idx_idempotency_keys_created_at` exists so a scheduled job can find old rows
+  without a full table scan. The in-process housekeeper now deletes keys older
+  than `IDEMPOTENCY_KEY_TTL` (default 24h).
 - `POST /paths/{pathId}/charge`, `POST /paths/{pathId}/plan`, and
   `POST /paths/{pathId}/release` remain unprotected by this middleware —
   ruled out explicitly in Context above, not simply left for "later" the

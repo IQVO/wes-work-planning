@@ -116,6 +116,7 @@ const sidebars: SidebarsConfig = {
         'adr/0029-work-pool-optimistic-concurrency',
         'adr/0030-kafka-sourced-path-catalogue',
         'adr/0031-order-allocated-choreography',
+        'adr/0032-housekeeping-retention-sweeper',
       ],
     },
   ],

@@ -175,7 +175,8 @@ Adopt the **transactional outbox**, in its **fan-out** form:
   metric was a follow-up and is now built: the `wes.outbox.lag_seconds`
   observable gauge (`postgres.RegisterOutboxLagGauge`, registered in
   `cmd/wes` next to the relay) reports the age of the oldest unpublished
-  `outbox_events` row, 0 when drained.
+  `outbox_events` row, 0 when drained. Published rows are pruned by the
+  retention sweeper ([ADR-0032](./0032-housekeeping-retention-sweeper.md)).
 - Events are no longer synchronous with the HTTP response (documented
   above; acceptable for this domain).
 - Two rows per event doubles outbox volume versus a single-topic outbox.

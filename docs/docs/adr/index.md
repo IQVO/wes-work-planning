@@ -66,6 +66,7 @@ no scheduler).
 | [0029](./0029-work-pool-optimistic-concurrency.md) | Optimistic concurrency (version column + retry) for the WorkPool aggregate; release heals entries left behind by a lost update | Accepted |
 | [0030](./0030-kafka-sourced-path-catalogue.md) | Kafka-sourced process-path catalogue (`PATH_CATALOGUE_SOURCE=kafka`) behind `ports.PathCatalogue`, and boot-time dial retry | Accepted |
 | [0031](./0031-order-allocated-choreography.md) | Consume `OrderAllocated`/`OrderPartiallyAllocated` by choreography, fire-and-forget, with deterministic work unit ids | Accepted |
+| [0032](./0032-housekeeping-retention-sweeper.md) | Retention sweeper for `idempotency_keys` (24h) and published `outbox_events` (7d) | Accepted |
 
 ## The template
 

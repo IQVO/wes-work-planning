@@ -222,6 +222,7 @@ var eventTypeEntity = map[string]string{
 	"PathThrottled":            "workpool",
 	"LaborReassignmentFlagged": "workpool",
 	"PathCapacityChanged":      "workpool",
+	"PathPlanDriftDetected":    "pathplan",
 }
 
 // entityFor looks up e's CloudEvents type entity segment in
@@ -259,6 +260,8 @@ func subjectFor(e shared.DomainEvent) string {
 	case shared.LaborReassignmentFlagged:
 		return ev.PathId.String()
 	case shared.PathCapacityChanged:
+		return ev.PathId.String()
+	case shared.PathPlanDriftDetected:
 		return ev.PathId.String()
 	default:
 		return ""
@@ -307,6 +310,8 @@ func (p *Publisher) dataFor(ctx context.Context, e shared.DomainEvent) (json.Raw
 		return workUnitData(ev.WorkUnitId, ev.PathId)
 	case shared.PathCapacityChanged:
 		return pathCapacityChangedData(ev)
+	case shared.PathPlanDriftDetected:
+		return pathPlanDriftDetectedData(ev), nil
 	default:
 		return json.Marshal(map[string]any{})
 	}
@@ -376,6 +381,19 @@ func pathCapacityChangedData(ev shared.PathCapacityChanged) (json.RawMessage, er
 		"cutoff_at":       ev.CutoffAt.Format(time.RFC3339),
 		"remaining_units": ev.RemainingUnits,
 		"known":           ev.Known,
+	})
+}
+
+// pathPlanDriftDetectedData is the PathPlanDriftDetected payload (ADR-0019),
+// shared by the integration and analytics encoders so the two can never
+// disagree. drift_heads is signed (observed - ours).
+func pathPlanDriftDetectedData(ev shared.PathPlanDriftDetected) json.RawMessage {
+	return mustMarshal(map[string]any{
+		"path_id":                ev.PathId.String(),
+		"wes_planned_heads":      ev.WesPlannedHeads,
+		"observed_planned_heads": ev.ObservedPlannedHeads,
+		"drift_heads":            ev.DriftHeads,
+		"observed_at":            ev.ObservedAt.Format(time.RFC3339),
 	})
 }
 

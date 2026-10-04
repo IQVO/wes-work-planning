@@ -13,10 +13,10 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://claudioed.github.io',
+  url: 'https://iqvo.github.io',
   baseUrl: '/wes-work-planning/',
 
-  organizationName: 'claudioed',
+  organizationName: 'IQVO',
   projectName: 'wes-work-planning',
   deploymentBranch: 'gh-pages',
   trailingSlash: false,
@@ -45,7 +45,7 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           routeBasePath: 'docs',
           editUrl:
-            'https://github.com/claudioed/wes-work-planning/tree/main/docs/',
+            'https://github.com/IQVO/wes-work-planning/tree/main/docs/',
           docItemComponent: '@theme/ApiItem',
         },
         blog: false,
@@ -68,7 +68,7 @@ const config: Config = {
             specPath: '../apis/openapi.yaml',
             outputDir: 'docs/api/rest',
             downloadUrl:
-              'https://raw.githubusercontent.com/claudioed/wes-work-planning/main/apis/openapi.yaml',
+              'https://raw.githubusercontent.com/IQVO/wes-work-planning/main/apis/openapi.yaml',
             sidebarOptions: {
               groupPathsBy: 'tag',
               categoryLinkSource: 'tag',
@@ -107,7 +107,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://github.com/claudioed/wes-work-planning',
+          href: 'https://github.com/IQVO/wes-work-planning',
           label: 'GitHub',
           position: 'right',
         },
@@ -132,11 +132,11 @@ const config: Config = {
             {label: 'Events (AsyncAPI)', to: '/docs/api/events'},
             {
               label: 'openapi.yaml',
-              href: 'https://github.com/claudioed/wes-work-planning/blob/main/apis/openapi.yaml',
+              href: 'https://github.com/IQVO/wes-work-planning/blob/main/apis/openapi.yaml',
             },
             {
               label: 'asyncapi.yaml',
-              href: 'https://github.com/claudioed/wes-work-planning/blob/main/apis/asyncapi.yaml',
+              href: 'https://github.com/IQVO/wes-work-planning/blob/main/apis/asyncapi.yaml',
             },
           ],
         },
@@ -146,19 +146,19 @@ const config: Config = {
             {label: 'Context Map', to: '/docs/ecosystem/context-map'},
             {
               label: 'inventory-storage',
-              href: 'https://github.com/claudioed/inventory-storage',
+              href: 'https://github.com/IQVO/inventory-storage',
             },
             {
               label: 'workforce-management',
-              href: 'https://github.com/claudioed/workforce-management',
+              href: 'https://github.com/IQVO/workforce-management',
             },
             {
               label: 'fulfillment-execution',
-              href: 'https://github.com/claudioed/fulfillment-execution',
+              href: 'https://github.com/IQVO/fulfillment-execution',
             },
             {
               label: 'facility-layout',
-              href: 'https://github.com/claudioed/facility-layout',
+              href: 'https://github.com/IQVO/facility-layout',
             },
           ],
         },

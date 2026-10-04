@@ -4,7 +4,7 @@ description: WES Work Planning & Release — core WES bounded context (charge, w
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/claudioed/wes-work-planning
+home: https://github.com/IQVO/wes-work-planning
 keywords:
   - ddd
   - hexagonal-architecture

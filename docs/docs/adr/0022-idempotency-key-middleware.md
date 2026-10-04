@@ -68,6 +68,17 @@ ported unchanged from order-management's v1 scoping decision: require the
 header on true resource-creation endpoints rather than making it
 optional-but-recommended.
 
+Both middleware problems (`idempotency-key-required` 400,
+`idempotency-key-reused` 422) are produced through the same
+`statusFor`/`problemFor` catalogue as every other problem type
+([ADR-0005](./0005-rfc-7807-problem-details.md)) — not built inline — and the
+header and both responses are documented in `apis/openapi.yaml` (the
+`Idempotency-Key` header parameter and the `400`/`422` responses of
+`enqueueWorkUnit`) and in the API error catalogue. `Idempotency-Key` is also in
+the CORS `AllowedHeaders`, so a browser client may send it cross-origin. The
+`web/` micro-frontend is read-only today (it only issues `GET`s), so it has no
+call that needs the header.
+
 ### 2. `idempotency_keys` table (migration `0006_idempotency_keys`)
 
 Identical schema to order-management's migration `0008_idempotency_keys`:

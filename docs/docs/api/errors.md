@@ -61,6 +61,13 @@ All type URIs are prefixed
 | `work-unit-id-required` | Work unit id is required | empty id |
 | `work-unit-reference-required` | Work unit reference is required | empty reference |
 | `work-pool-entry-not-found` | Work unit not found in this pool | releasing an unknown entry |
+| `idempotency-key-required` | Idempotency-Key header is required | `POST /paths/{pathId}/work-units` without an `Idempotency-Key` header ([ADR-0022](../adr/0022-idempotency-key-middleware.md)) |
+
+### 422 Unprocessable Entity
+
+| `type` suffix | `title` | Raised by |
+|---|---|---|
+| `idempotency-key-reused` | Idempotency-Key was already used with a different request | `POST /paths/{pathId}/work-units` re-using an `Idempotency-Key` with a different body — use a new key for a genuinely different request |
 
 ### 404 Not Found
 
@@ -108,7 +115,10 @@ Two pure functions in `internal/adapters/inbound/http/errors.go`:
 They mirror each other case for case: every sentinel `statusFor` recognises has
 a corresponding case in `problemFor`, so no error can get a correct status with
 a generic problem type. Both use `errors.Is`, so wrapped errors keep their
-mapping.
+mapping. This includes the two `Idempotency-Key` problems raised by the
+route-scoped middleware (`errIdempotencyKeyRequired` → 400,
+`errIdempotencyKeyReused` → 422): the middleware calls `writeError` rather
+than building problem bodies inline.
 
 Keeping this in the **adapter** is the point. The domain returns typed sentinel
 errors and knows nothing about HTTP; a second inbound adapter (the Kafka

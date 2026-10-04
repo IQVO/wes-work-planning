@@ -151,3 +151,33 @@ func NewPathCapacityChanged(pathId PathId, cutoffAt time.Time, remainingUnits in
 		Known:          known,
 	}
 }
+
+// PathPlanDriftDetected is raised when this service's own committed PathPlan
+// and the labor plan Workforce Management committed for the same path
+// (LaborPlanObserved) disagree on planned heads (ADR-0019). It surfaces a
+// fact and never a verdict: DriftHeads is signed (ObservedPlannedHeads -
+// WesPlannedHeads) and says nothing about which side is "right". An agreeing
+// pair raises nothing.
+//
+// ObservedAt is Workforce's own commit timestamp, carried from
+// LaborPlanObserved; the event's occurred-at is when this service detected
+// the drift.
+type PathPlanDriftDetected struct {
+	baseEvent
+	PathId               PathId
+	WesPlannedHeads      int
+	ObservedPlannedHeads int
+	DriftHeads           int
+	ObservedAt           time.Time
+}
+
+func NewPathPlanDriftDetected(pathId PathId, wesPlannedHeads, observedPlannedHeads int, observedAt, at time.Time) PathPlanDriftDetected {
+	return PathPlanDriftDetected{
+		baseEvent:            baseEvent{name: "PathPlanDriftDetected", at: at},
+		PathId:               pathId,
+		WesPlannedHeads:      wesPlannedHeads,
+		ObservedPlannedHeads: observedPlannedHeads,
+		DriftHeads:           observedPlannedHeads - wesPlannedHeads,
+		ObservedAt:           observedAt,
+	}
+}

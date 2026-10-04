@@ -2,6 +2,8 @@ package usecases
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/domain/plan"
@@ -16,6 +18,7 @@ type CommitShiftPlan struct {
 	clock      ports.Clock
 	uow        ports.UnitOfWork
 	travelDist ports.TravelDistanceLookup
+	laborViews ports.LaborPlanViewRepo
 }
 
 func NewCommitShiftPlan(plans ports.PlanRepo, publisher ports.EventPublisher, clock ports.Clock) *CommitShiftPlan {
@@ -36,6 +39,16 @@ func (uc *CommitShiftPlan) WithUnitOfWork(u ports.UnitOfWork) *CommitShiftPlan {
 // use case's behaviour before this feature existed.
 func (uc *CommitShiftPlan) WithTravelDistanceLookup(l ports.TravelDistanceLookup) *CommitShiftPlan {
 	uc.travelDist = l
+	return uc
+}
+
+// WithLaborPlanViews enables the ADR-0019 reconciliation: after our PathPlan
+// is saved, it is compared against Workforce's LaborPlanObserved for the same
+// path (if one has been observed), and a PathPlanDriftDetected event is
+// published inside the same UnitOfWork scope when they disagree. Optional:
+// nil keeps CommitShiftPlan exactly as it was before ADR-0019.
+func (uc *CommitShiftPlan) WithLaborPlanViews(v ports.LaborPlanViewRepo) *CommitShiftPlan {
+	uc.laborViews = v
 	return uc
 }
 
@@ -68,18 +81,49 @@ func (uc *CommitShiftPlan) Execute(ctx context.Context, req CommitShiftPlanReque
 		return nil, err
 	}
 
-	event := shared.NewShiftPlanCommitted(req.PathId, uc.clock.Now())
+	now := uc.clock.Now()
+	event := shared.NewShiftPlanCommitted(req.PathId, now)
 	err = atomically(ctx, uc.uow, func(ctx context.Context) error {
 		if err := uc.plans.Save(ctx, req.PathId, shiftPlan); err != nil {
 			return err
 		}
-		return uc.publisher.Publish(ctx, event)
+		if err := uc.publisher.Publish(ctx, event); err != nil {
+			return err
+		}
+		return uc.reconcileDrift(ctx, req.PathId, pathPlan.PlannedHeads().Value(), now)
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	return shiftPlan, nil
+}
+
+// reconcileDrift is the "our plan committed second" trigger of ADR-0019. If
+// Workforce has not committed a plan for this path yet there is nothing to
+// compare — it raises nothing and records nothing (no fabricated drift against
+// an absent fact). Otherwise it records the outcome on the view WITHOUT
+// rewriting the observed plan, and publishes PathPlanDriftDetected when the
+// plans disagree. It runs inside the caller's UnitOfWork scope.
+func (uc *CommitShiftPlan) reconcileDrift(ctx context.Context, pathId shared.PathId, wesPlannedHeads int, now time.Time) error {
+	if uc.laborViews == nil {
+		return nil
+	}
+	view, err := uc.laborViews.FindByPathId(ctx, pathId)
+	if errors.Is(err, ports.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	view, drift := reconcileHeads(view, wesPlannedHeads, now)
+	if err := uc.laborViews.SaveDrift(ctx, pathId, *view.DriftHeads, view.DriftDetectedAt); err != nil {
+		return err
+	}
+	if drift == nil {
+		return nil
+	}
+	return uc.publisher.Publish(ctx, *drift)
 }
 
 // enrichWithTravelDistance looks up the travel distance between from and

@@ -394,7 +394,7 @@ func newHandlers(repos repositories, publisher ports.EventPublisher, clock memor
 		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(repos.charges, publisher, clock).WithUnitOfWork(uow),
 		CommitShiftPlan:         usecases.NewCommitShiftPlan(repos.plans, publisher, clock).WithUnitOfWork(uow).WithTravelDistanceLookup(travelDistances),
 		EnqueueWorkUnit:         usecases.NewEnqueueWorkUnit(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow),
-		ReleaseNextWork:         usecases.NewReleaseNextWork(repos.pools, repos.workUnits, publisher, clock).WithUnitOfWork(uow),
+		ReleaseNextWork:         usecases.NewReleaseNextWork(repos.pools, repos.workUnits, publisher, clock).WithUnitOfWork(uow).WithMetrics(telemetry.NewReleaseMetrics()),
 		RecordCompletion:        usecases.NewRecordCompletion(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow),
 		SampleBacklog:           usecases.NewSampleBacklog(repos.pools, publisher, clock).WithUnitOfWork(uow),
 		RebalanceDecision:       usecases.NewRebalanceDecision(repos.pools, publisher, clock).WithUnitOfWork(uow),

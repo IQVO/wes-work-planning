@@ -133,6 +133,19 @@ require:
   public contract with every dashboard and alert built on it, not
   internal detail a PR reviewer can wave through unchecked.
 
+**wes-work-planning conformance (2026-10 audit fix).** All three HTTP
+surfaces — the OLTP router, the reports router (`cmd/wes-reports`) and the MCP
+router (`cmd/mcp`) — now carry `otelchi.Middleware` plus
+`otelchimetric.NewServerRequestDuration` (and `NewServerActiveRequests`). The
+`wes.work_units.released` counter moved out of the application layer
+(`usecases/metrics.go`, which imported OTel directly) behind
+`ports.ReleaseMetrics`, implemented by
+`internal/adapters/outbound/telemetry.ReleaseMetrics` and injected with
+`ReleaseNextWork.WithMetrics(...)` from both composition roots. Its attribute
+key was renamed `path_id` → `path.id` to follow the dot-separated convention;
+the Prometheus label remains `path_id` because the Collector exporter
+normalises `.` to `_`, so dashboards are unaffected.
+
 ## Consequences
 
 - A new service added to the fleet has an unambiguous starting checklist:

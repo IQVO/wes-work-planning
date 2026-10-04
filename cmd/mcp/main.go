@@ -221,7 +221,7 @@ func newMCPServerDeps(logger *slog.Logger, repos repositories, publisher ports.E
 	deps := inboundmcp.Deps{
 		SampleBacklog:     usecases.NewSampleBacklog(repos.pools, publisher, clock).WithUnitOfWork(repos.uow),
 		RebalanceDecision: usecases.NewRebalanceDecision(repos.pools, publisher, clock).WithUnitOfWork(repos.uow),
-		ReleaseNextWork:   usecases.NewReleaseNextWork(repos.pools, repos.workUnits, publisher, clock).WithUnitOfWork(repos.uow),
+		ReleaseNextWork:   usecases.NewReleaseNextWork(repos.pools, repos.workUnits, publisher, clock).WithUnitOfWork(repos.uow).WithMetrics(telemetry.NewReleaseMetrics()),
 	}
 	if reportsBaseURL := os.Getenv("REPORTS_BASE_URL"); reportsBaseURL != "" {
 		logger.Info("release throughput report tool enabled", "reports_base_url", reportsBaseURL)

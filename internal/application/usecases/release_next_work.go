@@ -3,9 +3,6 @@ package usecases
 import (
 	"context"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
@@ -20,7 +17,7 @@ type ReleaseNextWork struct {
 	publisher ports.EventPublisher
 	clock     ports.Clock
 	policy    release.ReleasePolicy
-	released  metric.Int64Counter
+	metrics   ports.ReleaseMetrics
 	uow       ports.UnitOfWork
 }
 
@@ -31,15 +28,18 @@ func NewReleaseNextWork(pools ports.WorkPoolRepo, workUnits ports.WorkUnitRepo, 
 		publisher: publisher,
 		clock:     clock,
 		policy:    release.NewReleasePolicy(),
-		released: newInt64Counter("wes.work_units.released",
-			metric.WithDescription("Work units admitted into a process path's work pool by the release policy."),
-			metric.WithUnit("{work_unit}"),
-		),
 	}
 }
 
 type ReleaseNextWorkRequest struct {
 	PathId shared.PathId
+}
+
+// WithMetrics attaches the business-metric port (ADR-0013 Tier 2). Optional:
+// nil records nothing.
+func (uc *ReleaseNextWork) WithMetrics(m ports.ReleaseMetrics) *ReleaseNextWork {
+	uc.metrics = m
+	return uc
 }
 
 // WithUnitOfWork brackets both Saves + Publish in one atomic scope
@@ -64,9 +64,11 @@ func (uc *ReleaseNextWork) Execute(ctx context.Context, req ReleaseNextWorkReque
 		return nil, err
 	}
 
-	// Counted here rather than in the HTTP handler so the metric tracks the
+	// Recorded here rather than in the HTTP handler so the metric tracks the
 	// real domain event — a work unit actually released — not the request.
-	uc.released.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrPathId, req.PathId.String())))
+	if uc.metrics != nil {
+		uc.metrics.WorkUnitReleased(ctx, req.PathId)
+	}
 	return unit, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/riandyrn/otelchi"
+	otelchimetric "github.com/riandyrn/otelchi/metric"
 
 	"github.com/claudioed/wes-work-planning/internal/analytics/report"
 )
@@ -153,8 +154,11 @@ func NewReportsRouter(h *ReportsHandlers, serviceName string, logger *slog.Logge
 	}
 
 	r := chi.NewRouter()
+	metricCfg := otelchimetric.NewBaseConfig(serviceName)
 	r.Use(middleware.RequestID)
 	r.Use(otelchi.Middleware(serviceName, otelchi.WithChiRoutes(r)))
+	r.Use(otelchimetric.NewServerRequestDuration(metricCfg))
+	r.Use(otelchimetric.NewServerActiveRequests(metricCfg))
 	r.Use(RequestLogger(logger))
 	r.Use(middleware.Recoverer)
 

@@ -67,8 +67,8 @@ func TestCloudEvents_Golden_Integration(t *testing.T) {
 				t.Fatalf("got %d encoded, want 1", len(encoded))
 			}
 			assertGolden(t, encoded[0], tc, cloudevents.StreamEvents, "events_"+tc.name)
-			if string(encoded[0].Key) != "11111111-1111-4111-8111-111111111111" {
-				t.Errorf("key = %q, want the event id (unchanged partition-affinity choice)", encoded[0].Key)
+			if string(encoded[0].Key) != tc.subject {
+				t.Errorf("key = %q, want the aggregate id %q (ADR-0024)", encoded[0].Key, tc.subject)
 			}
 		})
 	}

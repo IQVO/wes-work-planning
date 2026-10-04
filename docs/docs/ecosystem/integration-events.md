@@ -38,9 +38,12 @@ envelope toggle.
 ```
 
 - Every attribute above is required. `id` is a UUID v4 minted once per
-  domain event and persisted with the outbox row; on the integration topic it
-  is also the Kafka **message key** (the analytics topic is keyed by the
-  aggregate id). `subject` is the aggregate id; `time` the domain clock.
+  domain event and persisted with the outbox row. The Kafka **message key**
+  on both topics is the aggregate id (the work unit id for WorkUnit events, the
+  path id otherwise) — the same value as `subject` — so one aggregate's events
+  share a partition and stay ordered
+  ([ADR-0024](../adr/0024-kafka-hash-balancer-partition-affinity.md)). `time`
+  is the domain clock.
 - `type` = `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`;
   `dataschema` = `urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`.
 - Every produced message carries the Kafka header

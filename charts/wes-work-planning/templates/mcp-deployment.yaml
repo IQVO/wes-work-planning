@@ -50,6 +50,16 @@ spec:
                   name: {{ include "wes-work-planning.databaseSecretName" . }}
                   key: {{ .Values.database.existingSecretKey }}
             {{- end }}
+            # release_next_work raises WorkReleased: the MCP binary publishes it
+            # through the SAME EVENT_PUBLISHER / DATABASE_URL / KAFKA_BROKERS
+            # contract as cmd/wes (ADR-0008, ADR-0014). With Postgres + kafka it
+            # writes outbox_events rows; the relay stays in the api Deployment.
+            - name: EVENT_PUBLISHER
+              value: {{ .Values.mcp.eventPublisher | default .Values.config.eventPublisher | quote }}
+            {{- if .Values.kafka.enabled }}
+            - name: KAFKA_BROKERS
+              value: {{ .Values.kafka.brokers | quote }}
+            {{- end }}
             {{- if .Values.mcp.reportsBaseUrl }}
             - name: REPORTS_BASE_URL
               value: {{ .Values.mcp.reportsBaseUrl | quote }}

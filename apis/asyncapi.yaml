@@ -164,7 +164,8 @@ channels:
       (`cloudevents.TopicWorkPlanningEvents` in the code). Every domain event
       this service emits is written here as a CloudEvents 1.0 event with
       `dataschema` `urn:warehouse:wes-work-planning:events:<EventName>:v1`,
-      keyed by the CloudEvents `id`.
+      keyed by the aggregate id (the CloudEvents `subject`: work unit id for
+      WorkUnit events, path id otherwise).
     subscribe:
       operationId: consumeWorkPlanningEvents
       summary: Consume domain events emitted by WES Work Planning & Release.

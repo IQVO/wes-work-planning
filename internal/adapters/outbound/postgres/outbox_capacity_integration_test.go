@@ -170,8 +170,11 @@ func TestOutboxRelay_PathCapacityChanged_RoundTripsThroughRealKafka(t *testing.T
 		if !persistedIDs[env.ID()] {
 			t.Fatalf("published id %q is not an id persisted in outbox_events %v", env.ID(), persistedIDs)
 		}
-		if string(msg.Key) != env.ID() {
-			t.Fatalf("key = %q, want the CloudEvents id %q", msg.Key, env.ID())
+		// ADR-0024: integration-topic events are keyed by the aggregate id
+		// (here the path id), not the CloudEvents id, so one aggregate's
+		// events stay on one partition.
+		if string(msg.Key) != "pick-capacity-itest" {
+			t.Fatalf("key = %q, want the aggregate id %q", msg.Key, "pick-capacity-itest")
 		}
 		if ct := capacityHeader(msg.Headers, "content-type"); ct != cloudevents.MediaType {
 			t.Fatalf("content-type header = %q, want %q", ct, cloudevents.MediaType)

@@ -25,11 +25,23 @@ var errMalformedBody = errors.New("malformed request body")
 // way errMalformedBody routes decode failures.
 var errMissingReference = errors.New("reference query parameter is required")
 
+// errIdempotencyKeyRequired / errIdempotencyKeyReused are raised by
+// RequireIdempotencyKey (ADR-0022) and routed through the same
+// statusFor/problemFor catalogue as every other problem type (ADR-0005):
+// 400 idempotency-key-required and 422 idempotency-key-reused. The middleware
+// wraps them with the occurrence-level `detail` text.
+var (
+	errIdempotencyKeyRequired = errors.New("idempotency key required")
+	errIdempotencyKeyReused   = errors.New("idempotency key reused")
+)
+
 // statusFor maps a domain/application error to an HTTP status code.
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, errMalformedBody), errors.Is(err, errMissingReference):
+	case errors.Is(err, errMalformedBody), errors.Is(err, errMissingReference), errors.Is(err, errIdempotencyKeyRequired):
 		return http.StatusBadRequest
+	case errors.Is(err, errIdempotencyKeyReused):
+		return http.StatusUnprocessableEntity
 	case errors.Is(err, ports.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, release.ErrWIPLimitReached),
@@ -83,6 +95,8 @@ type problemCategory struct {
 var problemCatalog = []problemCategory{
 	{errMalformedBody, "malformed-request-body", "Malformed request body"},
 	{errMissingReference, "reference-required", "Reference query parameter is required"},
+	{errIdempotencyKeyRequired, "idempotency-key-required", "Idempotency-Key header is required"},
+	{errIdempotencyKeyReused, "idempotency-key-reused", "Idempotency-Key was already used with a different request"},
 	{ports.ErrNotFound, "not-found", "Resource not found"},
 	{ports.ErrConcurrentModification, "concurrent-modification", "The work pool was modified concurrently; retry the request"},
 	{release.ErrWIPLimitReached, "wip-limit-reached", "Release-fed pool WIP limit reached"},

@@ -101,6 +101,9 @@ opens the pool, so there is no separate `migrate` step.
 | `KAFKA_BROKERS`  | (unset) | Comma-separated Kafka brokers; required for `EVENT_PUBLISHER=kafka` and enables the inbound integration-event consumer whenever set |
 | `KAFKA_CONSUMER_GROUP` | `wes-work-planning` | Kafka consumer group id. Leave unset in a deployment so replicas share one group and split the partitions. Set a unique value for any process run alongside a deployed instance against the SAME broker (the e2e-tests harness, a local `go run`) — otherwise both join the same group, Kafka awards the single partition to one of them, and the other silently consumes nothing |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | How long the outbox relay sleeps between passes that found nothing to publish (Go duration, e.g. `500ms`). Only used in outbox mode |
+| `HOUSEKEEPING_INTERVAL` | `1h` | Time between retention sweeps of `idempotency_keys` / `outbox_events` (Go duration). Only used with Postgres ([ADR-0032](docs/docs/adr/0032-housekeeping-retention-sweeper.md)) |
+| `IDEMPOTENCY_KEY_TTL` | `24h` | How long an `Idempotency-Key` row is kept before the sweeper deletes it; `0` disables that sweep |
+| `OUTBOX_RETENTION` | `168h` (7d) | How long a **published** `outbox_events` row is kept; unpublished rows are never deleted; `0` disables that sweep |
 | `PRODUCT_CLASSIFICATION_MODE` | `permissive` | `permissive` (default, no-op, always omits hazmat/fragile hints) or `http` — synchronous lookup of a released unit's SKU classification from inventory-storage |
 | `INVENTORY_STORAGE_BASE_URL` | (unset) | Base URL for inventory-storage's REST API; required when `PRODUCT_CLASSIFICATION_MODE=http` |
 | `TRAVEL_DISTANCE_MODE` | `permissive` | `permissive` (default, no-op, always omits the travel-distance hint) or `http` — synchronous lookup of the real travel distance between two facility-layout LocationCodes at shift-plan-commit time (ADR-0017) |

@@ -267,8 +267,8 @@ func TestOutboxRelay_PublishesInOrderAcrossTopicsAndMarksRows(t *testing.T) {
 			t.Fatalf("message %d: want %s on %s, got %s on %s", i, w.eventType, w.topic, sink.sent[i].EventType, sink.sent[i].Topic)
 		}
 	}
-	// The analytics key is the aggregate id; the integration key is the event id.
-	if string(sink.sent[1].Key) != "wu-1" || !strings.HasPrefix(string(sink.sent[0].Key), "evt-") {
+	// Both topics are keyed by the aggregate id (ADR-0024).
+	if string(sink.sent[1].Key) != "wu-1" || string(sink.sent[0].Key) != "wu-1" {
 		t.Fatalf("unexpected keys: integration=%q analytics=%q", sink.sent[0].Key, sink.sent[1].Key)
 	}
 	if got := countOutbox(t, pool, "published_at IS NULL"); got != 0 {

@@ -70,7 +70,7 @@ type Publisher struct {
 // is the balancer that actually gives "same Key always maps to the same
 // partition", which every message this adapter builds relies on for
 // per-aggregate ordering (see encodeCloudEvent, which keys every message
-// by the event id) now that warehouse-infra PR #42 scaled
+// by the aggregate id — work unit id or path id) now that warehouse-infra PR #42 scaled
 // this topic from 1 to 8 partitions.
 func NewPublisher(brokers []string, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, newID IDGenerator) *Publisher {
 	return NewPublisherWithWriter(&kafkago.Writer{
@@ -160,11 +160,19 @@ func (p *Publisher) Encode(ctx context.Context, events ...shared.DomainEvent) ([
 }
 
 // encodeCloudEvent builds one structured-mode CloudEvents Encoded for e on
-// topic/stream. Key is the event id (integration topic) — see NewPublisher's
-// doc comment; the analytics publisher passes its own aggregate-id key via
+// topic/stream. Key is the aggregate id — the same value as the CloudEvents
+// subject (work unit id for WorkUnit events, path id otherwise), so every
+// event of one aggregate lands on one partition (ADR-0024). The analytics
+// publisher passes its own (identical) aggregate-id key via
 // encodeCloudEventKeyed.
 func encodeCloudEvent(ctx context.Context, topic, stream, id string, e shared.DomainEvent, subject string, data json.RawMessage) (Encoded, error) {
-	return encodeCloudEventKeyed(ctx, topic, stream, id, id, e, subject, data)
+	key := subject
+	if key == "" {
+		// An event type with no aggregate id (none exist today) falls back
+		// to the event id: still a valid, non-nil key.
+		key = id
+	}
+	return encodeCloudEventKeyed(ctx, topic, stream, id, key, e, subject, data)
 }
 
 // encodeCloudEventKeyed is encodeCloudEvent with an explicit Kafka key.

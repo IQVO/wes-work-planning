@@ -19,7 +19,7 @@ This page is written from that spec.
 |---|---|
 | **Topic** | `warehouse.work-planning.events` |
 | **Protocol** | Kafka (`localhost:9092` locally; one broker shared by every `warehouse-systems` service) |
-| **Message key** | the event id |
+| **Message key** | the aggregate id (work unit id for WorkUnit events, path id otherwise) — same as the CloudEvents `subject` |
 | **Default content type** | `application/cloudevents+json` |
 | **Delivery** | at-least-once — **consumers must deduplicate** |
 

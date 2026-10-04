@@ -47,8 +47,9 @@ with no coexistence.
   duplicated into CloudEvents extensions).
 - Message keys and the `kafkago.Hash{}` balancer are unchanged
   ([ADR-0024](./0024-kafka-hash-balancer-partition-affinity.md)): the
-  integration topic is keyed by the event `id`, the analytics topic by the
-  aggregate id.
+  integration topic and the analytics topic are both keyed by the aggregate
+  id (work unit id or path id; the integration topic was keyed by the event
+  `id` until the ADR-0024 follow-up fix).
 - Events are built, validated and (un)marshalled with
   `github.com/cloudevents/sdk-go/v2/event` (v2.16.2). The sdk-go protocol and
   client packages are **not** used; transport stays `segmentio/kafka-go`.

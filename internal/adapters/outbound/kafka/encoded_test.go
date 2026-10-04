@@ -68,7 +68,7 @@ func TestPublisher_Encode_ProducesIntegrationWireForm(t *testing.T) {
 		t.Fatalf("unmarshal data: %v", err)
 	}
 
-	t.Run("routes to the integration topic keyed by event id", func(t *testing.T) {
+	t.Run("routes to the integration topic keyed by aggregate id", func(t *testing.T) {
 		assertEncodedRouting(t, e)
 	})
 
@@ -93,8 +93,8 @@ func assertEncodedRouting(t *testing.T, e outboundkafka.Encoded) {
 	if e.EventType != "com.warehouse.wes.work-planning.workunit.WorkReleased" {
 		t.Fatalf("event type = %q, want the full CloudEvents type", e.EventType)
 	}
-	if string(e.Key) != "evt-enc" {
-		t.Fatalf("key = %q, want the event id", e.Key)
+	if string(e.Key) != "wu-enc" {
+		t.Fatalf("key = %q, want the aggregate (work unit) id", e.Key)
 	}
 }
 

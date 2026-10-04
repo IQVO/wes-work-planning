@@ -463,6 +463,10 @@ func (s *serving) run() error {
 	var consumer *inboundkafka.Consumer
 	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
 	defer cancelConsumer()
+	// consumerDone closes when consumer.Run has returned (or immediately if
+	// no consumer is wired), so the shutdown can wait for in-flight handling
+	// to finish BEFORE closing the dependencies it uses (ADR-0023 §8.3).
+	consumerDone := make(chan struct{})
 
 	if s.kafkaBrokers != "" {
 		s.logger.Info("consuming integration events", "brokers", s.kafkaBrokers)
@@ -477,10 +481,13 @@ func (s *serving) run() error {
 		s.logger.Info("kafka consumer group", "group_id", groupID)
 		consumer = inboundkafka.NewConsumer(brokerList(s.kafkaBrokers), groupID, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, s.catalogue, s.logger)
 		go func() {
+			defer close(consumerDone)
 			if err := consumer.Run(consumerCtx); err != nil {
 				s.logger.Error("kafka consumer stopped", "error", err)
 			}
 		}()
+	} else {
+		close(consumerDone)
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -491,7 +498,7 @@ func (s *serving) run() error {
 		return err
 	case <-sigCh:
 		s.logger.Info("shutting down")
-		return s.gracefulShutdown(cancelConsumer, consumer, stopRelay, relayDone)
+		return s.gracefulShutdown(cancelConsumer, consumer, consumerDone, stopRelay, relayDone)
 	}
 }
 
@@ -501,13 +508,21 @@ func (s *serving) run() error {
 // allowed to finish its in-flight pass so an event committed by a
 // request that completed just before shutdown is not stranded until the
 // next pod boots.
-func (s *serving) gracefulShutdown(cancelConsumer context.CancelFunc, consumer *inboundkafka.Consumer, stopRelay context.CancelFunc, relayDone <-chan struct{}) error {
+//
+// §8.3: the Kafka consumer's Run must RETURN (consumerDone) before the
+// consumer is closed and the dependencies it uses are torn down, so a
+// message mid-handling is finished (or fails and is redelivered) rather than
+// racing a closed pool; the wait is bounded by the shutdown deadline.
+func (s *serving) gracefulShutdown(cancelConsumer context.CancelFunc, consumer *inboundkafka.Consumer, consumerDone <-chan struct{}, stopRelay context.CancelFunc, relayDone <-chan struct{}) error {
 	// Flip readiness to not-ready FIRST, before anything else stops, so
 	// a Kubernetes readinessProbe polling /readyz has a window to
 	// observe the flip and stop routing NEW traffic to this pod before
 	// the listener is closed below.
 	s.handlers.Readiness.SetNotReady()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	cancelConsumer()
+	waitDone(ctx, s.logger, "kafka consumer", consumerDone)
 	if consumer != nil {
 		_ = consumer.Close()
 	}
@@ -515,16 +530,20 @@ func (s *serving) gracefulShutdown(cancelConsumer context.CancelFunc, consumer *
 	if s.kafkaCatalogue != nil {
 		_ = s.kafkaCatalogue.Close()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	err := s.server.Shutdown(ctx)
 	stopRelay()
-	select {
-	case <-relayDone:
-	case <-ctx.Done():
-		s.logger.Warn("outbox relay did not stop before the shutdown deadline")
-	}
+	waitDone(ctx, s.logger, "outbox relay", relayDone)
 	return err
+}
+
+// waitDone blocks until done closes or ctx expires, logging a warning in the
+// latter case so a slow drain is visible rather than silent.
+func waitDone(ctx context.Context, logger *slog.Logger, what string, done <-chan struct{}) {
+	select {
+	case <-done:
+	case <-ctx.Done():
+		logger.Warn(what + " did not stop before the shutdown deadline")
+	}
 }
 
 // newLogger builds the process-wide structured logger: JSON to stdout, at

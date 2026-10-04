@@ -150,8 +150,9 @@ unchanged (ADR-0009, ADR-0017). `BreakerClient.retryingFetch` calls
 
 ### 6. Dead-letter queue for the inbound Kafka consumer
 
-`Consumer.handleMessage`/`handleFulfillmentMessage` now retry the
-per-topic handler in-process, with jittered backoff
+`Consumer.handleMessage` (via `dispatch`) retries the
+per-topic handler (`handleWorkforceEvent`, `handleInventoryEvent`,
+`handleFulfillmentEvent`, `handleOrderManagementEvent`) in-process, with jittered backoff
 (`cenkalti/backoff/v4`, 100ms–2s), up to `maxHandlerAttempts` (3) total
 attempts, via `handleWithRetry`. Once all 3 attempts are exhausted,
 the raw message is published — byte-for-byte, plus
@@ -161,15 +162,17 @@ replay/debugging context — to `<source-topic>.dlq` via a
 (`Consumer.dlqWriters`, keyed by source topic, closed alongside every
 reader in `Close`), and **the offset is committed anyway**: one poison
 message must never permanently block every other event behind it on
-the same partition. This is logged at ERROR level with enough context
+the same partition. This is logged at ERROR level (`Consumer.logError` →
+`slog.ErrorContext`; it was WARN until the 2026-10 audit fix) with enough context
 (topic, dlq_topic, event_id, event_type, attempts, error) to be an
 alert-worthy signal and support a manual replay tool, not a silent
 drop — replacing this repo's previous behaviour of silently dropping
 any handler error after a single attempt.
 
 Each of the four consumed topics
-(`envelope.TopicWorkforceEvents`, `envelope.TopicInventoryEvents`, the
-fulfillment topic, `envelope.TopicOrderManagementEvents`) gets its OWN
+(`cloudevents.TopicWorkforceEvents`, `cloudevents.TopicInventoryEvents`,
+`cloudevents.TopicFulfillmentEvents`, `cloudevents.TopicOrderManagementEvents`
+in `internal/adapters/kafka/cloudevents`) gets its OWN
 `<topic>.dlq` writer, derived from its own source topic (never a fixed
 constant) — mirroring `RepromiseConsumer`'s `NewRepromiseConsumerForTopic`
 pattern so an isolated integration-test topic automatically gets its
@@ -219,7 +222,12 @@ sequence is extended, not rewritten, into this order:
    and wait, bounded by the same shutdown deadline, for each goroutine
    to actually finish in-flight work — for the Kafka consumer, this
    means a message already being handled runs to completion INCLUDING
-   its offset commit before `Run` returns.
+   its offset commit before `Run` returns. In `cmd/wes/main.go` this is
+   a `consumerDone` channel closed when `consumer.Run` returns;
+   `gracefulShutdown` cancels the consumer context, waits on
+   `consumerDone` (bounded by the 5s shutdown deadline, logging a WARN on
+   expiry), and only then closes the consumer, the catalogue consumer and
+   the HTTP server (the outbox relay uses the same pattern with `relayDone`).
 4. **Close the pgx pool LAST** — deferred near the TOP of `run()`, so
    by `defer`'s LIFO order it runs AFTER every consumer/relay goroutine
    has already stopped touching it.

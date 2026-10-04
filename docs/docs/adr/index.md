@@ -57,6 +57,7 @@ no scheduler).
 | [0020](./0020-flowfed-path-observed-throughput-signal.md) | FlowFed paths stay `Known=false` permanently; an observed-throughput signal is proposed alongside, not instead | Accepted |
 | [0021](./0021-cloudevents-envelope-migration.md) | Migrate `warehouse.work-planning.events` to a CloudEvents 1.0 structured envelope via a dual-read/dual-write bake period; companion to fulfillment-execution's own envelope-migration ADR | Superseded by 0027 |
 | [0022](./0022-idempotency-key-middleware.md) | Transactional Idempotency-Key middleware for `POST /paths/{pathId}/work-units`, ported from order-management's reference implementation | Accepted |
+| [0023](./0023-resilience-circuit-breakers-retry-dlq-shutdown.md) | Per-dependency circuit breakers, read-only retry, Kafka DLQ, and graceful shutdown hardening | Accepted |
 | [0024](./0024-kafka-hash-balancer-partition-affinity.md) | Switch every outbound Kafka writer's `Balancer` from `LeastBytes` to `Hash`, so the existing per-aggregate `Message.Key` actually drives partition placement | Accepted |
 | [0025](./0025-horizontal-autoscaling-and-pgxpool-tuning.md) | Per-workload `HorizontalPodAutoscaler` (api/projector/reports/frontend, mcp excluded) and `pgxpool.MaxConns`/`statement_timeout` tuning, ported from order-management's reference PR #110 | Accepted |
 | [0026](./0026-migrations-direct-postgres-connection.md) | Run golang-migrate against a direct Postgres connection (`MIGRATIONS_DATABASE_URL`), not PgBouncer | Accepted |
@@ -105,7 +106,7 @@ at the time, which is the only reason the archive is worth keeping.
    free number.
 2. Set `Status: Proposed`.
 3. Add it to the table above and to the `adr/` section of
-   [`docs/sidebars.ts`](https://github.com/claudioed/wes-work-planning/blob/main/docs/sidebars.ts).
+   [`docs/sidebars.ts`](https://github.com/IQVO/wes-work-planning/blob/main/docs/sidebars.ts).
 4. Open a pull request. The discussion happens on the PR; merging with
    `Status: Accepted` is the act of accepting it.
 

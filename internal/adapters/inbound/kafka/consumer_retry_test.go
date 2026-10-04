@@ -234,6 +234,10 @@ func TestDispatch_TaskCompleted_PersistentFailureIsDeadLettered(t *testing.T) {
 	if unit.State() != workunit.Released {
 		t.Fatalf("work unit state = %v, want still Released", unit.State())
 	}
+	// ADR-0023: the DLQ hand-off is logged at ERROR, never WARN.
+	if logs := f.logs.String(); !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "exhausted retries, sending to dead-letter topic") || strings.Contains(logs, "level=WARN") {
+		t.Fatalf("DLQ hand-off must log at ERROR:\n%s", logs)
+	}
 }
 
 // (c) A completion for a work unit this context never planned (a PACK
@@ -317,6 +321,9 @@ func TestDispatch_InvalidCloudEventIsDeadLetteredWithoutRetry(t *testing.T) {
 	}
 	if calls != 0 || f.dlq.count() != 1 {
 		t.Fatalf("calls=%d dlq=%d, want 0 and 1", calls, f.dlq.count())
+	}
+	if logs := f.logs.String(); !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "invalid CloudEvent, sending to dead-letter topic") || strings.Contains(logs, "level=WARN") {
+		t.Fatalf("DLQ hand-off must log at ERROR:\n%s", logs)
 	}
 }
 

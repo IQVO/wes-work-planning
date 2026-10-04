@@ -539,6 +539,8 @@ paths:
                 plannedRate: 95.5
                 plannedHours: 8
                 observedAt: "2026-08-21T09:00:00Z"
+                driftHeads: 1
+                driftDetectedAt: "2026-08-21T09:05:00Z"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -1253,6 +1255,25 @@ components:
           format: date-time
           description: When this service last observed a ShiftPlanCommitted event for this path.
           example: "2026-08-21T09:00:00Z"
+        driftHeads:
+          type: integer
+          format: int32
+          description: >
+            ADR-0019 reconciliation of this service's own committed PathPlan
+            against Workforce's observed plan: `plannedHeads` here minus our
+            `PathPlan` planned heads — signed, never absolute, and no opinion
+            about which side is right. `0` means the plans agree. **Present
+            only once a comparison has been computed** (both a committed
+            PathPlan and an observed plan exist); omitted, not zeroed,
+            otherwise.
+          example: 1
+        driftDetectedAt:
+          type: string
+          format: date-time
+          description: >
+            When this service detected the drift (the later of the two commits).
+            Present only when `driftHeads` is non-zero.
+          example: "2026-08-21T09:05:00Z"
       required: [pathId, plannedHeads, plannedRate, plannedHours, observedAt]
 
     RebalanceResponse:

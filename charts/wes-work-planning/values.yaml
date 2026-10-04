@@ -331,6 +331,11 @@ mcp:
   enabled: false
   replicaCount: 1
   httpAddr: ":8090"
+  # Event publisher for events raised by MCP tools (release_next_work ...).
+  # Empty inherits config.eventPublisher. "kafka" + a database writes outbox
+  # rows that the api Deployment's relay drains (ADR-0008, ADR-0014); set the
+  # same value as the api so WorkReleased reaches fulfillment-execution.
+  eventPublisher: ""
   service:
     type: ClusterIP
     port: 8090

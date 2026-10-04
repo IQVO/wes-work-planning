@@ -795,16 +795,23 @@ components:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
-      required: true
+      # Declared optional in the schema because enforcement is
+      # deployment-dependent: with Postgres (every real deployment) a missing
+      # key is 400 idempotency-key-required; the in-memory development /
+      # contract-test configuration has no idempotency store and ignores the
+      # header. Clients MUST always send it.
+      required: false
       description: >
         Caller-supplied key that makes a retried resource-creating POST safe
-        (ADR-0022). Generate a fresh unique value (e.g. a UUID) per logical
-        action and reuse it only to retry that same request with the same
-        body. A missing key is `400 idempotency-key-required`; reusing a key
-        with a different body is `422 idempotency-key-reused`.
+        (ADR-0022). **Clients must always send a non-empty key**: a
+        Postgres-backed deployment rejects a missing key with `400
+        idempotency-key-required` (the in-memory development configuration
+        has no idempotency store and ignores the header). Generate a fresh
+        unique value (e.g. a UUID) per logical action and reuse it only to
+        retry that same request with the same body. Reusing a key with a
+        different body is `422 idempotency-key-reused`.
       schema:
         type: string
-        minLength: 1
       example: 6f1c9a52-8f6e-4a0b-9d44-2c1b0f7a3e55
     WorkUnitId:
       name: id

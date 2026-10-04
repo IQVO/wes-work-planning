@@ -50,7 +50,7 @@ func runDependenciesRule(t *testing.T, rule *configuration.DependenciesRule) {
 			}
 
 			for _, d := range v.Details {
-				t.Errorf("%s: %s", v.Package, d)
+				t.Errorf("%s", archViolation("dependency", "package "+v.Package, d))
 			}
 		}
 	}
@@ -138,7 +138,7 @@ func TestApplicationPortsContainOnlyInterfaces(t *testing.T) {
 			}
 
 			for _, d := range v.Details {
-				t.Errorf("%s: %s", v.Package, d)
+				t.Errorf("%s", archViolation("dependency", "package "+v.Package, d))
 			}
 		}
 	}

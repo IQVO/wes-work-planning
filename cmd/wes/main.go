@@ -370,6 +370,14 @@ func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers st
 		closers = append(closers, func() { _ = sink.Close() })
 		relay = postgres.NewOutboxRelay(pgPool, sink, logger,
 			postgres.WithInterval(durationEnv("OUTBOX_RELAY_INTERVAL", time.Second)))
+		// Outbox lag (ADR-0014 follow-up): age of the oldest unpublished row.
+		// Unregistered before the pool is closed so the callback never
+		// touches a closed pool.
+		if lagReg, lagErr := postgres.RegisterOutboxLagGauge(pgPool); lagErr != nil {
+			logger.Warn("outbox lag gauge unavailable", "error", lagErr)
+		} else {
+			closers = append(closers, func() { _ = lagReg.Unregister() })
+		}
 		publisher = postgres.NewOutboxPublisher(pgPool, integrationPublisher, analyticsPublisher)
 		logger.Info("event publisher configured", "publisher", "kafka", "mode", "outbox", "brokers", kafkaBrokers)
 	} else {

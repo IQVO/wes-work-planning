@@ -10,7 +10,7 @@ description: ADR 0019 (Accepted) — closes ADR-0006's explicitly deferred recon
 
 ## Status
 
-**Accepted** (2026-09-26). Implementation follows in a subsequent PR.
+**Accepted** (2026-09-26) — **Implemented** (2026-10-04, ADR-conformance audit). See [Implementation notes](#implementation-notes) for the exact shape that shipped.
 
 ## Context
 
@@ -284,3 +284,39 @@ sees the drift without a second call.
 - workforce-management PR #94 (`list-staffing-gaps-for-shift`) — the
   fleet-wide staffing-gap endpoint evaluated above and found orthogonal
   to this ADR's need.
+
+## Implementation notes
+
+Added by the 2026-10 ADR-conformance pass; the decision above is unchanged.
+Where the shipped code is more specific than the prose, it is recorded here.
+
+- **Shared comparison.** `laborview.CompareHeads(wesPlannedHeads, observed)`
+  returns a `laborview.Drift{WesPlannedHeads, ObservedPlannedHeads, Heads}`
+  (pure; `Heads` signed). `usecases.reconcileHeads` wraps it and is the one
+  function both triggers call, so the two call sites cannot disagree.
+- **Triggers, in the `UnitOfWork` scope.** `CommitShiftPlan.WithLaborPlanViews`
+  and `ObserveLaborPlan.WithDriftReconciliation` are opt-in builders (both wired
+  in `cmd/wes`; unwired they behave exactly as before). Each runs after its own
+  save inside the same `atomically` scope, so a failed drift publish rolls the
+  whole use case back, and a drift row reaches the outbox only with its commit.
+  No PathPlan / no observed plan ⇒ no comparison, no event, drift fields stay
+  unset.
+- **Event.** `shared.PathPlanDriftDetected` (fields as above plus the signed
+  `DriftHeads`). Raised only when `DriftHeads != 0`. CloudEvents type
+  `com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected`, subject and
+  Kafka key = the path id (ADR-0024), on both the integration and analytics
+  topics via the existing outbox; the payload is built once
+  (`pathPlanDriftDetectedData`) and shared by both encoders. Goldens and the
+  AsyncAPI document (`apis/asyncapi.yaml`) include it.
+- **Persistence.** Migration `0009_labor_plan_view_drift` adds nullable
+  `drift_heads` / `drift_detected_at` to `labor_plan_view`.
+  `LaborPlanViewRepo.SaveDrift` updates only those columns, so our own commit
+  can never overwrite a newer observation; `Save` (the observe path) writes the
+  freshly computed outcome together with the observed plan. `drift_heads = 0`
+  records "compared, agree"; `NULL` means "never compared".
+- **API.** `GET /paths/{pathId}/labor-plan-view` returns `driftHeads` (signed;
+  `0` = agree) and `driftDetectedAt` (only when non-zero), both omitted until a
+  comparison has been computed. Recorded in `apis/openapi.yaml`.
+- **Convergence.** Re-committing so the plans agree resets the view to
+  `driftHeads = 0`, no `driftDetectedAt`, and raises no event.
+

@@ -139,6 +139,8 @@ func run() error {
 		handlers:                handlers,
 		relay:                   relay,
 		housekeeper:             newHousekeeper(repos.pgPool, logger),
+		publisher:               publisher,
+		clock:                   clock,
 		repos:                   repos,
 		catalogue:               catalogue,
 		kafkaBrokers:            kafkaBrokers,
@@ -401,7 +403,7 @@ func newHandlers(repos repositories, publisher ports.EventPublisher, clock memor
 	uow := repos.uow
 	return &inboundhttp.Handlers{
 		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(repos.charges, publisher, clock).WithUnitOfWork(uow),
-		CommitShiftPlan:         usecases.NewCommitShiftPlan(repos.plans, publisher, clock).WithUnitOfWork(uow).WithTravelDistanceLookup(travelDistances),
+		CommitShiftPlan:         usecases.NewCommitShiftPlan(repos.plans, publisher, clock).WithUnitOfWork(uow).WithTravelDistanceLookup(travelDistances).WithLaborPlanViews(repos.laborPlanViews),
 		EnqueueWorkUnit:         usecases.NewEnqueueWorkUnit(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow),
 		ReleaseNextWork:         usecases.NewReleaseNextWork(repos.pools, repos.workUnits, publisher, clock).WithUnitOfWork(uow).WithMetrics(telemetry.NewReleaseMetrics()),
 		RecordCompletion:        usecases.NewRecordCompletion(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow),
@@ -440,6 +442,8 @@ type serving struct {
 	cancelCatalogueConsumer context.CancelFunc
 	kafkaCatalogue          *kafkacatalog.Consumer
 	housekeeper             *postgres.Housekeeper
+	publisher               ports.EventPublisher
+	clock                   ports.Clock
 }
 
 // startHousekeeper runs the housekeeper (if wired) in the background and
@@ -508,7 +512,7 @@ func (s *serving) run() error {
 		// Every inbound-event use case records the CloudEvents id as
 		// processed in the SAME UnitOfWork as its effect, so a failed
 		// attempt leaves no mark and is retried, never swallowed (ADR-0028).
-		observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
+		observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow).WithDriftReconciliation(s.repos.plans, s.publisher, s.clock)
 		observeInventory := usecases.NewObserveInventoryChange(s.repos.inventoryViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
 		applyTaskCompleted := usecases.NewApplyTaskCompleted(s.recordCompletion, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
 		applyOrderAllocated := usecases.NewApplyOrderAllocated(s.enqueueWorkUnit, s.repos.processedEvts, s.catalogue).WithUnitOfWork(s.repos.uow)

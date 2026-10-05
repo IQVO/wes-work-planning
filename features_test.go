@@ -21,6 +21,7 @@ import (
 	inboundhttp "github.com/claudioed/wes-work-planning/internal/adapters/inbound/http"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
+	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
@@ -38,6 +39,7 @@ type harness struct {
 	pools            *memory.WorkPoolRepo
 	observeLaborPlan *usecases.ObserveLaborPlan
 	observeInventory *usecases.ObserveInventoryChange
+	published        *recordingPublisher
 }
 
 // newServer builds the production router over fresh in-memory adapters and
@@ -52,12 +54,14 @@ func newServer() (*httptest.Server, *harness) {
 	inventoryViews := memory.NewInventoryViewRepo()
 	processedEvents := memory.NewProcessedEventRepo()
 	// A nil logger keeps the buffered publisher silent during the suite.
-	publisher := events.NewLogPublisher(nil)
+	// The recording wrapper lets ADR-0019 scenarios assert which domain
+	// events a use case raised without reaching into Kafka.
+	publisher := &recordingPublisher{inner: events.NewLogPublisher(nil)}
 	clock := memory.FixedClock{At: fixedNow}
 
 	h := &inboundhttp.Handlers{
 		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(charges, publisher, clock),
-		CommitShiftPlan:         usecases.NewCommitShiftPlan(plans, publisher, clock),
+		CommitShiftPlan:         usecases.NewCommitShiftPlan(plans, publisher, clock).WithLaborPlanViews(laborPlanViews),
 		EnqueueWorkUnit:         usecases.NewEnqueueWorkUnit(workUnits, pools, publisher, clock),
 		ReleaseNextWork:         usecases.NewReleaseNextWork(pools, workUnits, publisher, clock),
 		RecordCompletion:        usecases.NewRecordCompletion(workUnits, pools, publisher, clock),
@@ -71,9 +75,34 @@ func newServer() (*httptest.Server, *harness) {
 
 	return httptest.NewServer(inboundhttp.NewRouter(h, "wes-work-planning", nil)), &harness{
 		pools:            pools,
-		observeLaborPlan: usecases.NewObserveLaborPlan(laborPlanViews, processedEvents),
+		observeLaborPlan: usecases.NewObserveLaborPlan(laborPlanViews, processedEvents).WithDriftReconciliation(plans, publisher, clock),
 		observeInventory: usecases.NewObserveInventoryChange(inventoryViews, processedEvents),
+		published:        publisher,
 	}
+}
+
+// recordingPublisher forwards to the production-shaped in-memory publisher and
+// remembers the name of every event it was asked to publish.
+type recordingPublisher struct {
+	inner ports.EventPublisher
+	names []string
+}
+
+func (p *recordingPublisher) Publish(ctx context.Context, evs ...shared.DomainEvent) error {
+	for _, ev := range evs {
+		p.names = append(p.names, ev.EventName())
+	}
+	return p.inner.Publish(ctx, evs...)
+}
+
+func (p *recordingPublisher) count(name string) int {
+	n := 0
+	for _, got := range p.names {
+		if got == name {
+			n++
+		}
+	}
+	return n
 }
 
 // world is the per-scenario state: one server with its own in-memory
@@ -606,6 +635,65 @@ func (w *world) laborPlanViewObservedAt(at string) error {
 	return nil
 }
 
+// --- ADR-0019 reconciliation steps -------------------------------------
+
+func (w *world) laborPlanViewReportsDrift(heads int) error {
+	obj, err := w.decodeLast()
+	if err != nil {
+		return err
+	}
+	got, ok := obj["driftHeads"].(float64)
+	if !ok {
+		return fmt.Errorf("labor plan view carries no driftHeads: %s", string(w.lastBody))
+	}
+	if int(got) != heads {
+		return fmt.Errorf("got driftHeads %d, want %d", int(got), heads)
+	}
+	return nil
+}
+
+func (w *world) laborPlanViewDriftDetectedAt(at string) error {
+	got, err := w.stringField("driftDetectedAt")
+	if err != nil {
+		return err
+	}
+	if got != at {
+		return fmt.Errorf("got driftDetectedAt %q, want %q", got, at)
+	}
+	return nil
+}
+
+func (w *world) laborPlanViewHasNoDriftDetectedAt() error {
+	obj, err := w.decodeLast()
+	if err != nil {
+		return err
+	}
+	if _, present := obj["driftDetectedAt"]; present {
+		return fmt.Errorf("labor plan view carries driftDetectedAt although the plans agree: %s", string(w.lastBody))
+	}
+	return nil
+}
+
+func (w *world) laborPlanViewHasNoDrift() error {
+	obj, err := w.decodeLast()
+	if err != nil {
+		return err
+	}
+	for _, field := range []string{"driftHeads", "driftDetectedAt"} {
+		if _, present := obj[field]; present {
+			return fmt.Errorf("labor plan view carries %s before both plans were committed: %s", field, string(w.lastBody))
+		}
+	}
+	return nil
+}
+
+func (w *world) driftEventsRaised(count int) error {
+	if got := w.h.published.count("PathPlanDriftDetected"); got != count {
+		return fmt.Errorf("got %d PathPlanDriftDetected events, want %d (published: %v)", got, count, w.h.published.names)
+	}
+	return nil
+}
+
 func (w *world) rebalanceLaborPlanHeads(heads int) error {
 	obj, err := w.decodeLast()
 	if err != nil {
@@ -763,6 +851,11 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the charge forecast was received at "([^"]*)"$`, w.chargeForecastReceivedAt)
 	sc.Step(`^the labor plan view reports (\d+) planned heads at a rate of ([\d.]+) units per hour for ([\d.]+) hours$`, w.laborPlanViewReports)
 	sc.Step(`^the labor plan view was observed at "([^"]*)"$`, w.laborPlanViewObservedAt)
+	sc.Step(`^the labor plan view reports a drift of ([+-]?\d+) heads$`, w.laborPlanViewReportsDrift)
+	sc.Step(`^the labor plan view reports the drift was detected at "([^"]*)"$`, w.laborPlanViewDriftDetectedAt)
+	sc.Step(`^the labor plan view reports no drift detection time$`, w.laborPlanViewHasNoDriftDetectedAt)
+	sc.Step(`^the labor plan view reports no drift$`, w.laborPlanViewHasNoDrift)
+	sc.Step(`^(\d+) PathPlanDriftDetected events? (?:was|were) raised$`, w.driftEventsRaised)
 	sc.Step(`^the inventory view reports a usable quantity of ([+-]?\d+) units$`, w.inventoryViewQuantity)
 	sc.Step(`^the inventory view was observed at "([^"]*)"$`, w.inventoryViewObservedAt)
 	sc.Step(`^the work unit lookup returns (\d+) work units$`, w.workUnitLookupCount)

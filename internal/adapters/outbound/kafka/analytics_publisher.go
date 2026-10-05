@@ -184,6 +184,8 @@ func marshalAnalyticsData(e shared.DomainEvent) (key string, data json.RawMessag
 			"remaining_units": ev.RemainingUnits,
 			"known":           ev.Known,
 		}), true
+	case shared.PathPlanDriftDetected:
+		return ev.PathId.String(), pathPlanDriftDetectedData(ev), true
 	default:
 		return "", nil, false
 	}

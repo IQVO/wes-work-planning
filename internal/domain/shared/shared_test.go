@@ -272,6 +272,33 @@ func TestPathCapacityChangedEvent(t *testing.T) {
 	})
 }
 
+func TestPathPlanDriftDetectedEvent(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	at := time.Now()
+	observedAt := at.Add(-time.Hour)
+
+	ev := NewPathPlanDriftDetected(pathId, 6, 8, observedAt, at)
+	if ev.EventName() != "PathPlanDriftDetected" {
+		t.Fatalf("got %s, want PathPlanDriftDetected", ev.EventName())
+	}
+	if !ev.OccurredAt().Equal(at) || !ev.ObservedAt.Equal(observedAt) {
+		t.Fatalf("times not carried: occurred=%v observed=%v", ev.OccurredAt(), ev.ObservedAt)
+	}
+	if !ev.PathId.Equals(pathId) || ev.WesPlannedHeads != 6 || ev.ObservedPlannedHeads != 8 {
+		t.Fatalf("unexpected fields: %+v", ev)
+	}
+	// Signed: observed - ours, never absolute.
+	if ev.DriftHeads != 2 {
+		t.Fatalf("DriftHeads = %d, want +2", ev.DriftHeads)
+	}
+	if neg := NewPathPlanDriftDetected(pathId, 8, 6, observedAt, at); neg.DriftHeads != -2 {
+		t.Fatalf("DriftHeads = %d, want -2 (signed)", neg.DriftHeads)
+	}
+}
+
 func TestPathId(t *testing.T) {
 	t.Run("NewPathId valid", func(t *testing.T) {
 		p, err := NewPathId("pick-zone-a")

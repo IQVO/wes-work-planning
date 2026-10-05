@@ -10,7 +10,9 @@ description: "Expose this bounded context to the AI ecosystem via an MCP server 
 
 ## Status
 
-**Accepted.** The reference implementation is
+**Accepted — auth section superseded by [ADR-0016](./0016-remove-rest-mcp-static-bearer-auth.md)**
+(the static-bearer layer was removed; MCP, like REST, is unauthenticated by
+decision). The reference implementation is
 [`fulfillment-execution`](https://github.com/claudioed/fulfillment-execution);
 this record adapts that decision to the **Work Planning & Release** context and
 is bound by the estate-wide [MCP Governance Charter](../mcp/governance-charter.md).

@@ -277,7 +277,7 @@ func (c *Consumer) dispatch(ctx, msgCtx context.Context, span trace.Span, topic 
 	env, err := cloudevents.Decode(msg.Value)
 	if err != nil {
 		recordSpanError(span, err)
-		c.log(msgCtx, "invalid CloudEvent, sending to dead-letter topic",
+		c.logError(msgCtx, "invalid CloudEvent, sending to dead-letter topic",
 			"topic", topic, "partition", msg.Partition, "offset", msg.Offset,
 			"dlq_topic", topic+dlqTopicSuffix, "error", err)
 		if dlqErr := c.dlqPublish(ctx, topic, msg, err); dlqErr != nil {
@@ -294,7 +294,7 @@ func (c *Consumer) dispatch(ctx, msgCtx context.Context, span trace.Span, topic 
 
 	if err := c.handleWithRetry(msgCtx, handle, env); err != nil {
 		recordSpanError(span, err)
-		c.log(msgCtx, "exhausted retries, sending to dead-letter topic",
+		c.logError(msgCtx, "exhausted retries, sending to dead-letter topic",
 			"topic", topic, "dlq_topic", topic+dlqTopicSuffix,
 			"id", env.ID(), "type", env.Type(), "attempts", maxHandlerAttempts, "error", err)
 		if dlqErr := c.dlqPublish(ctx, topic, msg, err); dlqErr != nil {
@@ -494,12 +494,12 @@ func (c *Consumer) handleOrderManagementEvent(ctx context.Context, env ce.Event)
 	return err
 }
 
-// log emits a structured record through the configured logger, carrying the
-// consume span's trace_id/span_id via ctx. A nil logger silences output, as
-// the tests rely on.
-func (c *Consumer) log(ctx context.Context, msg string, args ...any) {
+// logError emits a structured ERROR record (ADR-0023: a DLQ hand-off is an
+// operator-actionable failure, not a warning), carrying the consume span's
+// trace_id/span_id via ctx. A nil logger silences output, as the tests rely on.
+func (c *Consumer) logError(ctx context.Context, msg string, args ...any) {
 	if c.logger != nil {
-		c.logger.WarnContext(ctx, msg, args...)
+		c.logger.ErrorContext(ctx, msg, args...)
 	}
 }
 

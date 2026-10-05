@@ -172,7 +172,11 @@ Adopt the **transactional outbox**, in its **fan-out** form:
 - One more table, one more goroutine, one more failure mode to observe.
   The relay logs every failed pass at ERROR with row id and broker error;
   `outbox_events.attempts`/`last_error` are queryable. An outbox-lag
-  metric is a follow-up.
+  metric was a follow-up and is now built: the `wes.outbox.lag_seconds`
+  observable gauge (`postgres.RegisterOutboxLagGauge`, registered in
+  `cmd/wes` next to the relay) reports the age of the oldest unpublished
+  `outbox_events` row, 0 when drained. Published rows are pruned by the
+  retention sweeper ([ADR-0032](./0032-housekeeping-retention-sweeper.md)).
 - Events are no longer synchronous with the HTTP response (documented
   above; acceptable for this domain).
 - Two rows per event doubles outbox volume versus a single-topic outbox.

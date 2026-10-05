@@ -138,6 +138,9 @@ func run() error {
 		server:                  server,
 		handlers:                handlers,
 		relay:                   relay,
+		housekeeper:             newHousekeeper(repos.pgPool, logger),
+		publisher:               publisher,
+		clock:                   clock,
 		repos:                   repos,
 		catalogue:               catalogue,
 		kafkaBrokers:            kafkaBrokers,
@@ -370,6 +373,14 @@ func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers st
 		closers = append(closers, func() { _ = sink.Close() })
 		relay = postgres.NewOutboxRelay(pgPool, sink, logger,
 			postgres.WithInterval(durationEnv("OUTBOX_RELAY_INTERVAL", time.Second)))
+		// Outbox lag (ADR-0014 follow-up): age of the oldest unpublished row.
+		// Unregistered before the pool is closed so the callback never
+		// touches a closed pool.
+		if lagReg, lagErr := postgres.RegisterOutboxLagGauge(pgPool); lagErr != nil {
+			logger.Warn("outbox lag gauge unavailable", "error", lagErr)
+		} else {
+			closers = append(closers, func() { _ = lagReg.Unregister() })
+		}
 		publisher = postgres.NewOutboxPublisher(pgPool, integrationPublisher, analyticsPublisher)
 		logger.Info("event publisher configured", "publisher", "kafka", "mode", "outbox", "brokers", kafkaBrokers)
 	} else {
@@ -392,9 +403,9 @@ func newHandlers(repos repositories, publisher ports.EventPublisher, clock memor
 	uow := repos.uow
 	return &inboundhttp.Handlers{
 		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(repos.charges, publisher, clock).WithUnitOfWork(uow),
-		CommitShiftPlan:         usecases.NewCommitShiftPlan(repos.plans, publisher, clock).WithUnitOfWork(uow).WithTravelDistanceLookup(travelDistances),
+		CommitShiftPlan:         usecases.NewCommitShiftPlan(repos.plans, publisher, clock).WithUnitOfWork(uow).WithTravelDistanceLookup(travelDistances).WithLaborPlanViews(repos.laborPlanViews),
 		EnqueueWorkUnit:         usecases.NewEnqueueWorkUnit(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow),
-		ReleaseNextWork:         usecases.NewReleaseNextWork(repos.pools, repos.workUnits, publisher, clock).WithUnitOfWork(uow),
+		ReleaseNextWork:         usecases.NewReleaseNextWork(repos.pools, repos.workUnits, publisher, clock).WithUnitOfWork(uow).WithMetrics(telemetry.NewReleaseMetrics()),
 		RecordCompletion:        usecases.NewRecordCompletion(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow),
 		SampleBacklog:           usecases.NewSampleBacklog(repos.pools, publisher, clock).WithUnitOfWork(uow),
 		RebalanceDecision:       usecases.NewRebalanceDecision(repos.pools, publisher, clock).WithUnitOfWork(uow),
@@ -430,6 +441,29 @@ type serving struct {
 	enqueueWorkUnit         *usecases.EnqueueWorkUnit
 	cancelCatalogueConsumer context.CancelFunc
 	kafkaCatalogue          *kafkacatalog.Consumer
+	housekeeper             *postgres.Housekeeper
+	publisher               ports.EventPublisher
+	clock                   ports.Clock
+}
+
+// startHousekeeper runs the housekeeper (if wired) in the background and
+// returns a func that cancels it and waits for it to return.
+func (s *serving) startHousekeeper() (stopAndWait func()) {
+	if s.housekeeper == nil {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := s.housekeeper.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.logger.Error("housekeeper stopped", "error", err)
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // run serves until SIGINT/SIGTERM (or a component failure), then drains.
@@ -460,16 +494,25 @@ func (s *serving) run() error {
 		close(relayDone)
 	}
 
+	// The housekeeper (ADR-0032) bounds idempotency_keys / outbox_events. It
+	// is stopped, and awaited, before run returns so the deferred pool close
+	// in main never races an in-flight sweep.
+	defer s.startHousekeeper()()
+
 	var consumer *inboundkafka.Consumer
 	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
 	defer cancelConsumer()
+	// consumerDone closes when consumer.Run has returned (or immediately if
+	// no consumer is wired), so the shutdown can wait for in-flight handling
+	// to finish BEFORE closing the dependencies it uses (ADR-0023 §8.3).
+	consumerDone := make(chan struct{})
 
 	if s.kafkaBrokers != "" {
 		s.logger.Info("consuming integration events", "brokers", s.kafkaBrokers)
 		// Every inbound-event use case records the CloudEvents id as
 		// processed in the SAME UnitOfWork as its effect, so a failed
 		// attempt leaves no mark and is retried, never swallowed (ADR-0028).
-		observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
+		observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow).WithDriftReconciliation(s.repos.plans, s.publisher, s.clock)
 		observeInventory := usecases.NewObserveInventoryChange(s.repos.inventoryViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
 		applyTaskCompleted := usecases.NewApplyTaskCompleted(s.recordCompletion, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
 		applyOrderAllocated := usecases.NewApplyOrderAllocated(s.enqueueWorkUnit, s.repos.processedEvts, s.catalogue).WithUnitOfWork(s.repos.uow)
@@ -477,10 +520,13 @@ func (s *serving) run() error {
 		s.logger.Info("kafka consumer group", "group_id", groupID)
 		consumer = inboundkafka.NewConsumer(brokerList(s.kafkaBrokers), groupID, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, s.catalogue, s.logger)
 		go func() {
+			defer close(consumerDone)
 			if err := consumer.Run(consumerCtx); err != nil {
 				s.logger.Error("kafka consumer stopped", "error", err)
 			}
 		}()
+	} else {
+		close(consumerDone)
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -491,7 +537,7 @@ func (s *serving) run() error {
 		return err
 	case <-sigCh:
 		s.logger.Info("shutting down")
-		return s.gracefulShutdown(cancelConsumer, consumer, stopRelay, relayDone)
+		return s.gracefulShutdown(cancelConsumer, consumer, consumerDone, stopRelay, relayDone)
 	}
 }
 
@@ -501,13 +547,21 @@ func (s *serving) run() error {
 // allowed to finish its in-flight pass so an event committed by a
 // request that completed just before shutdown is not stranded until the
 // next pod boots.
-func (s *serving) gracefulShutdown(cancelConsumer context.CancelFunc, consumer *inboundkafka.Consumer, stopRelay context.CancelFunc, relayDone <-chan struct{}) error {
+//
+// §8.3: the Kafka consumer's Run must RETURN (consumerDone) before the
+// consumer is closed and the dependencies it uses are torn down, so a
+// message mid-handling is finished (or fails and is redelivered) rather than
+// racing a closed pool; the wait is bounded by the shutdown deadline.
+func (s *serving) gracefulShutdown(cancelConsumer context.CancelFunc, consumer *inboundkafka.Consumer, consumerDone <-chan struct{}, stopRelay context.CancelFunc, relayDone <-chan struct{}) error {
 	// Flip readiness to not-ready FIRST, before anything else stops, so
 	// a Kubernetes readinessProbe polling /readyz has a window to
 	// observe the flip and stop routing NEW traffic to this pod before
 	// the listener is closed below.
 	s.handlers.Readiness.SetNotReady()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	cancelConsumer()
+	waitDone(ctx, s.logger, "kafka consumer", consumerDone)
 	if consumer != nil {
 		_ = consumer.Close()
 	}
@@ -515,16 +569,20 @@ func (s *serving) gracefulShutdown(cancelConsumer context.CancelFunc, consumer *
 	if s.kafkaCatalogue != nil {
 		_ = s.kafkaCatalogue.Close()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	err := s.server.Shutdown(ctx)
 	stopRelay()
-	select {
-	case <-relayDone:
-	case <-ctx.Done():
-		s.logger.Warn("outbox relay did not stop before the shutdown deadline")
-	}
+	waitDone(ctx, s.logger, "outbox relay", relayDone)
 	return err
+}
+
+// waitDone blocks until done closes or ctx expires, logging a warning in the
+// latter case so a slow drain is visible rather than silent.
+func waitDone(ctx context.Context, logger *slog.Logger, what string, done <-chan struct{}) {
+	select {
+	case <-done:
+	case <-ctx.Done():
+		logger.Warn(what + " did not stop before the shutdown deadline")
+	}
 }
 
 // newLogger builds the process-wide structured logger: JSON to stdout, at
@@ -605,6 +663,34 @@ func getenv(key, fallback string) string {
 // durationEnv parses key as a time.Duration, falling back on absence or a
 // malformed/non-positive value: the relay interval is a tuning knob, not
 // a contract, so it must never fail the boot.
+// newHousekeeper builds the retention sweeper (ADR-0032) over the Postgres
+// pool, or nil when there is no pool (in-memory mode has nothing to sweep).
+// All knobs are optional; "0" disables that table's sweep:
+//
+//	HOUSEKEEPING_INTERVAL   time between sweeps          (default 1h)
+//	IDEMPOTENCY_KEY_TTL     idempotency_keys retention   (default 24h)
+//	OUTBOX_RETENTION        published outbox retention   (default 168h = 7d)
+func newHousekeeper(pool *pgxpool.Pool, logger *slog.Logger) *postgres.Housekeeper {
+	if pool == nil {
+		return nil
+	}
+	return postgres.NewHousekeeper(pool, logger,
+		postgres.WithHousekeepingInterval(durationEnv("HOUSEKEEPING_INTERVAL", postgres.DefaultHousekeepingInterval)),
+		postgres.WithIdempotencyKeyTTL(retentionEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)),
+		postgres.WithOutboxRetention(retentionEnv("OUTBOX_RETENTION", postgres.DefaultOutboxRetention)),
+	)
+}
+
+// retentionEnv is durationEnv except that an explicit zero ("0", "0s")
+// returns 0 — meaning "disabled" — instead of the fallback. An unset, invalid
+// or negative value still yields the fallback.
+func retentionEnv(key string, fallback time.Duration) time.Duration {
+	if d, err := time.ParseDuration(os.Getenv(key)); err == nil && d == 0 && os.Getenv(key) != "" {
+		return 0
+	}
+	return durationEnv(key, fallback)
+}
+
 func durationEnv(key string, fallback time.Duration) time.Duration {
 	v := os.Getenv(key)
 	if v == "" {

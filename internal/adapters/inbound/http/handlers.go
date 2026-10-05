@@ -410,6 +410,9 @@ func toLaborPlanViewDTO(view laborview.LaborPlanObserved) *laborPlanViewDTO {
 		PlannedRate:  view.PlannedRate,
 		PlannedHours: view.PlannedHours,
 		ObservedAt:   view.ObservedAt,
+
+		DriftHeads:      view.DriftHeads,
+		DriftDetectedAt: view.DriftDetectedAt,
 	}
 }
 

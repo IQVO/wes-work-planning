@@ -164,7 +164,8 @@ channels:
       (`cloudevents.TopicWorkPlanningEvents` in the code). Every domain event
       this service emits is written here as a CloudEvents 1.0 event with
       `dataschema` `urn:warehouse:wes-work-planning:events:<EventName>:v1`,
-      keyed by the CloudEvents `id`.
+      keyed by the aggregate id (the CloudEvents `subject`: work unit id for
+      WorkUnit events, path id otherwise).
     subscribe:
       operationId: consumeWorkPlanningEvents
       summary: Consume domain events emitted by WES Work Planning & Release.
@@ -190,6 +191,7 @@ channels:
           - $ref: "#/components/messages/PathThrottled"
           - $ref: "#/components/messages/LaborReassignmentFlagged"
           - $ref: "#/components/messages/PathCapacityChanged"
+          - $ref: "#/components/messages/PathPlanDriftDetected"
 
   warehouse.wes.analytics:
     description: >-
@@ -222,6 +224,7 @@ channels:
           - $ref: "#/components/messages/PathThrottledAnalytics"
           - $ref: "#/components/messages/LaborReassignmentFlaggedAnalytics"
           - $ref: "#/components/messages/PathCapacityChangedAnalytics"
+          - $ref: "#/components/messages/PathPlanDriftDetectedAnalytics"
 
 components:
   messages:
@@ -610,6 +613,48 @@ components:
               remaining_units: 0
               known: false
 
+    PathPlanDriftDetected:
+      name: PathPlanDriftDetected
+      title: Path Plan Drift Detected
+      summary: >-
+        This service's committed PathPlan and the labor plan Workforce
+        Management committed for the same path disagree on planned heads.
+      description: >-
+        Raised by ADR-0019's reconciliation when the committed `PathPlan`
+        planned heads differ from the heads in the latest
+        `LaborPlanObserved` for the same path. Triggered from BOTH sides'
+        commit (our `CommitShiftPlan` and the observed `ShiftPlanCommitted`
+        projection), over one shared comparison, so whichever side commits
+        second raises it. It states a fact, not a verdict: `drift_heads` is
+        signed (`observed_planned_heads - wes_planned_heads`) and carries no
+        opinion about which plan is right. Agreeing plans raise nothing, and
+        nothing is raised while only one side has committed. Published
+        through the transactional outbox with the state change.
+      contentType: application/cloudevents+json
+      tags:
+        - name: plan
+      payload:
+        $ref: "#/components/schemas/PathPlanDriftDetectedEvent"
+      examples:
+        - name: pathPlanDriftDetected
+          summary: >-
+            Workforce committed 8 heads for pick-to-tote; our PathPlan has 6.
+          payload:
+            specversion: "1.0"
+            id: 7e9f5b14-3d86-4c2a-9a95-4b8c0e3f7d62
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected
+            subject: pick-to-tote
+            time: "2026-08-21T09:05:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:PathPlanDriftDetected:v1
+            data:
+              path_id: pick-to-tote
+              wes_planned_heads: 6
+              observed_planned_heads: 8
+              drift_heads: 2
+              observed_at: "2026-08-21T09:00:00Z"
+
     ChargeForecastReceivedAnalytics:
       name: ChargeForecastReceivedAnalytics
       title: ChargeForecastReceived (analytics stream)
@@ -709,6 +754,16 @@ components:
         - name: workpool
       payload:
         $ref: "#/components/schemas/PathCapacityChangedAnalyticsEvent"
+
+    PathPlanDriftDetectedAnalytics:
+      name: PathPlanDriftDetectedAnalytics
+      title: PathPlanDriftDetected (analytics stream)
+      summary: Analytics-shaped PathPlanDriftDetected occurrence on warehouse.wes.analytics.
+      contentType: application/cloudevents+json
+      tags:
+        - name: plan
+      payload:
+        $ref: "#/components/schemas/PathPlanDriftDetectedAnalyticsEvent"
 
   schemas:
     CloudEventBase:
@@ -1458,3 +1513,101 @@ components:
                   type: integer
                 known:
                   type: boolean
+
+    PathPlanDriftDetectedEvent:
+      title: PathPlanDriftDetected CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:events:PathPlanDriftDetected:v1"
+            data:
+              type: object
+              required:
+                - path_id
+                - wes_planned_heads
+                - observed_planned_heads
+                - drift_heads
+                - observed_at
+              properties:
+                path_id:
+                  type: string
+                wes_planned_heads:
+                  type: integer
+                  format: int32
+                  description: Planned heads on this service's committed PathPlan.
+                observed_planned_heads:
+                  type: integer
+                  format: int32
+                  description: Planned heads in the latest LaborPlanObserved for the path.
+                drift_heads:
+                  type: integer
+                  format: int32
+                  description: >-
+                    Signed `observed_planned_heads - wes_planned_heads`; never
+                    zero on this event (agreeing plans raise nothing).
+                observed_at:
+                  type: string
+                  format: date-time
+                  description: >-
+                    Workforce's own commit timestamp, carried from
+                    LaborPlanObserved (not the detection time — that is the
+                    envelope `time`).
+
+    PathPlanDriftDetectedAnalyticsEvent:
+      title: PathPlanDriftDetected analytics CloudEvent
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected"
+            dataschema:
+              type: string
+              const: "urn:warehouse:wes-work-planning:analytics:PathPlanDriftDetected:v1"
+            data:
+              type: object
+              required:
+                - path_id
+                - wes_planned_heads
+                - observed_planned_heads
+                - drift_heads
+                - observed_at
+              properties:
+                path_id:
+                  type: string
+                wes_planned_heads:
+                  type: integer
+                  format: int32
+                  description: Planned heads on this service's committed PathPlan.
+                observed_planned_heads:
+                  type: integer
+                  format: int32
+                  description: Planned heads in the latest LaborPlanObserved for the path.
+                drift_heads:
+                  type: integer
+                  format: int32
+                  description: >-
+                    Signed `observed_planned_heads - wes_planned_heads`; never
+                    zero on this event (agreeing plans raise nothing).
+                observed_at:
+                  type: string
+                  format: date-time
+                  description: >-
+                    Workforce's own commit timestamp, carried from
+                    LaborPlanObserved (not the detection time — that is the
+                    envelope `time`).

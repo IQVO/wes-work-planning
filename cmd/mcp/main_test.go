@@ -28,7 +28,7 @@ func newTestRouter(t *testing.T) http.Handler {
 		ReleaseNextWork:   usecases.NewReleaseNextWork(pools, workUnits, publisher, clock),
 	}
 	server := inboundmcp.NewServer(deps)
-	return newRouter(inboundmcp.Handler(server))
+	return newRouter(inboundmcp.Handler(server), "wes-work-planning-mcp-test")
 }
 
 func TestRouter_HealthzIsUnauthenticated(t *testing.T) {
@@ -78,5 +78,76 @@ func TestRouter_UnknownPathIsNotHealthz(t *testing.T) {
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nope", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET /nope status = %d, want 404", rec.Code)
+	}
+}
+
+func TestWireEventPublisher_DefaultsToLogPublisher(t *testing.T) {
+	pub, stop, err := wireEventPublisher(slog.Default(), "", "", repositories{}, nil)
+	if err != nil {
+		t.Fatalf("wireEventPublisher: %v", err)
+	}
+	defer stop()
+	if _, ok := pub.(*events.LogPublisher); !ok {
+		t.Fatalf("publisher = %T, want *events.LogPublisher", pub)
+	}
+}
+
+func TestWireEventPublisher_KafkaRequiresBrokers(t *testing.T) {
+	if _, _, err := wireEventPublisher(slog.Default(), "kafka", "", repositories{}, nil); err == nil {
+		t.Fatal("expected EVENT_PUBLISHER=kafka without KAFKA_BROKERS to fail")
+	}
+}
+
+func TestWireEventPublisher_KafkaWithoutPostgresPublishesDirectly(t *testing.T) {
+	pub, stop, err := wireEventPublisher(slog.Default(), "kafka", "localhost:1", repositories{workUnits: memory.NewWorkUnitRepo()}, nil)
+	if err != nil {
+		t.Fatalf("wireEventPublisher: %v", err)
+	}
+	defer stop()
+	if _, ok := pub.(*events.MultiPublisher); !ok {
+		t.Fatalf("publisher = %T, want *events.MultiPublisher", pub)
+	}
+}
+
+func TestWireRepositories_InMemoryWithoutDatabaseURL(t *testing.T) {
+	repos, err := wireRepositories(slog.Default(), "")
+	if err != nil {
+		t.Fatalf("wireRepositories: %v", err)
+	}
+	defer repos.close()
+	if repos.pool != nil || repos.uow != nil {
+		t.Fatalf("in-memory wiring must have no pool/UnitOfWork, got pool=%v uow=%v", repos.pool, repos.uow)
+	}
+}
+
+func TestBrokerListTrimsAndDropsBlanks(t *testing.T) {
+	got := brokerList(" a:1, ,b:2 ,")
+	if len(got) != 2 || got[0] != "a:1" || got[1] != "b:2" {
+		t.Fatalf("brokerList = %v", got)
+	}
+}
+
+func TestNewEventIDIsUUIDv4(t *testing.T) {
+	id := newEventID()
+	if len(id) != 36 || id[14] != '4' {
+		t.Fatalf("newEventID = %q, want a UUID v4", id)
+	}
+}
+
+func TestBuildClassificationLookup_PermissiveByDefault(t *testing.T) {
+	if got := buildClassificationLookup("", "", nil, slog.Default()); got == nil {
+		t.Fatal("expected a permissive lookup, got nil")
+	}
+	if got := buildClassificationLookup("http", "http://inventory.invalid", nil, slog.Default()); got == nil {
+		t.Fatal("expected an http lookup, got nil")
+	}
+}
+
+func TestNewMCPServerDeps_WiresEveryUseCase(t *testing.T) {
+	t.Setenv("REPORTS_BASE_URL", "http://reports.invalid")
+	repos := repositories{pools: memory.NewWorkPoolRepo(), workUnits: memory.NewWorkUnitRepo(), close: func() {}}
+	deps := newMCPServerDeps(slog.Default(), repos, events.NewLogPublisher(slog.Default()))
+	if deps.SampleBacklog == nil || deps.RebalanceDecision == nil || deps.ReleaseNextWork == nil || deps.Reports == nil {
+		t.Fatalf("incomplete deps: %+v", deps)
 	}
 }

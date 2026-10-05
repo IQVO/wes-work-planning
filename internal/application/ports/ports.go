@@ -75,6 +75,15 @@ type Clock interface {
 	Now() time.Time
 }
 
+// ReleaseMetrics is the outbound telemetry port for the business signal
+// ReleaseNextWork produces (ADR-0013 Tier 2): a work unit actually admitted
+// into a path's pool. The OTel implementation lives in
+// adapters/outbound/telemetry; the application layer never imports OTel. A
+// nil ReleaseMetrics on the use case means "record nothing".
+type ReleaseMetrics interface {
+	WorkUnitReleased(ctx context.Context, pathId shared.PathId)
+}
+
 // PathCatalogue is the outbound port for the fleet's declared process-path
 // catalogue — matches pathcatalog.Catalogue's own Lookup signature exactly,
 // so *pathcatalog.Catalogue already satisfies this interface with no

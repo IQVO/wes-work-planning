@@ -73,9 +73,10 @@ comment for how `WorkReleased` gets enriched with `cpt`/`ref` (by reading
 belongs in the adapter, never in the domain event itself.
 
 - Give the message a partition key that keeps ordering where it matters —
-  this repo currently keys the integration topic by the CloudEvents `id`
-  (see ADR-0004 §"Harder": no
-  cross-event ordering guarantee, tolerable today because downstream
+  this repo keys the integration topic by the aggregate id (work unit id /
+  path id — the CloudEvents `subject`, ADR-0024), so one aggregate's events
+  share a partition; there is still no cross-aggregate ordering guarantee
+  (see ADR-0004 §"Harder"), tolerable because downstream
   projections apply commutative/last-writer-wins updates)
 - Use `cloudevents.TopicWorkPlanningEvents` — this service's own topic
   constant, never a sibling's

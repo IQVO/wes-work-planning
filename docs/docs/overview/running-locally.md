@@ -144,7 +144,7 @@ go build ./...
 go vet ./...
 go test ./...            # unit + httptest + godog acceptance
 go test ./... -race
-go test -tags=integration ./...   # needs Docker (testcontainers); the older Postgres repo suite also needs DATABASE_URL
+go test -tags=integration ./...   # needs Docker only (testcontainers boots its own Postgres/Kafka)
 ```
 
 CI (`.github/workflows/ci.yml`) runs these as separate jobs on every push and

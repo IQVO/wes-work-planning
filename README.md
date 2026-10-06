@@ -361,7 +361,7 @@ make contract     # Schemathesis property-based contract tests vs apis/openapi.y
 ```
 
 `make integration` and `make mutation-all` are excluded from both bundles: the
-first needs a running Postgres (`DATABASE_URL`), the second is the slow,
+first needs Docker (testcontainers boots its own Postgres/Kafka), the second is the slow,
 exhaustive mutation run that CI keeps on a weekly schedule. `make contract`
 boots the service with its in-memory adapters (plus a baked-in process-path
 catalogue) and needs `schemathesis==4.28.0` (`st`) installed — see
@@ -384,21 +384,14 @@ go vet ./...
 go test ./...
 ```
 
-Integration tests are build-tagged (`-tags=integration`). The Kafka suites
-(`internal/adapters/inbound/kafka`, `internal/adapters/outbound/kafkacatalog`)
-and the Postgres outbox/migration suites start their own brokers and databases
-with testcontainers, so they need Docker but no environment variables:
+Integration tests are build-tagged (`-tags=integration`). Every suite — Kafka,
+Postgres repositories, outbox/migrations and the analytics store — starts its
+own broker or database with testcontainers, so they need Docker but no
+environment variables (a fitness test fails CI if a Postgres integration test
+reintroduces a `DATABASE_URL` skip gate):
 
 ```sh
 go test -tags=integration ./...
-```
-
-The older Postgres repository suite (`integration_test.go`,
-`tracing_integration_test.go`) is still skipped unless `DATABASE_URL` is set:
-
-```sh
-DATABASE_URL="postgres://wes:wes@localhost:5432/wes?sslmode=disable" \
-  go test -tags=integration ./internal/adapters/outbound/postgres/...
 ```
 
 ### BDD / Acceptance tests

@@ -42,12 +42,12 @@ it decides *when* work enters the floor and *in what order*.
 |---|---|
 | [Overview](./what-it-does.md) | What the service does, its hexagonal layering, how to run it |
 | [Business Context](../business-context/index.md) | Domain vision, ubiquitous language, the reasoning behind waveless release and Drum-Buffer-Rope flow balancing |
-| [Domain-Driven Design](../ddd/index.md) | Subdomain classification, every aggregate and its invariants, every domain event, read models, context relationships |
+| [Domain-Driven Design](../ddd/index.md) | Subdomain classification, the ddd-crew artifact pack (core domain chart, bounded context canvas, aggregate design canvas, message flow, EventStorming, UML/ER/sequence diagrams), every domain event, read models |
 | [API Reference](../api/index.md) | The REST API generated from the real `apis/openapi.yaml`, the event contract from `apis/asyncapi.yaml`, and the RFC 7807 error model |
 | [Ecosystem](../ecosystem/index.md) | The context map, Kafka topics and REST lookups actually wired today, and the sibling services |
 | [AI Ecosystem (MCP)](../mcp/governance-charter.md) | The MCP governance charter this service's `cmd/mcp` server follows |
 | [Analytics (Data Product)](../analytics/release-throughput-report.md) | The Release Throughput & Backlog Health report contract |
-| [ADRs](../adr/index.md) | Eighteen architecture decision records |
+| [ADRs](../adr/index.md) | Thirty-two architecture decision records |
 
 ## At a glance
 
@@ -62,11 +62,14 @@ it decides *when* work enters the floor and *in what order*.
   inventory-storage classification lookup, facility-layout travel-distance
   lookup
 - **Aggregates**: `ChargeForecast`, `ShiftPlan`/`PathPlan`, `WorkPool`, `WorkUnit`
-- **Read models (projections, not aggregates)**: `LaborPlanObserved`,
-  `UsableInventoryObserved`, backlog telemetry, rebalance recommendation
+- **Read models (projections, not aggregates)**: `LaborPlanObserved` (with
+  the ADR-0019 drift outcome), `UsableInventoryObserved`, backlog telemetry,
+  rebalance recommendation, and the analytics `throughput_rollup`
 - **Integration**: publishes `WorkReleased` (consumed by
   fulfillment-execution) and `PathCapacityChanged` (consumed by
-  order-management); consumes `ShiftPlanCommitted`, `StockReserved`,
+  order-management and network-fulfillment), plus nine further domain events
+  (including `PathPlanDriftDetected`) with no consumer today; consumes
+  `ShiftPlanCommitted`, `StockReserved`,
   `ReservationRevoked`, `TaskCompleted`, `OrderAllocated`,
   `OrderPartiallyAllocated`, and — with `PATH_CATALOGUE_SOURCE=kafka` —
   process-path-management's catalogue events

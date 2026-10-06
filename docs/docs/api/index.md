@@ -14,14 +14,17 @@ Spectral on every push and pull request:
 
 | Contract | File | Rendered here |
 |---|---|---|
-| **REST** — OpenAPI 3.0.3 | [`apis/openapi.yaml`](https://github.com/claudioed/wes-work-planning/blob/main/apis/openapi.yaml) | [REST API](./rest-overview.md) — **generated from the spec**, not hand-transcribed |
-| **Events** — AsyncAPI 2.6.0 | [`apis/asyncapi.yaml`](https://github.com/claudioed/wes-work-planning/blob/main/apis/asyncapi.yaml) | [Events](./events.md) |
+| **REST** — OpenAPI 3.0.3 | [`apis/openapi.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi.yaml) | [REST API](./rest-overview.md) — **generated from the spec**, not hand-transcribed |
+| **Events** — AsyncAPI 2.6.0 | [`apis/asyncapi.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/asyncapi.yaml) | [Events](./events.md) |
 
-## Endpoint coverage: 12 / 12
+## Endpoint coverage: 12 operations
 
-Every route registered in `internal/adapters/inbound/http/router.go` is
-documented in `apis/openapi.yaml`, and therefore appears in the generated
-reference.
+Every business route registered in `internal/adapters/inbound/http/router.go`
+is documented in `apis/openapi.yaml`, and therefore appears in the generated
+reference. The one route that is not is `GET /readyz`, the readiness probe
+that flips to not-ready first on graceful shutdown
+([ADR-0023](../adr/0023-resilience-circuit-breakers-retry-dlq-shutdown.md)) —
+an operational endpoint, not part of the published contract.
 
 | # | Method | Path | Use case | OpenAPI `operationId` |
 |---:|---|---|---|---|

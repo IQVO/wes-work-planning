@@ -210,6 +210,32 @@ func TestWorkPool_RemainingCapacity_ReleaseFed_SaturatedIsZero(t *testing.T) {
 	}
 }
 
+// ADR-0018: remaining = max(0, wipLimit - WIP). RestoreEntry rehydrates a
+// pool exactly as stored, so a limit lowered below the current WIP yields a
+// pool whose WIP exceeds its limit — remaining must clamp to 0, never go
+// negative.
+func TestWorkPool_RemainingCapacity_ReleaseFed_OverLimitIsClampedToZero(t *testing.T) {
+	pathId, _ := shared.NewPathId("pick-a")
+	pool := NewWorkPool(pathId, ReleaseFed, 1, 0)
+	cpt := shared.NewCPT(time.Now())
+	for _, id := range []string{"wu-1", "wu-2", "wu-3"} {
+		if err := pool.RestoreEntry(id, cpt, true, false); err != nil {
+			t.Fatalf("restore %s: %v", id, err)
+		}
+	}
+	if pool.WIP() != 3 {
+		t.Fatalf("precondition: WIP = %d, want 3 (limit 1)", pool.WIP())
+	}
+
+	remaining, known := pool.RemainingCapacity()
+	if !known {
+		t.Fatal("expected known=true")
+	}
+	if remaining != 0 {
+		t.Fatalf("got remaining %d, want 0 (WIP 3 exceeds limit 1; must clamp, not go negative)", remaining)
+	}
+}
+
 func TestWorkPool_RemainingCapacity_FlowFed_AlwaysUnknown(t *testing.T) {
 	pathId, _ := shared.NewPathId("pack-b")
 	pool := NewWorkPool(pathId, FlowFed, 0, 10)

@@ -138,6 +138,13 @@ type laborPlanViewDTO struct {
 	PlannedRate  float64   `json:"plannedRate"`
 	PlannedHours float64   `json:"plannedHours"`
 	ObservedAt   time.Time `json:"observedAt"`
+	// DriftHeads / DriftDetectedAt are the ADR-0019 reconciliation outcome
+	// against this service's own committed PathPlan. Present only once a
+	// comparison has been computed (omitted, never zeroed, before that);
+	// DriftHeads is signed (observed - ours) and 0 means the plans agree;
+	// DriftDetectedAt is present only when DriftHeads != 0.
+	DriftHeads      *int       `json:"driftHeads,omitempty"`
+	DriftDetectedAt *time.Time `json:"driftDetectedAt,omitempty"`
 }
 
 type inventoryViewResponseDTO struct {

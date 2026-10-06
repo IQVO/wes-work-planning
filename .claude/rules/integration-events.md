@@ -1,3 +1,10 @@
+---
+paths:
+  - "internal/adapters/**/kafka/**"
+  - "internal/adapters/outbound/events/**"
+  - "apis/asyncapi*"
+---
+
 # Integration & REST reference — wes-work-planning
 
 ## REST API (inbound adapter, 12 operationIds in apis/openapi.yaml)
@@ -14,6 +21,9 @@
 - `GET  /work-units/{id}`                  → getWorkUnit
 - `POST /work-units/{id}/complete`         → recordCompletion
 - `GET  /inventory-view/{sku}`             → getInventoryView
+
+`GET /readyz` (readiness probe, flipped not-ready first on shutdown,
+ADR-0023) is also routed but is NOT in `apis/openapi.yaml`.
 
 `GET /work-units?reference=` is the read side backing the fleet's
 cross-service Order Lifecycle console screen — see ADR-0002 in
@@ -77,16 +87,23 @@ Topic `warehouse.work-planning.events`:
 - `com.warehouse.wes.work-planning.workunit.WorkReleased` — published when `ReleaseNextWork` releases a unit.
   `data`: `{"path_id","work_unit_id","cpt","ref"}` (+ optional
   `required_capabilities`/`fragile` from product-classification
-  propagation). Consumed downstream by `fulfillment-execution` → creates a
-  `Task`.
+  propagation, + optional `gift_wrap`, ADR-0010). Consumed downstream by
+  `fulfillment-execution` → creates a `Task`.
 - `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` — published when `SampleBacklog` is called with an
   optional CPT `cutoffAt` (via `GET /paths/{pathId}/telemetry?cutoffAt=`).
   `data`: `{"path_id","cutoff_at","remaining_units","known"}`. `known` is
   `false` for a FlowFed path (no hard admission ceiling) or a ReleaseFed
   path with no WIP limit provisioned. Consumed by order-management's
-  `internal/adapters/outbound/kafkapathcapacity` adapter, which backs its
+  path-capacity Kafka adapter (in the order-management repo), which backs its
   `ports.PathCapacity` port (own per-process consumer group; wired when
-  order-management runs with `PATH_CATALOGUE_SOURCE=kafka`) (ADR-0018).
+  order-management runs with `PATH_CATALOGUE_SOURCE=kafka`) (ADR-0018), and
+  by network-fulfillment's `pathcapacitycache` adapter (process-unique
+  consumer group, replays from the earliest offset).
+- `com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected` — published
+  by `CommitShiftPlan` or `ObserveLaborPlan` (whichever commits second) when
+  our `PathPlan` and Workforce's `LaborPlanObserved` disagree on planned
+  heads (ADR-0019). `data`: `{"path_id","wes_planned_heads",
+  "observed_planned_heads","drift_heads","observed_at"}`. No consumer today.
 - All other domain events are also published to this topic for
   observability; only `WorkReleased` and `PathCapacityChanged` have live
   consumers today.
@@ -179,8 +196,8 @@ in-request. Without `DATABASE_URL`, events publish directly (no outbox).
 
 ## AsyncAPI contract
 
-`apis/asyncapi.yaml` declares 10 messages on `warehouse.work-planning.events`
-and their 10 analytics counterparts on `warehouse.wes.analytics`, each with
+`apis/asyncapi.yaml` declares 11 messages on `warehouse.work-planning.events`
+and their 11 analytics counterparts on `warehouse.wes.analytics`, each with
 its exact `type` const and `dataschema` const; `defaultContentType` is
 `application/cloudevents+json` and every CloudEvents attribute is required.
 `RateDeviationDetected` is declared but not yet raised by any use case.

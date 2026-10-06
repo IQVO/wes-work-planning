@@ -15,6 +15,12 @@ import (
 type LaborPlanViewRepo interface {
 	Save(ctx context.Context, view laborview.LaborPlanObserved) error
 	FindByPathId(ctx context.Context, pathId shared.PathId) (laborview.LaborPlanObserved, error)
+	// SaveDrift records the outcome of the ADR-0019 reconciliation on an
+	// existing view WITHOUT touching the observed plan itself, so a commit of
+	// our own PathPlan can never overwrite a newer observation. detectedAt is
+	// nil when the plans agree (driftHeads == 0). It returns ErrNotFound when
+	// no view exists for the path.
+	SaveDrift(ctx context.Context, pathId shared.PathId, driftHeads int, detectedAt *time.Time) error
 }
 
 // InventoryViewRepo persists the UsableInventoryObserved read model, one per

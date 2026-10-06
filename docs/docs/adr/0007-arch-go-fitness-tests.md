@@ -71,7 +71,12 @@ than a bare pass/fail.
 - **New contributors get the rule enforced, not explained.** The feedback
   arrives from the tool, immediately, in the terms of the rule itself.
 - **`docker-publish` is gated on it.** Alongside `lint`, `test`, `integration`,
-  `api-lint` and `helm-lint`, so a violating build never reaches Docker Hub.
+  `api-lint`, `docs-api-drift` and the other `needs:` jobs, so a violating build
+  never reaches Docker Hub. (`helm-lint` is *not* in that list: it runs only
+  on pull requests targeting `main`, so it is skipped on the `push` to `main`
+  event that triggers `docker-publish`, and a skipped `needs:` job would skip
+  the publish too. The chart is validated pre-merge on the PR to `main`
+  instead.)
 - **The tests document the architecture executably.** Reading
   `architecture_test.go` gives the dependency rule in six lines of intent, and
   that description cannot go stale.

@@ -81,6 +81,7 @@ curl -s -X POST localhost:8080/paths/pick-a/plan \
   -d '{"plannedHeads":6,"installedStations":8,"rateUnitsPerHour":95,"hours":8}'
 
 # 3 — enqueue two work units with different CPTs
+#     (in-memory mode; with DATABASE_URL set, also send -H 'Idempotency-Key: <unique>')
 curl -s -X POST localhost:8080/paths/pick-a/work-units \
   -H 'Content-Type: application/json' \
   -d '{"workUnitId":"wu-1","cpt":"2026-08-23T21:00:00Z","reference":"order-77/line-1"}'
@@ -144,11 +145,12 @@ go build ./...
 go vet ./...
 go test ./...            # unit + httptest + godog acceptance
 go test ./... -race
-go test -tags=integration ./...   # needs Docker (testcontainers); the older Postgres repo suite also needs DATABASE_URL
+go test -tags=integration ./...   # needs Docker only (testcontainers boots its own Postgres/Kafka)
 ```
 
 CI (`.github/workflows/ci.yml`) runs these as separate jobs on every push and
-pull request — `lint`, `test`, `bdd`, `integration`, `mutation-fast`, `vuln`,
-`api-lint`, `arch-test`, `docs-api-drift` and `web`. `helm-lint` and
-`trivy-scan` run only on pull requests into `main`; `mutation` and `drift` are
+pull request — `lint`, `guide-lint`, `complexity`, `test`, `bdd`, `contract`,
+`evals-tests`, `integration`, `mutation-fast`, `vuln`, `api-lint`,
+`arch-test`, `docs-api-drift` and `web`. `helm-lint` and `trivy-scan` run
+only on pull requests into `main`; `mutation` and `drift` are
 weekly/dispatch-only; `docker-publish` and `release` run on pushes to `main`.

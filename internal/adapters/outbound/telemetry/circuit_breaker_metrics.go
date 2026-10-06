@@ -8,10 +8,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// meterName scopes the circuit_breaker.state instrument this file
-// registers, distinct from internal/application/usecases' own business-
-// metric meter name — this is an outbound-adapter-level reliability
-// signal, not a domain event counter.
+// meterName scopes the instruments this package registers (the
+// circuit_breaker.state gauge and the Tier 2 release counter) — an
+// outbound-adapter-level scope, not the application layer's.
 const meterName = "github.com/claudioed/wes-work-planning/internal/adapters/outbound/telemetry"
 
 // circuitBreakerGaugeName follows this fleet's OTel-metric-name-becomes-

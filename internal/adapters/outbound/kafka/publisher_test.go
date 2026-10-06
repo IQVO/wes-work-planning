@@ -388,3 +388,32 @@ func TestPublisher_PathCapacityChanged_Unknown_EncodesFalseAndZero(t *testing.T)
 		t.Fatalf("got remaining_units %v, want 0", data["remaining_units"])
 	}
 }
+
+// ADR-0019: PathPlanDriftDetected carries both heads figures, the signed drift
+// and Workforce's own commit timestamp.
+func TestPublisher_PathPlanDriftDetected_EncodesAllFields(t *testing.T) {
+	workUnits := memory.NewWorkUnitRepo()
+	writer := &fakeWriter{}
+	pub := outboundkafka.NewPublisherWithWriter(writer, workUnits, nil, func() string { return "evt-drift-1" })
+
+	pathId, _ := shared.NewPathId("pick-a")
+	observedAt := time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC)
+	event := shared.NewPathPlanDriftDetected(pathId, 6, 4, observedAt, time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC))
+	if err := pub.Publish(context.Background(), event); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data := decodeWorkReleasedData(t, writer.msgs[0])
+	want := map[string]any{
+		"path_id":                "pick-a",
+		"wes_planned_heads":      float64(6),
+		"observed_planned_heads": float64(4),
+		"drift_heads":            float64(-2), // signed: observed - ours
+		"observed_at":            "2026-08-21T11:00:00Z",
+	}
+	for k, v := range want {
+		if data[k] != v {
+			t.Fatalf("data[%q] = %v, want %v (full: %v)", k, data[k], v, data)
+		}
+	}
+}

@@ -37,6 +37,19 @@ jobs:
           version: v2.13.1
           args: --timeout=5m
 
+  # Agent-guide sensor (harness-template v3): skills load, references resolve, context budget.
+  # BLOCKING: guides are clean; a stale reference or flat skill fails the build.
+  guide-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: python3 scripts/harness/guide_lint.py
+      - run: python3 scripts/harness/repo_lint.py
+      - run: python3 scripts/harness/test_hook.py
+      - run: python3 scripts/harness/test_repo_lint.py
+
+
   # Complexity gate as its own named check: cyclomatic (gocyclo, cyclop),
   # cognitive (gocognit), nesting (nestif) and function size (funlen).
   # Thresholds live in .golangci.yml; --enable-only runs just these five
@@ -171,32 +184,14 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: wes
-          POSTGRES_PASSWORD: wes
-          POSTGRES_DB: wes
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+    # No Postgres service container: every integration test boots its own
+    # Postgres (and Kafka) via testcontainers on the runner's Docker daemon.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-      - name: Run migrations
-        run: |
-          GOFLAGS="-tags=postgres" go run github.com/golang-migrate/migrate/v4/cmd/migrate@v4.17.1 \
-            -path migrations \
-            -database "postgres://wes:wes@localhost:5432/wes?sslmode=disable" up
-      - name: Integration tests
-        env:
-          DATABASE_URL: "postgres://wes:wes@localhost:5432/wes?sslmode=disable"
+      - name: Integration tests (testcontainers; each test boots its own Postgres/Kafka)
         run: go test -tags=integration ./... -race -count=1
 
   # Fast, BLOCKING test-quality sensor: runs on every push/PR.
@@ -241,6 +236,9 @@ jobs:
   # the weekly schedule / manual dispatch; mutation-fast is the blocking one.
   mutation:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     timeout-minutes: 90
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
@@ -252,12 +250,25 @@ jobs:
         run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
       - name: Mutation testing (domain layer)
         run: gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30
+      - name: Open or refresh the harness:red issue on a scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/harness/red_issue.py mutation "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: Close the harness:red issue when the scheduled run recovers
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/harness/red_issue.py mutation --close
 
   # ============================================================
   # CLASSIFICATION: CONTINUOUS DRIFT (advisory, weekly — never blocks a PR)
   # ============================================================
   drift:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     timeout-minutes: 30
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
@@ -290,6 +301,16 @@ jobs:
           gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30 > /tmp/gremlins.log 2>&1 || true
           echo "### coverage-quality" >> "$GITHUB_STEP_SUMMARY"
           python3 scripts/coverage-quality.py /tmp/cov.out /tmp/gremlins.log | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Open or refresh the harness:red issue on a scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/harness/red_issue.py drift "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: Close the harness:red issue when the scheduled run recovers
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/harness/red_issue.py drift --close
 
   # ============================================================
   # CLASSIFICATION: LINTERS & STATIC ANALYSIS (API contracts)
@@ -403,7 +424,7 @@ jobs:
           path: wes-work-planning
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: claudioed/warehouse-ui-kit
+          repository: IQVO/warehouse-ui-kit
           ref: develop
           path: warehouse-ui-kit
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -492,8 +513,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/claudioed/wes-work-planning:latest
-            ghcr.io/claudioed/wes-work-planning:${{ env.SHORT_SHA }}
+            ghcr.io/iqvo/wes-work-planning:latest
+            ghcr.io/iqvo/wes-work-planning:${{ env.SHORT_SHA }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Install cosign
@@ -501,11 +522,11 @@ jobs:
       - name: Sign the published image (keyless, GitHub OIDC identity)
         run: |
           cosign sign --yes \
-            ghcr.io/claudioed/wes-work-planning@${{ steps.build.outputs.digest }}
+            ghcr.io/iqvo/wes-work-planning@${{ steps.build.outputs.digest }}
       - name: Generate SBOM (SPDX) for the published image
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          image: ghcr.io/claudioed/wes-work-planning@${{ steps.build.outputs.digest }}
+          image: ghcr.io/iqvo/wes-work-planning@${{ steps.build.outputs.digest }}
           format: spdx-json
           output-file: sbom.spdx.json
       - name: Attest the image with its SBOM (keyless)
@@ -513,7 +534,7 @@ jobs:
           cosign attest --yes \
             --predicate sbom.spdx.json \
             --type spdxjson \
-            ghcr.io/claudioed/wes-work-planning@${{ steps.build.outputs.digest }}
+            ghcr.io/iqvo/wes-work-planning@${{ steps.build.outputs.digest }}
       - name: Upload SBOM as a workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -566,8 +587,8 @@ jobs:
       - name: Tag the already-published image with the release version
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/claudioed/wes-work-planning:${{ steps.version.outputs.version }} \
-            ghcr.io/claudioed/wes-work-planning:${{ env.SHORT_SHA }}
+            -t ghcr.io/iqvo/wes-work-planning:${{ steps.version.outputs.version }} \
+            ghcr.io/iqvo/wes-work-planning:${{ env.SHORT_SHA }}
       - name: Package and publish the Helm chart for this release
         run: |
           CHART_VERSION="${{ steps.version.outputs.version }}"
@@ -581,7 +602,7 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
             -u "${{ github.actor }}" --password-stdin
           helm push "/tmp/chart-out/wes-work-planning-${CHART_VERSION}.tgz" \
-            oci://ghcr.io/claudioed
+            oci://ghcr.io/iqvo
       - name: Create and push the git tag
         run: |
           git config user.name "github-actions[bot]"
@@ -595,8 +616,8 @@ jobs:
           generate_release_notes: true
           files: ${{ env.CHART_TGZ }}
           body: |
-            Docker image: `ghcr.io/claudioed/wes-work-planning:${{ steps.version.outputs.version }}`
+            Docker image: `ghcr.io/iqvo/wes-work-planning:${{ steps.version.outputs.version }}`
             (also tagged `latest` and `${{ env.SHORT_SHA }}`)
 
-            Helm chart: `oci://ghcr.io/claudioed/wes-work-planning:${{ steps.version.outputs.version }}`
+            Helm chart: `oci://ghcr.io/iqvo/wes-work-planning:${{ steps.version.outputs.version }}`
             (also attached below as a `.tgz`)

@@ -4,7 +4,6 @@ package postgres_test
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -22,10 +21,9 @@ import (
 // and that the recorded statement is the normalized SQL — never the literal
 // argument values.
 func TestQueriesProduceChildSpans(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL not set; skipping postgres tracing integration test")
-	}
+	// Boot + migrate BEFORE installing the tracer provider so the
+	// migration's own statements never reach the recording below.
+	dsn := migratedDSN(t)
 
 	exporter := tracetest.NewInMemoryExporter()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))

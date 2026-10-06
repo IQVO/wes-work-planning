@@ -9,7 +9,7 @@ description: How the REST reference is generated, and how to read it.
 # REST API
 
 The pages nested under this one are **generated directly from
-[`apis/openapi.yaml`](https://github.com/claudioed/wes-work-planning/blob/main/apis/openapi.yaml)**
+[`apis/openapi.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi.yaml)**
 by `docusaurus-plugin-openapi-docs`, regenerated on every site build. Nothing
 below is hand-transcribed, so the reference cannot drift from the spec that CI
 validates.
@@ -46,9 +46,11 @@ of someone else's. See
 http://localhost:8080
 ```
 
-There is no authentication (`security: []` in the spec). This service is
-deployed inside the cluster and fronted by the platform gateway; it does not
-authenticate callers itself.
+There is no authentication (`security: []` in the spec) — the static-bearer
+layer was removed fleet-wide
+([ADR-0016](../adr/0016-remove-rest-mcp-static-bearer-auth.md)). This
+service is deployed inside the cluster and fronted by the platform gateway
+(Kong on `:8000` locally); it does not authenticate callers itself.
 
 ## Downloading the spec
 
@@ -56,5 +58,5 @@ The generated introduction page carries an **Export** button that links to the
 raw spec on `main`. You can also fetch it directly:
 
 ```sh
-curl -sO https://raw.githubusercontent.com/claudioed/wes-work-planning/main/apis/openapi.yaml
+curl -sO https://raw.githubusercontent.com/IQVO/wes-work-planning/main/apis/openapi.yaml
 ```

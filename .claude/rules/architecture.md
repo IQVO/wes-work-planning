@@ -1,3 +1,12 @@
+---
+paths:
+  - "cmd/**"
+  - "internal/**"
+  - "web/**"
+  - "charts/**"
+  - "migrations/**"
+---
+
 # Architecture reference — wes-work-planning
 
 ## Layer map

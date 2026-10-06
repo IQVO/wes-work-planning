@@ -47,6 +47,7 @@ func goldenCases(t *testing.T) []goldenCase {
 		{"PathThrottled", shared.NewPathThrottled(pathId, at), prefix + "workpool.PathThrottled", "pick-a"},
 		{"LaborReassignmentFlagged", shared.NewLaborReassignmentFlagged(pathId, at), prefix + "workpool.LaborReassignmentFlagged", "pick-a"},
 		{"PathCapacityChanged", shared.NewPathCapacityChanged(pathId, time.Date(2026, 9, 30, 18, 0, 0, 0, time.UTC), 42, true, at), prefix + "workpool.PathCapacityChanged", "pick-a"},
+		{"PathPlanDriftDetected", shared.NewPathPlanDriftDetected(pathId, 6, 8, time.Date(2026, 9, 30, 11, 30, 0, 0, time.UTC), at), prefix + "pathplan.PathPlanDriftDetected", "pick-a"},
 	}
 }
 
@@ -67,8 +68,8 @@ func TestCloudEvents_Golden_Integration(t *testing.T) {
 				t.Fatalf("got %d encoded, want 1", len(encoded))
 			}
 			assertGolden(t, encoded[0], tc, cloudevents.StreamEvents, "events_"+tc.name)
-			if string(encoded[0].Key) != "11111111-1111-4111-8111-111111111111" {
-				t.Errorf("key = %q, want the event id (unchanged partition-affinity choice)", encoded[0].Key)
+			if string(encoded[0].Key) != tc.subject {
+				t.Errorf("key = %q, want the aggregate id %q (ADR-0024)", encoded[0].Key, tc.subject)
 			}
 		})
 	}

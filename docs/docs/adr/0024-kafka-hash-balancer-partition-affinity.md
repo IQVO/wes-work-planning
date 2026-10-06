@@ -19,11 +19,14 @@ business topic — including this service's own
 `warehouse.work-planning.events` and `warehouse.wes.analytics` — from 1
 partition to 8, to raise consumer-side throughput headroom fleet-wide.
 
-Every message this service's outbound Kafka adapters build already
-carries a correct, non-nil `Message.Key`:
-`Publisher.encodeFlat`/`encodeCloudEvent` key by the event id, and
-`AnalyticsPublisher.marshalAnalyticsData` keys by the raising aggregate's
-own id (`PathId` or `WorkUnitId`). By inspection, this looks like it
+Every message this service's outbound Kafka adapters build was meant to
+carry a per-aggregate `Message.Key`: `AnalyticsPublisher.marshalAnalyticsData`
+keys by the raising aggregate's own id (`PathId` or `WorkUnitId`). The
+integration `Publisher` (`encodeCloudEvent`), however, keyed by the
+**CloudEvents event id** — a fresh UUID per event — so even with a
+key-aware balancer `WorkUnitCreated`, `WorkReleased` and `WorkUnitCompleted`
+of ONE work unit landed on different partitions (see "Follow-up" below).
+By inspection, the analytics side looks like it
 already provides per-aggregate partition affinity.
 
 It does not. Every `*kafkago.Writer` this package constructs
@@ -61,9 +64,9 @@ three outbound writers.
    that actually keys partition placement off `Message.Key`'s bytes
    (FNV-1a hash mod partition count) — the same algorithm Sarama's hash
    partitioner uses, per `kafka-go`'s own documentation.
-2. No change to what key is set, or by whom — `Publisher` and
-   `AnalyticsPublisher` already keyed every message correctly; only the
-   writer's routing behavior changes.
+2. ~~No change to what key is set~~ — **amended (follow-up below):** the
+   analytics `AnalyticsPublisher` already keyed every message by aggregate
+   id; the integration `Publisher` is changed to do the same.
 3. No custom `Balancer` implementation, no producer-side partition
    pinning, and no consumer-side reordering buffer were introduced —
    `kafka-go`'s stock `Hash` balancer plus the existing non-nil `Key` is
@@ -102,3 +105,25 @@ three outbound writers.
   applied in inventory-storage and workforce-management — all four
   services' outbound Kafka writers now use `Hash`, closing this gap
   fleet-wide for every repo audited so far.
+
+## Follow-up: the integration topic is keyed by the aggregate id
+
+The 2026-10-04 ADR audit found that the `Hash` balancer alone did not give
+per-aggregate affinity on `warehouse.work-planning.events`: `encodeCloudEvent`
+keyed each message by its CloudEvents `id`, which is unique per event, so one
+work unit's `WorkUnitCreated`/`WorkReleased`/`WorkUnitCompleted` could land on
+different partitions. (The `Publisher.encodeFlat` mentioned in the original
+text no longer exists — the flat envelope was removed by ADR-0027.)
+
+Fix: `encodeCloudEvent` now keys by the aggregate id — the same value as the
+CloudEvents `subject` (work unit id for WorkUnit events, path id for
+everything else); the event id is used only as a fallback if an event type has
+no aggregate id. The outbox persists the key with the row, so relayed messages
+are keyed identically. Proven by
+`TestPublisherKeysEveryEventOfOneWorkUnitOntoTheSamePartition` (8-partition
+Testcontainers topic, distinct event ids per message).
+
+Consumer impact: none. fulfillment-execution (which consumes `WorkReleased`)
+and the other consumers dedupe on the CloudEvents `id`, not the Kafka key, and
+never relied on the key's value; they now additionally observe
+per-work-unit ordering.

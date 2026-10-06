@@ -216,7 +216,8 @@ promise or admission decision:
 - No change to `PathCapacityChanged`'s contract. `Known=false` for
   FlowFed remains permanent, exactly as ADR-0018 decided.
 - Documentation only: `GET /reports/throughput` is named, in this record
-  and in the `docs/docs/ecosystem/` sibling-service documentation, as the
+  and in the [ecosystem page "Observed throughput for FlowFed
+  paths"](../ecosystem/flowfed-observed-throughput.md), as the
   fleet's answer to "observed throughput for a FlowFed path," with the
   caveats in the decision above stated explicitly wherever it is
   referenced for this purpose.

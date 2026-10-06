@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -76,13 +77,7 @@ func RequireIdempotencyKey(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := r.Header.Get(IdempotencyKeyHeader)
 			if key == "" {
-				writeProblem(w, http.StatusBadRequest, problemDetails{
-					Type:     problemBaseURI + "idempotency-key-required",
-					Title:    "Idempotency-Key header is required",
-					Status:   http.StatusBadRequest,
-					Detail:   "This endpoint creates a new resource on every call and requires a caller-supplied " + IdempotencyKeyHeader + " header so a retried request is never applied twice.",
-					Instance: r.URL.Path,
-				})
+				writeError(w, r, fmt.Errorf("%w: this endpoint creates a new resource on every call and requires a caller-supplied %s header so a retried request is never applied twice", errIdempotencyKeyRequired, IdempotencyKeyHeader))
 				return
 			}
 
@@ -92,13 +87,7 @@ func RequireIdempotencyKey(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			// exact same bytes it would have without this middleware.
 			bodyBytes, err := io.ReadAll(r.Body)
 			if err != nil {
-				writeProblem(w, http.StatusBadRequest, problemDetails{
-					Type:     problemBaseURI + "malformed-request-body",
-					Title:    "Malformed request body",
-					Status:   http.StatusBadRequest,
-					Detail:   err.Error(),
-					Instance: r.URL.Path,
-				})
+				writeError(w, r, fmt.Errorf("%w: %v", errMalformedBody, err))
 				return
 			}
 			_ = r.Body.Close()
@@ -183,13 +172,7 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	}
 
 	if storedHash != requestHash {
-		writeProblem(w, http.StatusUnprocessableEntity, problemDetails{
-			Type:     problemBaseURI + "idempotency-key-reused",
-			Title:    "Idempotency-Key was already used with a different request",
-			Status:   http.StatusUnprocessableEntity,
-			Detail:   "The Idempotency-Key header on this request was already used with a request that had a different body. Use a new Idempotency-Key for a genuinely different request.",
-			Instance: r.URL.Path,
-		})
+		writeError(w, r, fmt.Errorf("%w: the %s header on this request was already used with a request that had a different body; use a new %s for a genuinely different request", errIdempotencyKeyReused, IdempotencyKeyHeader, IdempotencyKeyHeader))
 		return
 	}
 

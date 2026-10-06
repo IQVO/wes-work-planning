@@ -26,13 +26,22 @@ import (
 // migrate_integration_test.go). They never read DATABASE_URL and never
 // skip — a broken outbox must fail CI, not silently pass.
 
-// outboxDB boots Postgres, migrates it, and returns a pool.
-func outboxDB(t *testing.T) *pgxpool.Pool {
+// migratedDSN boots a throwaway Postgres, applies the real migrations, and
+// returns its connection string — for tests that must build the pool
+// themselves (e.g. after installing a tracer provider).
+func migratedDSN(t *testing.T) string {
 	t.Helper()
 	dsn := startPostgres(t)
 	if err := postgres.Migrate(dsn, migrationsDir(t)); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	return dsn
+}
+
+// outboxDB boots Postgres, migrates it, and returns a pool.
+func outboxDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	dsn := migratedDSN(t)
 	pool, err := postgres.Connect(context.Background(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -267,8 +276,8 @@ func TestOutboxRelay_PublishesInOrderAcrossTopicsAndMarksRows(t *testing.T) {
 			t.Fatalf("message %d: want %s on %s, got %s on %s", i, w.eventType, w.topic, sink.sent[i].EventType, sink.sent[i].Topic)
 		}
 	}
-	// The analytics key is the aggregate id; the integration key is the event id.
-	if string(sink.sent[1].Key) != "wu-1" || !strings.HasPrefix(string(sink.sent[0].Key), "evt-") {
+	// Both topics are keyed by the aggregate id (ADR-0024).
+	if string(sink.sent[1].Key) != "wu-1" || string(sink.sent[0].Key) != "wu-1" {
 		t.Fatalf("unexpected keys: integration=%q analytics=%q", sink.sent[0].Key, sink.sent[1].Key)
 	}
 	if got := countOutbox(t, pool, "published_at IS NULL"); got != 0 {

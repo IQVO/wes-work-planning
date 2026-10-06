@@ -35,7 +35,7 @@ help: ## Print the available targets
 	@echo "  lint         golangci-lint run ./... (pinned $(GOLANGCI_LINT_VERSION))"
 	@echo "  test         go test ./... -race (unit + httptest + bdd layers)"
 	@echo "  coverage     Coverage profile + $(COVERAGE_THRESHOLD)% gate (same command as CI)"
-	@echo "  integration  go test -tags=integration ./... -race -count=1 (NEEDS DATABASE_URL / a running Postgres)"
+	@echo "  integration  go test -tags=integration ./... -race -count=1 (testcontainers; needs only Docker)"
 	@echo "  bdd          go test ./... -run TestFeatures -v (godog acceptance tests)"
 	@echo "  contract     scripts/contract-test.sh — Schemathesis vs apis/openapi.yaml"
 	@echo "               (boots the service in-memory; needs st: pip install"
@@ -87,11 +87,7 @@ coverage: ## Coverage profile + gate (mirrors the CI `test` job)
 		exit 1; \
 	fi
 
-integration: ## Integration tests — REQUIRES DATABASE_URL and a running Postgres
-	@if [ -z "$$DATABASE_URL" ]; then \
-		echo "warning: DATABASE_URL is not set — the integration tests will skip."; \
-		echo "start Postgres with 'docker compose up -d' and export DATABASE_URL first."; \
-	fi
+integration: ## Integration tests — testcontainers boots its own Postgres/Kafka (needs only Docker)
 	go test -tags=integration ./... -race -count=1
 
 bdd: ## godog/Gherkin acceptance tests
@@ -135,3 +131,17 @@ check: fmt-check vet build lint test ## Fast pre-commit bundle
 
 check-all: check coverage arch-test bdd ## Fuller pre-push gate
 	@echo "make check-all: OK"
+
+# --- agent harness (harness-template v3) -----------------------------------
+.PHONY: check-fast guide-lint harness-test
+# Fast local gate used by the agent Stop hook: format, vet, fitness tests, and the tests of
+# the packages changed vs HEAD. The full gate stays `make check` / `make check-all`.
+check-fast: fmt-check vet arch-test
+	@pkgs="$$(python3 scripts/harness/hook.py changed-pkgs)"; \
+	if [ -n "$$pkgs" ]; then go test $$pkgs; else echo "check-fast: no changed Go packages"; fi
+
+guide-lint: ## lint agent guides: skills load, references resolve, context budget
+	python3 scripts/harness/guide_lint.py
+
+harness-test: ## unit-test the agent hooks (pre/post/stop)
+	python3 scripts/harness/test_hook.py

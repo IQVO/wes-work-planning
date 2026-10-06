@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/domain/laborview"
@@ -23,6 +24,20 @@ func (r *LaborPlanViewRepo) Save(ctx context.Context, view laborview.LaborPlanOb
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.byPath[view.PathId.String()] = view
+	return nil
+}
+
+// SaveDrift implements ports.LaborPlanViewRepo.
+func (r *LaborPlanViewRepo) SaveDrift(ctx context.Context, pathId shared.PathId, driftHeads int, detectedAt *time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v, ok := r.byPath[pathId.String()]
+	if !ok {
+		return ports.ErrNotFound
+	}
+	v.DriftHeads = &driftHeads
+	v.DriftDetectedAt = detectedAt
+	r.byPath[pathId.String()] = v
 	return nil
 }
 

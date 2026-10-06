@@ -1,0 +1,17 @@
+{
+  "specversion": "1.0",
+  "id": "22222222-2222-4222-8222-222222222222",
+  "source": "/warehouse/wes-work-planning",
+  "type": "com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected",
+  "subject": "pick-a",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:wes-work-planning:analytics:PathPlanDriftDetected:v1",
+  "time": "2026-09-30T12:00:00Z",
+  "data": {
+    "drift_heads": 2,
+    "observed_at": "2026-09-30T11:30:00Z",
+    "observed_planned_heads": 8,
+    "path_id": "pick-a",
+    "wes_planned_heads": 6
+  }
+}

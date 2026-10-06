@@ -98,3 +98,24 @@ Copying slices out of aggregates (`Buckets()`, `PathPlans()`, `Entries()`)
 allocates on every read. That is a real cost, accepted because handing out the
 internal slice would let a caller mutate an aggregate behind its own back — the
 exact class of bug the boundary exists to prevent.
+
+## Addendum (2026-10) — composition roots and the `web/` remote
+
+Rule 5 above says `cmd/wes/main.go` is where every layer is visible. The
+repository now has four composition roots under `cmd/` — `wes` (OLTP API +
+Kafka consumers + outbox relay), `wes-projector` and `wes-reports` (the
+analytics projector and read-only reports reader,
+[ADR-0011](./0011-analytical-data-product.md)) and `mcp`
+([ADR-0008](./0008-mcp-inbound-adapter.md)). The rule is unchanged: each root,
+and only the roots, wire concrete adapters, and environment variables are read
+there. They share `internal/bootretry`, a boot-time dial retry used around each
+root's first Postgres/Kafka connection
+([ADR-0030](./0030-kafka-sourced-path-catalogue.md)).
+
+`web/` is a separate artifact, not a layer of the Go module: the
+`planning-mfe` Module Federation remote mounted by `warehouse-console` at
+`/planning/*`, which talks to this service's REST API only. It is built into its
+own `frontend` image/workload
+([ADR-0025](./0025-horizontal-autoscaling-and-pgxpool-tuning.md)) and is outside
+the dependency rule, which governs the Go packages.
+

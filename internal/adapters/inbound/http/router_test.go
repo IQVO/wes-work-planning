@@ -89,6 +89,31 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestReadyz_ReadyAndNotReadyShapesMatchOpenAPI(t *testing.T) {
+	h := newTestHandlers()
+	h.Readiness = &inboundhttp.Readiness{}
+	router := inboundhttp.NewRouter(h, "wes-work-planning", nil)
+
+	check := func(wantCode int, wantStatus string) {
+		t.Helper()
+		rec := doJSON(t, router, http.MethodGet, "/readyz", nil)
+		if rec.Code != wantCode {
+			t.Fatalf("got status %d, want %d", rec.Code, wantCode)
+		}
+		var got map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+		}
+		if got["status"] != wantStatus || len(got) != 1 {
+			t.Fatalf("got body %v, want {status:%s}", got, wantStatus)
+		}
+	}
+
+	check(http.StatusOK, "ready")
+	h.Readiness.SetNotReady()
+	check(http.StatusServiceUnavailable, "not_ready")
+}
+
 func TestPostChargeForecast(t *testing.T) {
 	router := newTestRouter()
 	body := map[string]any{

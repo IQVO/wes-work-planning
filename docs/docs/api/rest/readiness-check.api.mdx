@@ -1,0 +1,60 @@
+---
+id: readiness-check
+title: "Readiness check"
+description: "Readiness probe for the service. Returns 200 `{'status':'ready'}` while the process accepts traffic, and 503 `{'status':'not_ready'}` once graceful shutdown has begun (readiness is flipped first so a Kubernetes readinessProbe stops routing new requests during the drain window). Separate from `/healthz`, which is liveness and is never flipped by shutdown. Does not check downstream dependencies."
+sidebar_label: "Readiness check"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api/rest/wes-work-planning-release
+custom_edit_url: null
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Readiness check"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/readyz"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Readiness probe for the service. Returns 200 `{"status":"ready"}` while the process accepts traffic, and 503 `{"status":"not_ready"}` once graceful shutdown has begun (readiness is flipped first so a Kubernetes readinessProbe stops routing new requests during the drain window). Separate from `/healthz`, which is liveness and is never flipped by shutdown. Does not check downstream dependencies.
+
+
+<ParamsDetails>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./readiness-check.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./readiness-check.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

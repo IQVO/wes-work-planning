@@ -166,6 +166,12 @@ const sidebar: SidebarsConfig = {
           label: "Health check",
           className: "api-method get",
         },
+        {
+          type: "doc",
+          id: "api/rest/readiness-check",
+          label: "Readiness check",
+          className: "api-method get",
+        },
       ],
     },
   ],

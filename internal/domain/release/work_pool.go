@@ -139,6 +139,32 @@ func (p *WorkPool) Enqueue(workUnitId string, cpt shared.CPT) error {
 	return nil
 }
 
+// Configure sets the pool's feed mode and WIP limit (the ConfigurePool
+// command, ADR-0034). It reports whether anything changed, so an identical
+// repeat is a no-op success (idempotent).
+//
+// The limit must be a positive integer and the mode a known FeedMode;
+// otherwise the pool is left untouched. Configure NEVER evicts or cancels
+// work: entries are not touched at all. Lowering the limit below the
+// current WIP simply leaves the pool saturated -- Release/ReleaseNext
+// already refuse while WIP() >= wipLimit -- so releases pause until enough
+// work completes for WIP < limit. Raising the limit takes effect on the
+// very next release. The alarm threshold is not part of this command.
+func (p *WorkPool) Configure(mode FeedMode, wipLimit int) (changed bool, err error) {
+	if mode != ReleaseFed && mode != FlowFed {
+		return false, ErrUnknownFeedMode
+	}
+	if wipLimit <= 0 {
+		return false, ErrInvalidWIPLimit
+	}
+	if p.mode == mode && p.wipLimit == wipLimit {
+		return false, nil
+	}
+	p.mode = mode
+	p.wipLimit = wipLimit
+	return true, nil
+}
+
 // BacklogDepth is the count of pending (not yet released) entries.
 func (p *WorkPool) BacklogDepth() int {
 	count := 0

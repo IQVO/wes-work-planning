@@ -108,6 +108,25 @@ type workUnitResponseDTO struct {
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
+// configurePoolRequestDTO carries wipLimit as a pointer so an omitted limit —
+// a required field — is a 400, never a silently coerced 0. mode is validated
+// against the FeedMode enum by the domain (empty/unknown -> 400).
+type configurePoolRequestDTO struct {
+	Mode     string `json:"mode"`
+	WIPLimit *int   `json:"wipLimit"`
+}
+
+// poolConfigResponseDTO is the pool as configured, plus the live occupancy
+// so a caller lowering a limit can see it is above the new limit (WIP is
+// never evicted).
+type poolConfigResponseDTO struct {
+	PathId       string `json:"pathId"`
+	Mode         string `json:"mode"`
+	WIPLimit     int    `json:"wipLimit"`
+	WIP          int    `json:"wip"`
+	BacklogDepth int    `json:"backlogDepth"`
+}
+
 type backlogSnapshotResponseDTO struct {
 	PathId             string `json:"pathId"`
 	BacklogDepth       int    `json:"backlogDepth"`

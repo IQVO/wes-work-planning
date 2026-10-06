@@ -523,6 +523,11 @@ components:
       title: Rate Deviation Detected
       summary: A path's actual throughput deviated materially from plan.
       description: >-
+        **Reserved: declared for a future detection rule (ADR 0020 defers it);
+        not emitted today.** Decided 2026-10-06: kept declared, neither
+        emitted nor removed.
+
+
         Raised when a process path's observed throughput diverges materially
         from the rate committed in its PathPlan — the plan-vs-actual signal
         for flow balancing. **Not yet wired to the outbound Kafka adapter —
@@ -789,6 +794,9 @@ components:
       name: RateDeviationDetectedAnalytics
       title: RateDeviationDetected (analytics stream)
       summary: Analytics-shaped RateDeviationDetected occurrence on warehouse.wes.analytics.
+      description: >-
+        Reserved: declared for a future detection rule (ADR 0020 defers it);
+        not emitted today.
       contentType: application/cloudevents+json
       tags:
         - name: workpool

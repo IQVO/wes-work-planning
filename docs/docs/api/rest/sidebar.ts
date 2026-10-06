@@ -90,6 +90,22 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "Pool Configuration",
+      link: {
+        type: "doc",
+        id: "api/rest/pool-configuration",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api/rest/configure-pool",
+          label: "Configure a process path's work pool (feed mode and WIP limit)",
+          className: "api-method put",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "Telemetry",
       link: {
         type: "doc",

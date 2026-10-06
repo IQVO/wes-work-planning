@@ -872,9 +872,11 @@ components:
           type: string
           format: uri-reference
           description: >-
-            The context that emitted the event. Always
-            `/warehouse/wes-work-planning` for messages on this channel.
-          enum: ["/warehouse/wes-work-planning"]
+            The context that emitted the event: `/warehouse/wes-work-planning`
+            for messages this service PUBLISHES; the producer's own source
+            (e.g. `/warehouse/network-inventory-planning`) for CONSUMED
+            messages.
+          pattern: "^/warehouse/[a-z0-9-]+$"
         type:
           type: string
           description: >-
@@ -901,11 +903,13 @@ components:
           format: uri
           description: >-
             Identifies the `data` payload shape:
-            `urn:warehouse:wes-work-planning:<events|analytics>:<EventName>:v<N>`.
+            `urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>` —
+            this repo's own urns when PUBLISHED (wes-work-planning), the
+            producer's urn when CONSUMED (e.g. network-inventory-planning).
             The same occurrence carries the same `type` on both topics; the
             `dataschema` distinguishes the integration payload from the
             analytics payload.
-          pattern: "^urn:warehouse:wes-work-planning:(events|analytics):[A-Za-z]+:v[0-9]+$"
+          pattern: "^urn:warehouse:[a-z0-9-]+:(events|analytics):[A-Za-z]+:v[0-9]+$"
 
     ChargeForecastReceivedEvent:
       title: ChargeForecastReceived CloudEvent
@@ -1023,7 +1027,10 @@ components:
               const: "com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased"
             dataschema:
               type: string
-              description: The producer's payload schema id.
+              description: >-
+                The producer's payload schema id. Overrides CloudEventBase's
+                pattern (which only admits THIS repo's own urns): a consumed
+                event carries the PRODUCER's urn.
               const: "urn:warehouse:network-inventory-planning:events:WorkDemandReleased:v1"
             data:
               type: object

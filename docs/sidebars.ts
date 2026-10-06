@@ -36,7 +36,21 @@ const sidebars: SidebarsConfig = {
       link: {type: 'doc', id: 'ddd/index'},
       items: [
         'ddd/subdomain-classification',
-        'ddd/aggregates-and-invariants',
+        {
+          type: 'category',
+          label: 'DDD artifacts (ddd-crew)',
+          link: {type: 'doc', id: 'ddd/ddd-artifacts'},
+          items: [
+            'ddd/core-domain-chart',
+            'ddd/bounded-context-canvas',
+            'ddd/aggregate-design-canvas',
+            'ddd/domain-message-flow',
+            'ddd/eventstorming',
+            'ddd/class-diagram',
+            'ddd/entity-relationship',
+            'ddd/sequence-diagrams',
+          ],
+        },
         'ddd/domain-events',
         'ddd/read-models',
         'ddd/context-relationships',

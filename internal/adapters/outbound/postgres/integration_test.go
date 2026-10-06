@@ -4,7 +4,6 @@ package postgres_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -17,22 +16,11 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
-// TestPostgresRepos requires DATABASE_URL to point at a Postgres instance
-// with migrations/0001_init.up.sql already applied. Run with:
-//
-//	DATABASE_URL=postgres://... go test -tags=integration ./internal/adapters/outbound/postgres/...
+// TestPostgresRepos boots its own throwaway Postgres via testcontainers
+// (outboxDB, with the real migrations applied); it needs only Docker.
 func TestPostgresRepos(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL not set; skipping postgres integration test")
-	}
-
 	ctx := context.Background()
-	pool, err := postgres.Connect(ctx, dsn)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer pool.Close()
+	pool := outboxDB(t)
 
 	pathId, _ := shared.NewPathId("integration-pick-a")
 

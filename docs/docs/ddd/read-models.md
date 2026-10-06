@@ -3,7 +3,7 @@ id: read-models
 title: Read models
 sidebar_label: Read models
 sidebar_position: 4
-description: The four projections this context maintains, and the rule that keeps them out of aggregate state.
+description: The projections this context maintains, and the rule that keeps them out of aggregate state.
 ---
 
 # Read models
@@ -14,14 +14,21 @@ description: The four projections this context maintains, and the rule that keep
 That rule is architectural, not stylistic. This page says what the projections
 are and why the rule holds.
 
-## The four projections
+## The projections
 
 | Projection | Keyed by | Built from | Exposed at |
 |---|---|---|---|
 | **Backlog telemetry** | `path_id` | computed from `WorkPool.entries` on read | `GET /paths/{pathId}/telemetry` |
 | **Rebalance recommendation** | `path_id` | computed from the same pool snapshot on read | `GET /paths/{pathId}/rebalance` |
-| **`LaborPlanObserved`** | `path_id` | `ShiftPlanCommitted` events from `workforce-management` | `GET /paths/{pathId}/labor-plan-view` |
+| **`LaborPlanObserved`** | `path_id` | `ShiftPlanCommitted` events from `workforce-management`, plus the drift outcome of comparing it with our `PathPlan` ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)) | `GET /paths/{pathId}/labor-plan-view` (`driftHeads`, `driftDetectedAt`) |
 | **`UsableInventoryObserved`** | **`sku`** | `StockReserved` / `ReservationRevoked` events from `inventory-storage` | `GET /inventory-view/{sku}` |
+
+Two further read-only views are **not persisted at all**: the
+`ProductClassificationView` read from inventory-storage once per
+`WorkReleased`, and the `TravelDistanceView` read from facility-layout once
+per `CommitShiftPlan`. The analytics `throughput_rollup` is a fifth,
+out-of-process projection owned by `cmd/wes-projector`
+([Release throughput report](../analytics/release-throughput-report.md)).
 
 The two groups are different in kind:
 
@@ -77,11 +84,13 @@ at the adapter, rather than a read-modify-write in application code.
 
 ```go
 type LaborPlanObserved struct {
-    PathId       shared.PathId
-    PlannedHeads int
-    PlannedRate  float64
-    PlannedHours float64
-    ObservedAt   time.Time
+    PathId          shared.PathId
+    PlannedHeads    int
+    PlannedRate     float64
+    PlannedHours    float64
+    ObservedAt      time.Time
+    DriftHeads      *int       // ADR-0019: observed minus ours, nil until compared
+    DriftDetectedAt *time.Time // set only when DriftHeads != 0
 }
 ```
 
@@ -89,7 +98,8 @@ No constructor, no validation, exported fields. That shape is the point: this
 type protects nothing, because the facts in it are owned by another bounded
 context. Giving it invariants would mean this service could reject a fact that
 Workforce has already committed — which is not a decision this context is
-entitled to make.
+entitled to make. The drift columns record a *comparison* with our plan;
+they never change either plan.
 
 Contrast with `PathPlan`, which has a private field set and a validating
 constructor, because `plannedHeads ≤ installedStations` *is* our rule.

@@ -48,16 +48,19 @@ All type URIs are prefixed
 
 | `type` suffix | `title` | Raised by |
 |---|---|---|
-| `malformed-request-body` | Malformed request body | JSON that does not decode |
+| `malformed-request-body` | Malformed request body | JSON that does not decode, a missing required field, or a present-but-empty/invalid `cutoffAt` |
+| `reference-required` | Reference query parameter is required | `GET /work-units` without `reference` |
 | `invalid-quantity` | Invalid quantity | negative quantity |
 | `invalid-rate` | Invalid rate | rate ≤ 0 |
-| `invalid-station-count` | Invalid station count | negative station count |
+| `invalid-station-count` | Invalid station count | negative station count, or above the int32 range |
 | `invalid-path-id` | Invalid path id | empty `pathId` |
+| `unknown-path-id` | Unrecognized process-path id | a `pathId` no declared process-path prefix matches ([ADR-0012](../adr/0012-process-path-catalogue-validation.md)) |
 | `invalid-hours` | Invalid hours | hours ≤ 0 |
 | `charge-forecast-requires-buckets` | Charge forecast requires at least one CPT bucket | empty `buckets` |
 | `unknown-cpt` | No bucket exists for the given CPT | querying a CPT with no bucket |
 | **`heads-exceed-installed-stations`** | **Planned heads exceed installed stations** | **the `PathPlan` invariant** |
 | `shift-plan-requires-path-plans` | Shift plan requires at least one path plan | empty plan |
+| `planned-throughput-not-finite` | Planned throughput is not finite | `rate × heads × hours` overflows `float64` |
 | `work-unit-id-required` | Work unit id is required | empty id |
 | `work-unit-reference-required` | Work unit reference is required | empty reference |
 | `work-pool-entry-not-found` | Work unit not found in this pool | releasing an unknown entry |
@@ -90,10 +93,12 @@ zero" are different facts.
 | **`work-unit-already-released`** | Work unit already released | **at most one active assignment** |
 | **`work-unit-already-completed`** | Work unit already completed | **no double-complete** |
 | `work-unit-not-released` | Work unit not released | must be released before completing |
+| `concurrent-modification` | The work pool was modified concurrently; retry the request | optimistic-concurrency retry budget (12 attempts) exhausted on a `WorkPool` save ([ADR-0029](../adr/0029-work-pool-optimistic-concurrency.md)) |
 
 `409` is the right code here because these are **state conflicts**, not input
 errors: the same request would have succeeded a moment earlier, and retrying it
-unchanged will not help.
+unchanged will not help — except `concurrent-modification`, which is the one
+409 a client should simply retry.
 
 ### 500 Internal Server Error
 

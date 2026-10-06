@@ -9,7 +9,7 @@ description: The CloudEvents envelope, the type naming convention, and every eve
 # Events
 
 The asynchronous contract lives in
-[`apis/asyncapi.yaml`](https://github.com/claudioed/wes-work-planning/blob/main/apis/asyncapi.yaml)
+[`apis/asyncapi.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/asyncapi.yaml)
 (AsyncAPI 2.6.0), linted in CI by Spectral against `.spectral.asyncapi.yaml`.
 This page is written from that spec.
 
@@ -92,15 +92,18 @@ com.warehouse.wes.work-planning.charge.ChargeForecastReceived
 com.warehouse.wes.work-planning.plan.ShiftPlanCommitted
 com.warehouse.wes.work-planning.workunit.WorkReleased
 com.warehouse.wes.work-planning.workpool.PathThrottled
+com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected
 ```
 
 The `<entity>` segment names the aggregate that raised the event: `charge`
 (ChargeForecast), `plan` (ShiftPlan/PathPlan), `workpool` (WorkPool and the
-flow-balancing decisions taken against it), `workunit` (WorkUnit).
+flow-balancing decisions taken against it), `workunit` (WorkUnit), and
+`pathplan` for the ADR-0019 plan-vs-labor reconciliation outcome. The mapping
+lives in `eventTypeEntity` in `internal/adapters/outbound/kafka/publisher.go`.
 
 ## Events published
 
-Topic `warehouse.work-planning.events`. Ten event types are catalogued; the
+Topic `warehouse.work-planning.events`. Eleven event types are catalogued; the
 `data` shape of each is below.
 
 | Event (`type` suffix after `com.warehouse.wes.work-planning.`) | `data` fields | Raised when |
@@ -108,26 +111,31 @@ Topic `warehouse.work-planning.events`. Ten event types are catalogued; the
 | `charge.ChargeForecastReceived` | `path_id` | a charge forecast is recorded for a path |
 | `plan.ShiftPlanCommitted` | `path_id` | **this** context commits its own rate × heads × hours plan |
 | `workunit.WorkUnitCreated` | `path_id`, `work_unit_id` | a work unit is enqueued into a pool |
-| **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` | the release policy admits the earliest-CPT unit |
+| **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` (+ optional `required_capabilities`, `fragile`, `gift_wrap`) | the release policy admits the earliest-CPT unit |
 | `workunit.WorkUnitCompleted` | `path_id`, `work_unit_id` | a released unit completes |
 | `workpool.BacklogThresholdBreached` | `path_id` | backlog depth crosses the pool's alarm threshold |
 | `workpool.RateDeviationDetected` | `path_id` | *declared in the catalogue; **no use case raises it today*** |
 | `workpool.PathThrottled` | `path_id` | flow balancing decides to throttle upstream release |
 | `workpool.LaborReassignmentFlagged` | `path_id` | flow balancing recommends moving headcount |
 | `workpool.PathCapacityChanged` | `path_id`, `cutoff_at`, `remaining_units`, `known` | `SampleBacklog` is called with a `cutoffAt` query parameter (ADR-0018) |
+| `pathplan.PathPlanDriftDetected` | `path_id`, `wes_planned_heads`, `observed_planned_heads`, `drift_heads`, `observed_at` | our committed `PathPlan` and Workforce's `LaborPlanObserved` disagree on planned heads, whichever side commits second (ADR-0019) |
 
 **`WorkReleased` and `PathCapacityChanged` are the only ones any other
 service consumes today** — `fulfillment-execution` turns `WorkReleased` into a
-`Task`; `order-management` consumes `PathCapacityChanged` (below). Its payload is enriched at the
+`Task`; `order-management` and `network-fulfillment` consume
+`PathCapacityChanged` (below). The `WorkReleased` payload is enriched at the
 adapter with `cpt` and `ref` (read from the `WorkUnit` repository) so the
 downstream consumer never has to call back; the domain event itself carries
 only the two identifiers.
 
-`WorkReleased.data` also carries two OPTIONAL fields, present only when
-there is a hint to give: `required_capabilities` (array, containing
+`WorkReleased.data` also carries three OPTIONAL fields, present only when
+there is something to say: `required_capabilities` (array, containing
 `"hazmat"` when the released unit's SKU is classified `Hazmat` in
-inventory-storage) and `fragile` (bool, `true` when the SKU is classified
-`Fragile`). See "Product classification propagation" below.
+inventory-storage), `fragile` (bool, `true` when the SKU is classified
+`Fragile`) — see "Product classification propagation" below — and
+`gift_wrap` (bool, `true` when the caller requested gift wrap at enqueue
+time; read straight off the `WorkUnit`,
+[ADR-0010](../adr/0010-gift-wrap-as-a-work-released-characteristic.md)).
 
 Publication is opt-in at runtime: with the default `EVENT_PUBLISHER=log` these
 events are written to the log publisher instead of Kafka. Set
@@ -144,15 +152,16 @@ Every consumer decodes with `cloudevents.Decode` and dispatches on the
 **full** `type` string below (never a short name or suffix match); unknown
 types are ignored. A message that is not a valid CloudEvents 1.0 event —
 including the retired flat envelope — is published raw to `<topic>.dlq` and
-committed past (no retries), never parsed as a legacy shape. `time` and the
-dedupe `id` come from the CloudEvents attributes; the payload from
-`DataAs`.
+committed past (no retries), never parsed as a legacy shape. A valid event
+whose handler fails is retried in-process (3 attempts, jittered backoff) and
+then dead-lettered the same way. `time` and the dedupe `id` come from the
+CloudEvents attributes; the payload from `DataAs`.
 
 ### `warehouse.workforce.events` — from `workforce-management`
 
 | `type` | `data` | Effect here |
 |---|---|---|
-| `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `building_id`, `shift_id`, `path_id`, `planned_heads`, `planned_rate`, `planned_hours` | Upserts the `LaborPlanObserved` projection for `path_id` |
+| `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `building_id`, `shift_id`, `path_id`, `planned_heads`, `planned_rate`, `planned_hours` | `path_id` validated against the process-path catalogue; upserts the `LaborPlanObserved` projection for `path_id`; if we have a committed `PathPlan` for that path, records the drift and raises `PathPlanDriftDetected` when the heads disagree (ADR-0019) |
 
 Workforce publishes **one message per path line**, which is why the projection
 keys cleanly on `path_id`. This is *not* fed into this context's own
@@ -172,17 +181,17 @@ Keyed by SKU, not by path — Inventory reservations are SKU-scoped.
 
 | `type` | `data` | Effect here |
 |---|---|---|
-| `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `task_id`, `station_id`, `work_unit_id` (+ optional `task_type`) | `data.work_unit_id` is passed to the existing `RecordCompletion` use case; an unknown work unit (e.g. a PACK task keyed by order id) is an INFO-logged, processed skip, never DLQ'd |
+| `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | `task_id`, `station_id`, `work_unit_id` (+ optional `task_type`) | `ApplyTaskCompleted` passes `data.work_unit_id` to the existing `RecordCompletion` use case; an unknown work unit (e.g. a PACK task keyed by order id) is an INFO-logged, processed skip, never DLQ'd |
 
-This closes the control loop's feedback edge. No new use case was introduced —
-the inbound adapter calls exactly the same code path that
-`POST /work-units/{id}/complete` does.
+This closes the control loop's feedback edge. `ApplyTaskCompleted` only adds
+the atomic processed-event mark around exactly the same code path that
+`POST /work-units/{id}/complete` runs.
 
 ### `warehouse.order-management.events` — from `order-management`
 
 | `type` | `data` | Effect here |
 |---|---|---|
-| `com.warehouse.wes.order-management.order.OrderAllocated` | `order_id`, `promise_date`, `lines[]` (`line_no`, `sku`, `path_id`, `gift_wrap`) | One `EnqueueWorkUnit` call per line |
+| `com.warehouse.wes.order-management.order.OrderAllocated` | `order_id`, `promise_date`, `lines[]` (`line_no`, `sku`, `path_id`, `gift_wrap`) | `ApplyOrderAllocated`: every line's `path_id` is validated against the catalogue first, then one `EnqueueWorkUnit` per line with id `{order_id}-line-{line_no}` and CPT = `promise_date`; an already-enqueued line is a benign no-op ([ADR-0031](../adr/0031-order-allocated-choreography.md)) |
 | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | same shape | same effect |
 
 ### `warehouse.process-path-management.events` — from `process-path-management`
@@ -254,8 +263,8 @@ for the full reasoning.
 `GET /paths/{pathId}/telemetry` accepts an optional `cutoffAt` (RFC3339)
 query parameter. When supplied, `SampleBacklog` additionally computes the
 path's current remaining admission capacity from its own `WorkPool`
-(`wipLimit - WIP`, always non-negative under the pool's own enforced
-invariant) and publishes `PathCapacityChanged` on
+(`max(0, wipLimit - WIP)` — clamped, because a pool rehydrated after its
+limit was lowered can hold more WIP than its limit) and publishes `PathCapacityChanged` on
 this topic, correlated against the given CPT cutoff timestamp:
 
 ```json
@@ -283,7 +292,9 @@ which is not a capacity figure — or for a `ReleaseFed` path with no WIP
 limit provisioned. `order-management` consumes it through its
 `kafkapathcapacity` adapter, which backs its `ports.PathCapacity` port when
 order-management runs with `PATH_CATALOGUE_SOURCE=kafka` (as deployed; without
-it, that port falls back to the `UnknownPathCapacity` placeholder); see
+it, that port falls back to the `UnknownPathCapacity` placeholder), and
+`network-fulfillment` keeps an exact `(path_id, cutoff_at)` cache of it in its
+`pathcapacitycache` adapter; see
 [ADR-0018](../adr/0018-path-capacity-changed.md) for the full design,
 including why correlation runs by `cutoff_at` timestamp rather than
 process-path-management's `cptId` string.

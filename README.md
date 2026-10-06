@@ -96,6 +96,7 @@ opens the pool, so there is no separate `migrate` step.
 |------------------|---------|--------------------------------------------------------------------------|
 | `HTTP_ADDR`      | `:8080` | Address the HTTP server listens on                                     |
 | `DATABASE_URL`   | (unset) | Postgres DSN; falls back to in-memory if unset                         |
+| `MIGRATIONS_DATABASE_URL` | `DATABASE_URL` | Direct (non-PgBouncer) Postgres DSN used only for the startup migration step; the request pool always uses `DATABASE_URL` ([ADR-0026](docs/docs/adr/0026-migrations-direct-postgres-connection.md)) |
 | `MIGRATIONS_PATH` | `migrations` | Directory of OLTP migrations applied on start when `DATABASE_URL` is set |
 | `EVENT_PUBLISHER`| `log`   | `log` (default) or `kafka` — where domain events get published. With `kafka` **and** `DATABASE_URL` set, events are written to the `outbox_events` table in the same transaction as the aggregate and relayed to both Kafka topics by an in-process relay (transactional outbox, [ADR-0014](docs/docs/adr/0014-transactional-outbox.md)); with `kafka` but no `DATABASE_URL` they are published directly |
 | `KAFKA_BROKERS`  | (unset) | Comma-separated Kafka brokers; required for `EVENT_PUBLISHER=kafka` and enables the inbound integration-event consumer whenever set |
@@ -341,11 +342,17 @@ The latest usable-quantity projection for a SKU, from Inventory's
 `StockReserved`/`ReservationRevoked` integration events. `404` if nothing
 has been observed yet.
 
-### `GET /healthz`
+### `GET /healthz` and `GET /readyz`
 
 ```sh
 curl localhost:8080/healthz
+curl localhost:8080/readyz
 ```
+
+`/healthz` is liveness. `/readyz` is readiness: it flips to not-ready as the
+first step of graceful shutdown, before the consumers, the HTTP server and
+the outbox relay stop ([ADR-0023](docs/docs/adr/0023-resilience-circuit-breakers-retry-dlq-shutdown.md)).
+`/readyz` is an operational probe and is not part of `apis/openapi.yaml`.
 
 ## Local development / quality gate
 
@@ -361,7 +368,7 @@ make contract     # Schemathesis property-based contract tests vs apis/openapi.y
 ```
 
 `make integration` and `make mutation-all` are excluded from both bundles: the
-first needs a running Postgres (`DATABASE_URL`), the second is the slow,
+first needs Docker (testcontainers boots its own Postgres/Kafka), the second is the slow,
 exhaustive mutation run that CI keeps on a weekly schedule. `make contract`
 boots the service with its in-memory adapters (plus a baked-in process-path
 catalogue) and needs `schemathesis==4.28.0` (`st`) installed — see
@@ -384,21 +391,14 @@ go vet ./...
 go test ./...
 ```
 
-Integration tests are build-tagged (`-tags=integration`). The Kafka suites
-(`internal/adapters/inbound/kafka`, `internal/adapters/outbound/kafkacatalog`)
-and the Postgres outbox/migration suites start their own brokers and databases
-with testcontainers, so they need Docker but no environment variables:
+Integration tests are build-tagged (`-tags=integration`). Every suite — Kafka,
+Postgres repositories, outbox/migrations and the analytics store — starts its
+own broker or database with testcontainers, so they need Docker but no
+environment variables (a fitness test fails CI if a Postgres integration test
+reintroduces a `DATABASE_URL` skip gate):
 
 ```sh
 go test -tags=integration ./...
-```
-
-The older Postgres repository suite (`integration_test.go`,
-`tracing_integration_test.go`) is still skipped unless `DATABASE_URL` is set:
-
-```sh
-DATABASE_URL="postgres://wes:wes@localhost:5432/wes?sslmode=disable" \
-  go test -tags=integration ./internal/adapters/outbound/postgres/...
 ```
 
 ### BDD / Acceptance tests
@@ -413,10 +413,11 @@ with real HTTP calls (`features_test.go` at the repo root).
 go test ./... -run TestFeatures -v
 ```
 
-Scenarios cover committing a ShiftPlan against installed-station capacity,
-CPT-priority Release with at-most-once handout, RecordCompletion plus the
-backlog telemetry read model, and flow-balancing rebalance decisions. CI runs
-them in the `bdd` job.
+Scenarios (`features/*.feature`) cover charge forecasts, committing a
+ShiftPlan against installed-station capacity, CPT-priority Release with
+at-most-once handout, work-pool capacity, RecordCompletion plus the backlog
+telemetry read model, the read-model views, labor-plan reconciliation, and
+flow-balancing rebalance decisions. CI runs them in the `bdd` job.
 
 ## Integration
 
@@ -463,12 +464,22 @@ Topic `warehouse.work-planning.events`:
   `GET /products/{sku}/classification` at publish time — see
   [ADR-0009](./docs/docs/adr/0009-product-classification-propagation-to-work-released.md).
   Both fields are omitted, not defaulted to empty/false, when unavailable.
+  A third OPTIONAL field, `gift_wrap` (bool), is present and `true` only when
+  the caller asked for gift wrap at enqueue time — read straight off the
+  `WorkUnit`, never looked up
+  ([ADR-0010](./docs/docs/adr/0010-gift-wrap-as-a-work-released-characteristic.md)).
 - **`PathCapacityChanged`** — published when `SampleBacklog` is called with a
   `cutoffAt` (`GET /paths/{pathId}/telemetry?cutoffAt=`). `data`:
   `{"path_id","cutoff_at","remaining_units","known"}` — remaining admission
   capacity per (path, CPT cutoff). Consumed by order-management's
   `kafkapathcapacity` adapter (its `PathCapacity` port, keyed by path and
-  cutoff instant) — see [ADR-0018](./docs/docs/adr/0018-path-capacity-changed.md).
+  cutoff instant) and by network-fulfillment's `pathcapacitycache` adapter —
+  see [ADR-0018](./docs/docs/adr/0018-path-capacity-changed.md).
+- **`PathPlanDriftDetected`** — published when this service's committed
+  `PathPlan` and Workforce's `LaborPlanObserved` disagree on planned heads,
+  whichever side commits second. `data`:
+  `{"path_id","wes_planned_heads","observed_planned_heads","drift_heads","observed_at"}`
+  — see [ADR-0019](./docs/docs/adr/0019-labor-plan-committed-shift-plan-reconciliation.md).
 
 The other domain events are published to the same topic with a
 `{"path_id", ...}` payload; no other service consumes them today.
@@ -493,10 +504,12 @@ same `ports.EventPublisher` interface the log publisher does.
 - Topic `warehouse.fulfillment.events`, event type `TaskCompleted` — `data`:
   `{"task_id","station_id","work_unit_id"}`. Closes the control loop's
   feedback edge from fulfillment-execution back to this service:
-  `data.work_unit_id` is fed directly into the existing `RecordCompletion` use
-  case (`RecordCompletionRequest.WorkUnitId`), transitioning that work unit
-  from Released to Completed exactly as `POST /work-units/{id}/complete`
-  would. No new use case — this is additive wiring only.
+  `data.work_unit_id` is fed into `ApplyTaskCompleted`, which wraps the
+  existing `RecordCompletion` use case (`RecordCompletionRequest.WorkUnitId`)
+  with the atomic processed-event mark (ADR-0028), transitioning that work
+  unit from Released to Completed exactly as `POST /work-units/{id}/complete`
+  would. A `work_unit_id` this context never planned (e.g. a PACK task keyed
+  by the order id) is an INFO-logged, processed skip.
 - Topic `warehouse.order-management.events`, event types `OrderAllocated` and
   `OrderPartiallyAllocated` — `data` (identical shape for both):
   `{"order_id","promise_date","lines":[{"line_no","sku","path_id","gift_wrap"}]}`.
@@ -504,8 +517,10 @@ same `ports.EventPublisher` interface the log publisher does.
   `POST /paths/{pathId}/work-units` with event choreography: order-management
   publishes here once it has allocated stock and locally marked an order line
   Released. For each line, `data.order_id`/`line.line_no` derive a
-  deterministic `work_unit_id` (`"{order_id}-line-{line_no}"`), and the
-  existing `EnqueueWorkUnit` use case is called directly — no new use case.
+  deterministic `work_unit_id` (`"{order_id}-line-{line_no}"`), every
+  line's `path_id` is validated against the process-path catalogue first, and
+  `ApplyOrderAllocated` calls the existing `EnqueueWorkUnit` use case once per
+  line inside one atomic scope (an already-enqueued line is a benign no-op).
   Deliberately fire-and-forget: there is no reply event back to
   order-management; the existing `WorkUnitCreated`/`WorkReleased` events on
   `warehouse.work-planning.events` remain the only observable signal of
@@ -528,15 +543,18 @@ HTTP header on `POST /paths/{pathId}/work-units`, see ADR-0022 and that
 endpoint's own section above — a separate, request/response-level
 mechanism, not related to the Kafka de-duplication described here.
 
-Kafka is at-least-once. Every consumed event's `event_id` is recorded in
-`processed_events` (Postgres) / an in-memory set before its effect is
-applied; a redelivered `event_id` is skipped (and still acked) rather than
-re-applied. See `internal/application/usecases/observe_labor_plan.go` and
-`observe_inventory_change.go`. `TaskCompleted` reuses this same mechanism from
-the inbound Kafka adapter itself (`internal/adapters/inbound/kafka/consumer.go`)
-since it calls `RecordCompletion` directly rather than through a projector use
-case; `RecordCompletion`'s own domain-level double-complete rejection is a
-second, independent safety net, not a substitute for it.
+Kafka is at-least-once. Every consumed event's CloudEvents `id` is recorded
+in `processed_events` (Postgres) / an in-memory set in the SAME atomic scope
+as its effect ([ADR-0028](./docs/docs/adr/0028-processed-event-mark-atomic-with-handling.md));
+a redelivered `id` is skipped (and still acked) rather than re-applied, and a
+failed effect rolls the mark back so the retry re-applies it. All four
+inbound-event use cases share one helper, `onceAtomically`
+(`internal/application/usecases/apply_integration_event.go`):
+`ObserveLaborPlan`, `ObserveInventoryChange`, `ApplyTaskCompleted` (wraps
+`RecordCompletion`) and `ApplyOrderAllocated` (wraps `EnqueueWorkUnit`).
+A handler error is retried in-process (3 attempts) and then dead-lettered to
+`<topic>.dlq`. `RecordCompletion`'s own domain-level double-complete
+rejection is a second, independent safety net, not a substitute for it.
 
 ### Smoke-testing against the shared broker
 
@@ -623,7 +641,8 @@ in-cluster Collector Service (`charts/wes-work-planning/values.yaml`, the
   `http.server.active_requests`, from otelchi's metric middleware.
 - `wes.work_units.released` — the business metric: a counter incremented in
   the `ReleaseNextWork` use case (not in the HTTP handler, so it tracks the
-  real domain event), attributed by `path_id`.
+  real domain event), attributed by `path.id`
+  ([ADR-0013](docs/docs/adr/0013-standard-metrics-convention.md)).
 - Go runtime metrics — goroutines, GC, memory —
   (`go.opentelemetry.io/contrib/instrumentation/runtime`).
 
@@ -673,17 +692,21 @@ failing-path unit test:
   cannot complete before release (`internal/domain/workunit/work_unit_test.go`).
 - **WorkPool**: at-most-once handout per entry, and a release-fed pool's WIP
   limit is a hard invariant on release (`internal/domain/release/work_pool_test.go`).
+  Concurrent writers are serialised by an optimistic `version` check on save
+  plus a bounded retry ([ADR-0029](docs/docs/adr/0029-work-pool-optimistic-concurrency.md)).
 
 ## Documentation
 
-Full documentation site: **<https://claudioed.github.io/wes-work-planning/>**
+Full documentation site: **<https://iqvo.github.io/wes-work-planning/>**
 
 It covers the business context and ubiquitous language, the DDD model
-(subdomain classification, every aggregate and invariant, all ten domain
-events), an API reference generated from `apis/openapi.yaml` plus an Events
-page from `apis/asyncapi.yaml`, the ecosystem context map, the MCP governance
-charter, the analytics report contract, and eighteen architecture decision
-records. Source lives in [`docs/`](./docs) (Docusaurus);
+(subdomain classification, all eleven domain events, read models) and the
+full ddd-crew artifact pack (core domain chart, bounded context canvas,
+aggregate design canvas, domain message flow, EventStorming, UML class, ER
+and sequence diagrams — see `docs/docs/ddd/ddd-artifacts.md`), an API
+reference generated from `apis/openapi.yaml` plus an Events page from
+`apis/asyncapi.yaml`, the ecosystem context map, the MCP governance charter,
+the analytics report contract, and thirty-two architecture decision records. Source lives in [`docs/`](./docs) (Docusaurus);
 it is built and deployed to GitHub Pages by
 [`.github/workflows/docs.yml`](./.github/workflows/docs.yml).
 

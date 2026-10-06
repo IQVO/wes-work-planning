@@ -11,4 +11,7 @@ var (
 	ErrNotReleased     = errors.New("work unit has not been released from this pool yet")
 	ErrWIPLimitReached = errors.New("release-fed pool WIP limit reached")
 	ErrEmptyPool       = errors.New("no pending work in this pool")
+
+	ErrUnknownFeedMode   = errors.New("unknown work pool feed mode")
+	ErrUnknownEntryState = errors.New("unknown work pool entry state")
 )

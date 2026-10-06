@@ -35,7 +35,7 @@ func TestScanWorkUnit_TransitionTimestamps(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &WorkUnitRepo{}
-			unit, err := r.scanWorkUnit("wu-1", "pick-a", "ref-1", "sku", tc.state, false, cpt, tc.releasedAt, tc.completedAt)
+			unit, err := r.scanWorkUnit("wu-1", "pick-a", "ref-1", "sku", tc.state, "", "", "", false, 0, cpt, tc.releasedAt, tc.completedAt)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("err = %v, want %v", err, tc.wantErr)

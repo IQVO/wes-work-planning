@@ -56,6 +56,10 @@ released work (`WorkReleased` to Execution).
 | `facility-layout` | — | **Generic** | The physical warehouse map. Same bucket as Cartonization and WCS in the reference model: extract it once rather than duplicating it in every context. |
 | `order-management` | WMS | **Generic/Supporting** | Order intake, per-line allocation, promise dates and choreographed release — needed, but not this platform's differentiator. |
 | `process-path-management` | — | **Generic** | The declared process-path catalogue, extracted once for every context that validates a `pathId`. |
+| `network-fulfillment` | — | **Supporting** | Anti-corruption layer to an external retail fulfillment network; consumes our `PathCapacityChanged` into its `CapabilityOffer`. |
+
+The same classification is plotted on the
+[Core domain chart](./core-domain-chart.md).
 
 ## What "Core" obliges
 
@@ -66,7 +70,7 @@ Core, the following are justified investments and are actually present:
   generated CRUD. ([ADR-0001](../adr/0001-hexagonal-ports-and-adapters.md))
 - **Invariants enforced in the aggregate, with failing-path tests for each** —
   not validation annotations on a DTO.
-  ([Aggregates](./aggregates-and-invariants.md))
+  ([Aggregate design canvas](./aggregate-design-canvas.md))
 - **A custom release policy as a first-class domain-service object**, so the
   priority function is a thing you can replace rather than a `SORT BY` clause.
   ([ADR-0002](../adr/0002-waveless-continuous-release.md))

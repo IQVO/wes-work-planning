@@ -41,7 +41,7 @@ const FeatureList: FeatureItem[] = [
   {
     title: 'WIP-limit backpressure',
     kicker: 'Invariant',
-    to: '/docs/ddd/aggregates-and-invariants',
+    to: '/docs/ddd/aggregate-design-canvas',
     description: (
       <>
         On a release-fed pool the WIP limit is an{' '}

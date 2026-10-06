@@ -3,7 +3,7 @@ paths:
   - "docs/docs/adr/**"
 ---
 
-# ADR index (0001–0029)
+# ADR index (0001–0032)
 
 Full records live in `docs/docs/adr/` (index: `docs/docs/adr/index.md`).
 Read the relevant ADR before reversing a documented decision.
@@ -15,17 +15,17 @@ Read the relevant ADR before reversing a documented decision.
 - 0005 RFC 7807 problem details
 - 0006 Labor Plan View vs. Workforce's own ShiftPlan model
 - 0007 arch-go fitness tests
-- 0008 MCP inbound adapter
+- 0008 MCP inbound adapter (auth section superseded by 0016)
 - 0009 product classification propagation to `WorkReleased`
 - 0010 gift-wrap as a `WorkReleased` characteristic
 - 0011 analytics data product
-- 0012 process-path catalogue validation
+- 0012 process-path catalogue validation (amended by 0030)
 - 0013 standard metrics convention
 - 0014 transactional outbox
-- 0015 REST identity / static bearer scopes (added auth)
+- 0015 REST identity / static bearer scopes (added auth; SUPERSEDED by 0016)
 - 0016 removes REST/MCP static-bearer auth fleet-wide
 - 0017 travel-distance lookup on `CommitShiftPlan`
-- 0018 `PathCapacityChanged` integration event (consumed by order-management)
+- 0018 `PathCapacityChanged` integration event (consumed by order-management and network-fulfillment)
 - 0019 reconcile committed `PathPlan` against `LaborPlanObserved`
 - 0020 FlowFed paths stay `Known=false`; observed-throughput signal proposed
 - 0021 CloudEvents dual-mode migration (SUPERSEDED by 0027)
@@ -37,3 +37,6 @@ Read the relevant ADR before reversing a documented decision.
 - 0027 CloudEvents 1.0 is the mandatory envelope (supersedes 0021 and the envelope parts of 0004)
 - 0028 processed-event mark commits atomically with the handling it guards
 - 0029 optimistic concurrency for the `WorkPool` aggregate
+- 0030 Kafka-sourced process-path catalogue (`PATH_CATALOGUE_SOURCE=kafka`) and boot-time dial retry (amends 0012)
+- 0031 consume `OrderAllocated`/`OrderPartiallyAllocated` by choreography, fire-and-forget
+- 0032 retention sweeper for `idempotency_keys` and published `outbox_events`

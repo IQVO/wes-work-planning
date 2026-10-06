@@ -1,7 +1,7 @@
 # Documentation site — WES Work Planning & Release
 
 The [Docusaurus](https://docusaurus.io) source for
-<https://claudioed.github.io/wes-work-planning/>.
+<https://iqvo.github.io/wes-work-planning/>.
 
 This directory **is** the docs folder for the repository and also the
 Docusaurus project root. The Markdown pages live one level down, in

@@ -11,8 +11,11 @@ description: The seven control-loop use cases of the Work Planning & Release bou
 The bounded context is built around **seven control-loop use cases**. They
 form a single closed control loop: plan → release → observe → correct.
 Alongside them sit read-only queries (`GetWorkUnitsByReference`,
-`LaborPlanView`, `InventoryView`) and the two projectors that consume other
-contexts' events (`ObserveLaborPlan`, `ObserveInventoryChange`).
+`GetWorkUnit`, `LaborPlanView`, `InventoryView`) and the four inbound-event
+use cases that apply other contexts' events (`ObserveLaborPlan`,
+`ObserveInventoryChange`, `ApplyTaskCompleted`, `ApplyOrderAllocated`), each
+idempotent via one atomic processed-event mark
+([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)).
 
 ```mermaid
 flowchart LR
@@ -45,9 +48,23 @@ heads, service rate (units/hour) and hours. Enforces the aggregate invariant
 than it has physical stations.
 
 Produces the `ShiftPlan` aggregate (a collection of `PathPlan` values).
-`PathPlan.PlannedThroughput()` = `rate × heads × hours`.
+`PathPlan.PlannedThroughput()` = `rate × heads × hours`; a product that
+overflows to infinity is rejected (`ErrThroughputNotFinite`).
 
-:::note Not Workforce Management's ShiftPlan
+Two optional enrichments ride on the same commit:
+
+- **Travel-distance hint** — when the caller supplies both
+  `fromLocationCode` and `toLocationCode`, facility-layout's `GET /distance`
+  is read once and stamped on the `PathPlan`
+  ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)).
+  Fail-open.
+- **Drift reconciliation** — if Workforce has already committed a labor plan
+  for the path (`LaborPlanObserved`), the planned heads are compared in the
+  same transaction and `PathPlanDriftDetected` is raised when they disagree
+  ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)).
+  `ObserveLaborPlan` runs the same comparison when Workforce commits second.
+
+:::note[Not Workforce Management's ShiftPlan]
 This service's `ShiftPlan` is a *different model* from the `ShiftPlan` in the
 `workforce-management` bounded context, despite the shared word. See
 [ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md).
@@ -57,7 +74,15 @@ This service's `ShiftPlan` is a *different model* from the `ShiftPlan` in the
 
 Creates a `WorkUnit` in state `Pending` carrying its CPT and an external
 reference (e.g. the source order line), and enqueues it in that path's
-`WorkPool`.
+`WorkPool`. Optional `sku` and `giftWrap` ride along for the `WorkReleased`
+payload ([ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md),
+[ADR-0010](../adr/0010-gift-wrap-as-a-work-released-characteristic.md)).
+The first enqueue on a path creates its pool as release-fed with a WIP limit
+and alarm threshold of 1000 (`defaultWIPLimit`/`defaultAlarmThreshold`).
+Over REST with Postgres the call requires an `Idempotency-Key` header
+([ADR-0022](../adr/0022-idempotency-key-middleware.md)); order-management
+reaches the same use case by event choreography
+([ADR-0031](../adr/0031-order-allocated-choreography.md)).
 
 ### 4. `ReleaseNextWork(path)`
 
@@ -80,8 +105,11 @@ double-completion (`ErrAlreadyCompleted`) and completion of a unit that was
 never released (`ErrNotReleased`).
 
 Reachable two ways: `POST /work-units/{id}/complete`, or a `TaskCompleted`
-event consumed from `fulfillment-execution` — the same use case, called from a
-different inbound adapter.
+event consumed from `fulfillment-execution` through `ApplyTaskCompleted` —
+the same use case, called from a different inbound adapter. Completion also
+frees the unit's WIP slot on its `WorkPool` (the pool entry is reconciled to
+`completed`), which is what lets the next release on a saturated
+release-fed path proceed.
 
 ### 6. `SampleBacklog(path)`
 

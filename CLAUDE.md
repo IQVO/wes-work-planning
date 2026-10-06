@@ -23,7 +23,8 @@ Domain source of truth: `/Users/claudioed/docs/amazon-fulfillment-ddd.md` and
   bounded-context boundary (layer map, analytics data product ADR-0011, `web/`
   micro-frontend boundary).
 - Read `.claude/rules/domain-model.md` before writing any use case or domain
-  logic (aggregates, invariants, the ten domain events, the seven use cases).
+  logic (aggregates, invariants, the eleven domain events, the seven
+  control-loop use cases plus the queries and inbound-event use cases).
 - `cmd/wes-projector` is the ONLY writer of the analytics DB; `cmd/wes-reports`
   is read-only.
 
@@ -46,7 +47,7 @@ Domain source of truth: `/Users/claudioed/docs/amazon-fulfillment-ddd.md` and
 ### Events: CloudEvents 1.0 is MANDATORY (ADR-0027)
 
 Every Kafka message produced or consumed (integration `warehouse.<ctx>.events`
-AND analytics `warehouse.<ctx>.analytics`) is a CloudEvents 1.0 event in
+AND analytics — here `warehouse.wes.analytics`) is a CloudEvents 1.0 event in
 structured content mode. Hard fleet rule, not a preference:
 
 - No flat envelope, no dual-write, no dual-read, no envelope toggle env var
@@ -75,7 +76,7 @@ structured content mode. Hard fleet rule, not a preference:
 - Every run needs the process-path catalogue (ADR-0012): the default
   `PATH_CATALOGUE_SOURCE=file` refuses to start without `PATH_CATALOGUE_FILE`.
 - GitFlow: `develop` is the default working branch, `main` is release-only.
-- Read the relevant ADR before reversing a documented decision (29 ADRs, index
+- Read the relevant ADR before reversing a documented decision (32 ADRs, index
   in `.claude/rules/adrs-and-decisions.md`; ADR-0027 supersedes 0021 and the
   envelope parts of 0004).
 - Run instructions, code standards, full testing detail:

@@ -9,3 +9,6 @@ coverage.out
 /wes-reports
 /mcp
 .claude/settings.local.json
+
+# Spectral/AsyncAPI lint tooling dependencies (installed by `npm ci` in apis/tooling).
+apis/tooling/node_modules/

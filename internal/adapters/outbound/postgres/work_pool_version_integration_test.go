@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -24,16 +23,9 @@ import (
 // version column every save "won", each rewriting the whole pool and
 // silently reverting the others (the lost-update bug).
 func TestWorkPoolRepo_OptimisticConcurrency(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL not set; skipping postgres integration test")
-	}
 	ctx := context.Background()
-	db, err := postgres.Connect(ctx, dsn)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer db.Close()
+	db := outboxDB(t)
+	var err error
 	repo := postgres.NewWorkPoolRepo(db)
 	pathId, _ := shared.NewPathId(fmt.Sprintf("integration-occ-%d", time.Now().UnixNano()))
 	cpt := shared.NewCPT(time.Now().Add(time.Hour).Truncate(time.Microsecond))

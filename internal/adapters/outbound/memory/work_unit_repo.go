@@ -74,6 +74,10 @@ func cloneWorkUnit(u *workunit.WorkUnit) *workunit.WorkUnit {
 	}
 	cp.SetSKU(u.SKU())
 	cp.SetGiftWrap(u.GiftWrap())
+	cp.SetTransferRef(u.TransferRef())
+	cp.SetWorkKind(u.WorkKind())
+	cp.SetSiteId(u.SiteId())
+	cp.SetQuantity(u.Quantity())
 	if at := u.ReleasedAt(); at != nil {
 		_ = cp.Release(*at)
 	}

@@ -55,7 +55,7 @@ type Handlers struct {
 	// has to parse the id string to recover its sku/reference/path.
 	GetWorkUnit *usecases.GetWorkUnit
 
-	// ConfigurePool backs PUT /paths/{pathId}/pool (ADR-0033): the explicit
+	// ConfigurePool backs PUT /paths/{pathId}/pool (ADR-0034): the explicit
 	// operator command that sets a path's pool mode and WIP limit.
 	ConfigurePool *usecases.ConfigurePool
 
@@ -294,7 +294,7 @@ func (h *Handlers) postWorkUnit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toWorkUnitResponseDTO(unit))
 }
 
-// putPool is the ConfigurePool command (ADR-0033): PUT is idempotent by
+// putPool is the ConfigurePool command (ADR-0034): PUT is idempotent by
 // construction -- the body fully describes the desired mode and WIP limit.
 // It validates pathId against the catalogue because it can seed a new pool.
 func (h *Handlers) putPool(w http.ResponseWriter, r *http.Request) {

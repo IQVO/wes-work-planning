@@ -57,7 +57,7 @@ tags:
   - name: Pool Configuration
     description: >
       The explicit operator command that sets a process path's work pool feed
-      mode and WIP limit (ADR-0033). Lowering a limit never evicts work.
+      mode and WIP limit (ADR-0034). Lowering a limit never evicts work.
   - name: Telemetry
     description: >
       Live buffer telemetry read models (backlog depth, WIP, feed mode)
@@ -453,7 +453,7 @@ paths:
       operationId: configurePool
       summary: Configure a process path's work pool (feed mode and WIP limit)
       description: >
-        The ConfigurePool command (ADR-0033): sets the pool's feed mode
+        The ConfigurePool command (ADR-0034): sets the pool's feed mode
         (`ReleaseFed` or `FlowFed`) and its WIP limit, creating the pool when
         none exists yet. This is the only way to obtain a flow-fed pool; a
         path nobody configured keeps the fallback `EnqueueWorkUnit` seeds on

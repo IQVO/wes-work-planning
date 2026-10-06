@@ -171,7 +171,7 @@ flowchart LR
     E3["Path throttled"]:::event
     E4["Labor reassignment flagged"]:::event
 
-    C3["Configure pool: mode and WIP limit (ADR-0033)"]:::command
+    C3["Configure pool: mode and WIP limit (ADR-0034)"]:::command
 
     ES["Stock reserved or reservation revoked"]:::event
     R3["UsableInventoryObserved"]:::readmodel
@@ -209,7 +209,7 @@ Source: `internal/application/usecases/sample_backlog.go`,
 `internal/domain/shared/events.go`. Omits: `PathCapacityChanged` is raised only
 when `cutoffAt` is supplied, and `BacklogThresholdBreached` only over the
 alarm threshold. `Configure pool` raises no event
-([ADR-0033](../adr/0033-configure-pool-command.md)).
+([ADR-0034](../adr/0034-configure-pool-command.md)).
 
 ## Stickies and their evidence
 
@@ -223,7 +223,7 @@ alarm threshold. `Configure pool` raises no event
 | Record completion | Command | `usecases.RecordCompletion`, `POST /work-units/{id}/complete` |
 | Sample backlog | Command (query that can emit events) | `usecases.SampleBacklog`, `GET /paths/{pathId}/telemetry` |
 | Decide rebalance | Command (query that can emit events) | `usecases.RebalanceDecision`, `GET /paths/{pathId}/rebalance` |
-| Configure pool | Command | `usecases.ConfigurePool`, `PUT /paths/{pathId}/pool` ([ADR-0033](../adr/0033-configure-pool-command.md)); raises no event |
+| Configure pool | Command | `usecases.ConfigurePool`, `PUT /paths/{pathId}/pool` ([ADR-0034](../adr/0034-configure-pool-command.md)); raises no event |
 | ChargeForecast, ShiftPlan, WorkPool, WorkUnit | Aggregate | `internal/domain/{charge,plan,release,workunit}` |
 | Charge forecast received … Path plan drift detected (11) | Domain event | `internal/domain/shared/events.go` |
 | Workforce shift plan committed, Order allocated, Task completed, Stock reserved | Domain event (external) | type constants in `internal/adapters/kafka/cloudevents/cloudevents.go` |
@@ -250,6 +250,6 @@ not resurface.
 | `WorkPool` entries are never pruned and every save rewrites them | `WorkPoolRepo.Save` deletes and re-inserts all `work_pool_entries` for the path |
 | Hot `WorkPool` row under concurrent writes | [ADR-0029](../adr/0029-work-pool-optimistic-concurrency.md); `maxPoolSaveAttempts = 12`, then 409 `concurrent-modification` |
 | `RateDeviationDetected` is declared but never raised | **Decided 2026-10-06: kept reserved.** Declared for a future detection rule ([ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md) defers it); not emitted today. Detection needs a business rule nobody has specified, and removing the declaration would be a contract removal |
-| ~~No code path creates a flow-fed pool or changes WIP limits~~ | **Resolved 2026-10-06 (ADR-0033):** `PUT /paths/{pathId}/pool` (`usecases.ConfigurePool`) sets a path's mode and WIP limit, creating the pool if absent; lowering below the current WIP never evicts, releases pause until WIP < limit. An unconfigured path keeps the `ReleaseFed` / 1000 fallback of `EnqueueWorkUnit` |
+| ~~No code path creates a flow-fed pool or changes WIP limits~~ | **Resolved 2026-10-06 (ADR-0034):** `PUT /paths/{pathId}/pool` (`usecases.ConfigurePool`) sets a path's mode and WIP limit, creating the pool if absent; lowering below the current WIP never evicts, releases pause until WIP < limit. An unconfigured path keeps the `ReleaseFed` / 1000 fallback of `EnqueueWorkUnit` |
 | `UsableInventoryObserved` feeds no decision | **Decided 2026-10-06: read-only context by design ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)); gating release on it would be a new business rule.** Reservations in inventory-storage already guard availability. Only `ObserveInventoryChange` writes it and only `InventoryView` (`GET /inventory-view/{sku}`) reads it |
 | `events` table is unused | **Decided 2026-10-06: legacy, unused; retained, additive migrations only.** Dropping it is destructive and needs explicit approval |

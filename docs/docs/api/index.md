@@ -40,7 +40,7 @@ not-ready first on graceful shutdown
 | 11 | `GET` | `/work-units/{id}` | GetWorkUnit | `getWorkUnit` |
 | 12 | `GET` | `/healthz` | — | `healthCheck` |
 | 13 | `GET` | `/readyz` | — | `readinessCheck` |
-| 14 | `PUT` | `/paths/{pathId}/pool` | ConfigurePool ([ADR-0033](../adr/0033-configure-pool-command.md)) | `configurePool` |
+| 14 | `PUT` | `/paths/{pathId}/pool` | ConfigurePool ([ADR-0034](../adr/0034-configure-pool-command.md)) | `configurePool` |
 
 ## Design constraints
 

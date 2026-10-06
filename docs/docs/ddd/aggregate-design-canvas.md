@@ -231,7 +231,7 @@ stateDiagram-v2
 Source: `internal/domain/release/work_pool.go`,
 `internal/domain/release/errors.go`. Omits: `RestoreEntry`, which only
 rehydrates stored rows in the repository adapter, the pool-level
-`ErrEmptyPool` / `ErrUnknownEntry` failures, and `Configure` (ADR-0033), which
+`ErrEmptyPool` / `ErrUnknownEntry` failures, and `Configure` (ADR-0034), which
 sets the pool's mode and WIP limit and never changes any entry's state, so it
 adds no transition: lowering the limit below the current WIP only makes the
 `ErrWIPLimitReached` self-loop above apply until completions drain WIP.
@@ -248,7 +248,7 @@ adds no transition: lowering the limit below the current WIP only makes the
 | W6 | An entry completes only after it was released | `Complete` → `release.ErrNotReleased` |
 | W7 | **Earliest CPT first** — the priority function | `nextPendingIndex` |
 | W8 | Concurrent saves never silently overwrite each other | `WorkPoolRepo.Save` matches `version`; zero rows → `ports.ErrConcurrentModification`, retried up to 12 times by `retryOnPoolConflict`, then HTTP 409 `concurrent-modification` |
-| W9 | **The WIP limit is a positive integer and the mode a known `FeedMode`; reconfiguring never evicts work** | `Configure` → `release.ErrInvalidWIPLimit` / `release.ErrUnknownFeedMode` (HTTP 400); entries are untouched, so lowering the limit below the current WIP just pauses releases (W2) until WIP < limit ([ADR-0033](../adr/0033-configure-pool-command.md)) |
+| W9 | **The WIP limit is a positive integer and the mode a known `FeedMode`; reconfiguring never evicts work** | `Configure` → `release.ErrInvalidWIPLimit` / `release.ErrUnknownFeedMode` (HTTP 400); entries are untouched, so lowering the limit below the current WIP just pauses releases (W2) until WIP < limit ([ADR-0034](../adr/0034-configure-pool-command.md)) |
 
 W2 is conditional by design: on a **flow-fed** pool the WIP limit is not
 enforced and only `alarmThreshold` applies (`IsOverAlarmThreshold`). You can
@@ -274,7 +274,7 @@ flow-fed only through `ConfigurePool` (W9); an unconfigured path keeps the
 | Command | Entry points | Pool method |
 |---|---|---|
 | `EnqueueWorkUnit` | `POST /paths/{pathId}/work-units` (`Idempotency-Key` with Postgres); `ApplyOrderAllocated` from Kafka | `Enqueue` (creates the pool on first enqueue **if none was configured**: `ReleaseFed`, WIP limit and alarm threshold 1000) |
-| `ConfigurePool` | `PUT /paths/{pathId}/pool` (REST only, no MCP tool; [ADR-0033](../adr/0033-configure-pool-command.md)) | `Configure` (creates the pool if absent; idempotent; raises no event) |
+| `ConfigurePool` | `PUT /paths/{pathId}/pool` (REST only, no MCP tool; [ADR-0034](../adr/0034-configure-pool-command.md)) | `Configure` (creates the pool if absent; idempotent; raises no event) |
 | `ReleaseNextWork` | `POST /paths/{pathId}/release`; MCP `release_next_work` | `ReleasePolicy.Apply` → `ReleaseNext`, plus `Reconcile` |
 | `RecordCompletion` | `POST /work-units/{id}/complete`; `ApplyTaskCompleted` from Kafka | `Reconcile` |
 | `SampleBacklog` | `GET /paths/{pathId}/telemetry`; MCP `get_backlog_telemetry` | read-only: `BacklogDepth`, `WIP`, `IsOverAlarmThreshold`, `RemainingCapacity` |

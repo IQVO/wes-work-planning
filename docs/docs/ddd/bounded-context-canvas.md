@@ -58,7 +58,7 @@ process-path catalogue (process-path-management).
 | Planner / supervisor | `CommitShiftPlan` | Command | REST `POST /paths/{pathId}/plan` | OHS |
 | Any upstream caller | `EnqueueWorkUnit` | Command | REST `POST /paths/{pathId}/work-units` (`Idempotency-Key` required with Postgres) | OHS |
 | Supervisor / agent | `ReleaseNextWork` | Command | REST `POST /paths/{pathId}/release`; MCP tool `release_next_work` | OHS |
-| Operator | `ConfigurePool` | Command | REST `PUT /paths/{pathId}/pool` (no MCP tool; [ADR-0033](../adr/0033-configure-pool-command.md)) | OHS |
+| Operator | `ConfigurePool` | Command | REST `PUT /paths/{pathId}/pool` (no MCP tool; [ADR-0034](../adr/0034-configure-pool-command.md)) | OHS |
 | Station / supervisor | `RecordCompletion` | Command | REST `POST /work-units/{id}/complete` | OHS |
 | Supervisor / warehouse-ops-agent | `SampleBacklog` | Query (may emit events) | REST `GET /paths/{pathId}/telemetry?cutoffAt=`; MCP tool `get_backlog_telemetry`; MCP resource `telemetry://{pathId}/backlog` | OHS |
 | Supervisor / warehouse-ops-agent | `RebalanceDecision` | Query (may emit events) | REST `GET /paths/{pathId}/rebalance`; MCP tool `get_rebalance_recommendation` | OHS |
@@ -111,7 +111,7 @@ Top terms:
   **release-fed with WIP limit and alarm threshold 1000** (`defaultWIPLimit`,
   `defaultAlarmThreshold`). An operator sets a path's mode and WIP limit
   explicitly with `PUT /paths/{pathId}/pool` (`ConfigurePool`,
-  [ADR-0033](../adr/0033-configure-pool-command.md)); lowering a limit below the
+  [ADR-0034](../adr/0034-configure-pool-command.md)); lowering a limit below the
   current WIP never evicts work, releases pause until WIP < limit.
 - A flow-fed path reports remaining capacity as **`Known=false`**, always
   ([ADR-0018](../adr/0018-path-capacity-changed.md),
@@ -163,7 +163,7 @@ Top terms:
   defers it; not emitted today; not removed).
 - ~~Nothing in production code creates a **flow-fed** pool or changes a pool's
   WIP limit.~~ **Resolved 2026-10-06:** `PUT /paths/{pathId}/pool`
-  ([ADR-0033](../adr/0033-configure-pool-command.md)).
+  ([ADR-0034](../adr/0034-configure-pool-command.md)).
 - `UsableInventoryObserved` feeds no decision. **Decided 2026-10-06:
   read-only context by design ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md));
   gating release on it would be a new business rule** (reservations in

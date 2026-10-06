@@ -472,7 +472,7 @@ sequenceDiagram
 Source: `internal/application/usecases/configure_pool.go`,
 `internal/domain/release/work_pool.go` (`Configure`),
 `internal/adapters/inbound/http/handlers.go` (`putPool`),
-[ADR-0033](../adr/0033-configure-pool-command.md). Omits: any outbox write —
+[ADR-0034](../adr/0034-configure-pool-command.md). Omits: any outbox write —
 the command raises no event, so no `UnitOfWork` is involved. Entries are never
 touched: lowering `wipLimit` below the current WIP evicts nothing, and
 `ReleaseNextWork` (diagram 2) answers `409 wip-limit-reached` until completions

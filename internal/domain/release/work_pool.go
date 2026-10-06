@@ -140,7 +140,7 @@ func (p *WorkPool) Enqueue(workUnitId string, cpt shared.CPT) error {
 }
 
 // Configure sets the pool's feed mode and WIP limit (the ConfigurePool
-// command, ADR-0033). It reports whether anything changed, so an identical
+// command, ADR-0034). It reports whether anything changed, so an identical
 // repeat is a no-op success (idempotent).
 //
 // The limit must be a positive integer and the mode a known FeedMode;

@@ -82,7 +82,7 @@ The first enqueue on a path whose pool was never configured creates it as
 release-fed with a WIP limit and alarm threshold of 1000
 (`defaultWIPLimit`/`defaultAlarmThreshold`); an operator sets a path's mode and
 WIP limit explicitly with `PUT /paths/{pathId}/pool`
-([ADR-0033](../adr/0033-configure-pool-command.md)).
+([ADR-0034](../adr/0034-configure-pool-command.md)).
 Over REST with Postgres the call requires an `Idempotency-Key` header
 ([ADR-0022](../adr/0022-idempotency-key-middleware.md)); order-management
 reaches the same use case by event choreography

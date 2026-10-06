@@ -11,7 +11,7 @@ import (
 
 // ConfigurePool is the explicit operator command that sets a path's pool
 // feed mode and WIP limit, creating the pool when none exists yet
-// (ADR-0033). It is the only way to obtain a flow-fed pool.
+// (ADR-0034). It is the only way to obtain a flow-fed pool.
 //
 // It never evicts or cancels work: lowering the limit below the current
 // WIP just pauses releases until WIP < limit (release.WorkPool.Configure).

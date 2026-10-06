@@ -175,7 +175,7 @@ migrator (`CREATE TABLE IF NOT EXISTS` in `migrate.go`), not a migration file.
 |---|---|---|
 | `charge_forecasts` | `ChargeForecast` aggregate (buckets as JSONB) | `postgres.ChargeRepo` |
 | `shift_plans` | `ShiftPlan` aggregate, one `PathPlan` row per path | `postgres.PlanRepo` |
-| `work_pools` + `work_pool_entries` | `WorkPool` aggregate root + its entries | `postgres.WorkPoolRepo` (rewrites every entry on save, guarded by `version`; the `work_pools` row's `mode` / `wip_limit` are set by `ConfigurePool`, [ADR-0033](../adr/0033-configure-pool-command.md), or seeded `ReleaseFed`/1000 by the first enqueue) |
+| `work_pools` + `work_pool_entries` | `WorkPool` aggregate root + its entries | `postgres.WorkPoolRepo` (rewrites every entry on save, guarded by `version`; the `work_pools` row's `mode` / `wip_limit` are set by `ConfigurePool`, [ADR-0034](../adr/0034-configure-pool-command.md), or seeded `ReleaseFed`/1000 by the first enqueue) |
 | `work_units` | `WorkUnit` aggregate | `postgres.WorkUnitRepo` |
 | `labor_plan_view` | **Read model** `LaborPlanObserved` + ADR-0019 drift | `postgres.LaborPlanViewRepo` |
 | `usable_inventory_view` | **Read model** `UsableInventoryObserved` | `postgres.InventoryViewRepo` |

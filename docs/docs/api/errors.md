@@ -64,7 +64,7 @@ All type URIs are prefixed
 | `work-unit-id-required` | Work unit id is required | empty id |
 | `work-unit-reference-required` | Work unit reference is required | empty reference |
 | `work-pool-entry-not-found` | Work unit not found in this pool | releasing an unknown entry |
-| `invalid-wip-limit` | Invalid WIP limit | `PUT /paths/{pathId}/pool` with a `wipLimit` ≤ 0 ([ADR-0033](../adr/0033-configure-pool-command.md)) |
+| `invalid-wip-limit` | Invalid WIP limit | `PUT /paths/{pathId}/pool` with a `wipLimit` ≤ 0 ([ADR-0034](../adr/0034-configure-pool-command.md)) |
 | `unknown-feed-mode` | Unknown work pool feed mode | `PUT /paths/{pathId}/pool` with a `mode` other than `ReleaseFed`/`FlowFed` |
 | `idempotency-key-required` | Idempotency-Key header is required | `POST /paths/{pathId}/work-units` without an `Idempotency-Key` header ([ADR-0022](../adr/0022-idempotency-key-middleware.md)) |
 

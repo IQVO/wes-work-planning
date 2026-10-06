@@ -38,7 +38,7 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Kafka brokers: %v", err)
 	}
-	if err := createTopics(ctx, brokers, cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, cloudevents.TopicFulfillmentEvents, cloudevents.TopicOrderManagementEvents); err != nil {
+	if err := createTopics(ctx, brokers, cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, cloudevents.TopicFulfillmentEvents, cloudevents.TopicOrderManagementEvents, cloudevents.TopicNetworkDemandEvents); err != nil {
 		t.Fatalf("create Kafka topics: %v", err)
 	}
 
@@ -138,6 +138,7 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory,
 		usecases.NewApplyTaskCompleted(recordCompletion, processed),
 		usecases.NewApplyOrderAllocated(enqueue, processed, catalogue),
+		usecases.NewApplyWorkDemandReleased(enqueue, processed, catalogue),
 		catalogue, nil)
 	defer consumer.Close()
 

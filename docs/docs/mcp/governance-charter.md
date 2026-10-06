@@ -91,7 +91,7 @@ across clients and **SHOULD** be used rather than leaving procedure implicit.
 
 ## 7. Security & authorization (current posture: no IdP)
 
-:::warning This repository's actual state
+:::warning[This repository's actual state]
 The static-bearer layer described in rules 1–4 below was implemented and then
 **removed fleet-wide**
 ([ADR-0016](../adr/0016-remove-rest-mcp-static-bearer-auth.md), superseding

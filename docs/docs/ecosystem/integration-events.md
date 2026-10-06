@@ -59,8 +59,8 @@ envelope toggle.
 
 | `type` | `data` | Published when | Consumed by |
 |---|---|---|---|
-| `com.warehouse.wes.work-planning.workunit.WorkReleased` | `{"path_id","work_unit_id","cpt","ref"}` | `ReleaseNextWork` releases a unit | **`fulfillment-execution`** → creates a `Task` |
-| `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` | `{"path_id","cutoff_at","remaining_units","known"}` | `SampleBacklog` is called with `cutoffAt` set (ADR-0018) | **`order-management`** — its `kafkapathcapacity` adapter (own per-process consumer group, filters for this one event type) feeds its `ports.PathCapacity` cache, keyed by path and cutoff instant |
+| `com.warehouse.wes.work-planning.workunit.WorkReleased` | `{"path_id","work_unit_id","cpt","ref"}` (+ optional `required_capabilities`, `fragile`, `gift_wrap`) | `ReleaseNextWork` releases a unit | **`fulfillment-execution`** → creates a `Task` |
+| `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` | `{"path_id","cutoff_at","remaining_units","known"}` | `SampleBacklog` is called with `cutoffAt` set (ADR-0018) | **`order-management`** — its `kafkapathcapacity` adapter (own per-process consumer group, filters for this one event type) feeds its `ports.PathCapacity` cache, keyed by path and cutoff instant; **`network-fulfillment`** — its `pathcapacitycache` adapter replays the topic from the earliest offset under a process-unique group into an exact `(path_id, cutoff_at)` cache |
 
 ```json
 {
@@ -89,8 +89,9 @@ correlated against a CPT cutoff timestamp — not process-path-management's
 for a `FlowFed` path (no hard admission ceiling) or a `ReleaseFed` path with
 no WIP limit provisioned. See [ADR-0018](../adr/0018-path-capacity-changed.md).
 
-The other eight domain events are also written to this topic by the outbound
-adapter with a `{"path_id": ...}`-shaped payload, but nothing consumes them
+The other nine domain events (including `PathPlanDriftDetected`, ADR-0019)
+are also written to this topic by the outbound adapter with a
+`{"path_id": ...}`-shaped payload, but nothing consumes them
 today. (Separately, whenever `EVENT_PUBLISHER=kafka` a second publisher also writes
 every domain event to `warehouse.wes.analytics` for the analytics data product
 — same CloudEvents `type`, `dataschema` `urn:warehouse:wes-work-planning:analytics:<EventName>:v1` — see [ADR-0011](../adr/0011-analytical-data-product.md).) See the [full catalogue](../api/events.md#events-published).
@@ -142,7 +143,13 @@ path line** of its own shift plan, which is why the projection keys on
 
 **It is not fed into this service's `ShiftPlan` aggregate or `CommitShiftPlan`
 use case.** Same word, different bounded context —
-[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md).
+[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md). It is, however,
+*compared* with our committed `PathPlan` for the same path when one exists:
+the signed head difference is recorded on the view (`drift_heads`,
+`drift_detected_at`) and `PathPlanDriftDetected` is published when they
+disagree ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)).
+The `path_id` must match the process-path catalogue or the event is
+retried and dead-lettered.
 
 ### `warehouse.inventory.events` — `com.warehouse.wms.inventory-storage.reservation.StockReserved`, `...ReservationRevoked`
 
@@ -209,12 +216,17 @@ call to `POST /paths/{pathId}/work-units`: order-management (a new, 6th
 bounded context, upstream Customer of this service) now publishes here once
 it has allocated stock and locally marked an order line Released.
 
-For each entry in `lines`, the handler calls the **existing** `EnqueueWorkUnit`
-use case directly (no new use case), deriving a **deterministic**
-`work_unit_id` as `"{order_id}-line-{line_no}"` — so the same order line
+For each entry in `lines`, `ApplyOrderAllocated` first validates every line's
+`path_id` against the process-path catalogue (an unknown path fails the
+whole event, which is retried and then dead-lettered), then calls the
+**existing** `EnqueueWorkUnit` use case once per line inside one atomic
+scope, deriving a **deterministic**
+`work_unit_id` as `"{order_id}-line-{line_no}"` and using `promise_date` as
+the CPT — so the same order line
 always maps to the same work unit, which is a second line of defense against
 duplicate enqueues on top of the `processed_events` idempotency guard (see
-below).
+below): a line already in the pool (`ErrDuplicateEntry`) is skipped as a
+benign no-op ([ADR-0031](../adr/0031-order-allocated-choreography.md)).
 
 This integration is deliberately **fire-and-forget**: there is no reply event
 back to order-management. The existing `WorkUnitCreated`/`WorkReleased`

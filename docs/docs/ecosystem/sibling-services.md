@@ -8,7 +8,7 @@ description: What each warehouse-systems bounded context this service integrates
 
 # Sibling services
 
-The six bounded contexts this service integrates with directly, summarised
+The seven bounded contexts this service integrates with directly, summarised
 from each repository's own `CLAUDE.md` and adapter code. Each is an independent Go service with its own model, its own
 database and its own deployment lifecycle.
 
@@ -176,6 +176,25 @@ catalogue from `warehouse-infra`'s YAML.
 
 ---
 
+## `network-fulfillment` — **Supporting**
+
+> The anti-corruption layer between the fleet and an external retail
+> fulfillment network; owns `NetworkOrder` and `CapabilityOffer`.
+
+| | |
+|---|---|
+| Consumes | our `PathCapacityChanged` on `warehouse.work-planning.events` (its `pathcapacitycache` adapter, one of the Kafka-fed caches behind `CapabilityOffer`, opt-in via its `CAPABILITY_OFFER_ENABLED`) |
+
+**Relationship to this service:** downstream, Conformist to our Published
+Language. Its `internal/adapters/outbound/pathcapacitycache` replays our topic
+from the earliest offset under a process-unique consumer group, keeps only
+`com.warehouse.wes.work-planning.workpool.PathCapacityChanged`, and caches
+`remaining_units`/`known` per exact `(path_id, cutoff_at)` pair behind its
+own `ports.PathCapacity`. We publish nothing specifically for it and do not
+call it.
+
+---
+
 ## What they all share
 
 Conventions, not code. Each service re-implements these; none of them is a
@@ -183,7 +202,9 @@ shared library, so no service can force another to redeploy:
 
 - Hexagonal / ports-and-adapters with the same strict dependency rule
 - Go, chi, pgx/v5, golang-migrate, `segmentio/kafka-go`
-- The same integration-event envelope shape, duplicated by agreement
+- The same CloudEvents 1.0 envelope and `type` naming convention
+  ([ADR-0027](../adr/0027-cloudevents-mandatory-event-envelope.md)), with the
+  cross-service `type` strings duplicated by agreement, never imported
 - The same `EVENT_PUBLISHER=kafka|log` / `KAFKA_BROKERS` configuration switches
 - RFC 7807 problem details, an `apis/openapi.yaml` linted by Spectral in CI,
   and a Helm chart

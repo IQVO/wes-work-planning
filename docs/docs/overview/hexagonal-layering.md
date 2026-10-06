@@ -24,7 +24,7 @@ flowchart TB
     end
 
     subgraph app["Application layer"]
-        UC["application/usecases<br/>7 control-loop use cases,<br/>3 queries + 2 projectors"]
+        UC["application/usecases<br/>7 control-loop use cases,<br/>4 queries + 4 inbound-event use cases"]
         PORTS["application/ports<br/>driven-port interfaces"]
     end
 
@@ -121,8 +121,10 @@ so the domain never learns that Postgres or Kafka exist:
 | `Clock` | abstract "now" so use cases and tests are deterministic |
 | `LaborPlanViewRepo` | persist the `LaborPlanObserved` projection, one per path |
 | `InventoryViewRepo` | atomically apply a delta to `UsableInventoryObserved`, keyed by SKU |
-| `ProcessedEventRepo` | record consumed `event_id`s so redelivery is a no-op |
+| `ProcessedEventRepo` | record consumed CloudEvents `id`s so redelivery is a no-op |
+| `ProcessedEventReleaser` | optional: undo a non-transactional (in-memory) mark when the effect fails (ADR-0028) |
 | `UnitOfWork` | run a use case's save + publish in one Postgres transaction (ADR-0014) |
+| `ReleaseMetrics` | record the `wes.work_units.released` business counter (ADR-0013) |
 | `PathCatalogue` | look up a `pathId` in the declared process-path catalogue (ADR-0012) |
 | `ProductClassificationLookup` | read a SKU's classification from inventory-storage (ADR-0009) |
 | `TravelDistanceLookup` | read a travel distance from facility-layout (ADR-0017) |

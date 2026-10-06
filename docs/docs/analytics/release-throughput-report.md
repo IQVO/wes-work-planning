@@ -47,9 +47,9 @@ separate from the integration topic — CloudEvents 1.0, see
 
 Every event carries its own `path_id` (the report's key dimension) directly, so
 no repo-lookup enrichment is needed. `WorkUnitCreated`, `ChargeForecastReceived`,
-`ShiftPlanCommitted`, and `LaborReassignmentFlagged` are published to the topic
-but do not currently move this report; the projector acknowledges them without
-projecting.
+`ShiftPlanCommitted`, `LaborReassignmentFlagged`, `PathCapacityChanged` and
+`PathPlanDriftDetected` are published to the topic but do not currently move
+this report; the projector acknowledges them without projecting.
 
 Every message is a CloudEvents 1.0 structured-mode event: `specversion` `1.0`,
 `id` (UUID), `source` `/warehouse/wes-work-planning`, `type` (above),

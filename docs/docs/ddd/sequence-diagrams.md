@@ -61,8 +61,8 @@ sequenceDiagram
         loop retryOnPoolConflict, at most 12 attempts
             UC->>UC: workunit.NewWorkUnit, SetSKU, SetGiftWrap
             UC->>PoolRepo: FindByPathId
-            alt no pool yet
-                UC->>Pool: NewWorkPool ReleaseFed, WIP 1000, alarm 1000
+            alt no pool yet, path never configured via ConfigurePool
+                UC->>Pool: NewWorkPool ReleaseFed, WIP 1000, alarm 1000 fallback
             end
             UC->>Pool: Enqueue id and cpt
             alt id already in pool
@@ -430,3 +430,50 @@ Source: `internal/adapters/outbound/postgres/outbox_publisher.go`,
 `cmd/wes/main.go`. Omits: the housekeeping sweeper that later deletes
 published rows older than `OUTBOX_RETENTION`
 ([ADR-0032](../adr/0032-housekeeping-retention-sweeper.md)).
+
+## 10. Configure a pool (REST)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Op as Operator or upstream caller
+    participant HTTP as HTTP adapter
+    participant UC as ConfigurePool
+    participant PoolRepo as WorkPoolRepo
+    participant Pool as WorkPool
+
+    Op->>HTTP: PUT /paths/{pathId}/pool with mode and wipLimit
+    HTTP->>HTTP: validatePathId against process-path catalogue
+    alt wipLimit missing or mode unparseable
+        HTTP-->>Op: 400 malformed-request-body or unknown-feed-mode
+    end
+    HTTP->>UC: Execute path, mode, wipLimit
+    loop retryOnPoolConflict, at most 12 attempts
+        UC->>PoolRepo: FindByPathId
+        alt no pool yet
+            UC->>Pool: NewWorkPool ReleaseFed, WIP 1000, alarm 1000, then configure
+        end
+        UC->>Pool: Configure mode and wipLimit
+        alt wipLimit not positive
+            Pool-->>HTTP: ErrInvalidWIPLimit, 400 invalid-wip-limit
+        else unchanged on an existing pool
+            Pool-->>UC: changed false, no write
+        else new or changed
+            UC->>PoolRepo: Save, matches version
+            alt version moved meanwhile
+                PoolRepo-->>UC: ErrConcurrentModification, retry from FindByPathId
+            end
+        end
+    end
+    UC-->>HTTP: WorkPool
+    HTTP-->>Op: 200 with mode, wipLimit, live wip and backlogDepth
+```
+
+Source: `internal/application/usecases/configure_pool.go`,
+`internal/domain/release/work_pool.go` (`Configure`),
+`internal/adapters/inbound/http/handlers.go` (`putPool`),
+[ADR-0033](../adr/0033-configure-pool-command.md). Omits: any outbox write —
+the command raises no event, so no `UnitOfWork` is involved. Entries are never
+touched: lowering `wipLimit` below the current WIP evicts nothing, and
+`ReleaseNextWork` (diagram 2) answers `409 wip-limit-reached` until completions
+bring WIP below the new limit.

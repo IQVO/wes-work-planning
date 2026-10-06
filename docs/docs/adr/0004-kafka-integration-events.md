@@ -17,7 +17,7 @@ consumer idempotency (§5) and consuming without publishing (§6) — remains in
 force; idempotency now keys on the CloudEvents `id`. Originally accepted
 platform-wide.
 
-:::warning Superseded envelope
+:::warning[Superseded envelope]
 The flat envelope shown in §2 is retired. Every message is now a CloudEvents
 1.0 structured-mode event — see ADR-0027. The text below is kept unchanged
 as the historical record.
@@ -94,7 +94,7 @@ com.warehouse.wes.work-planning.workunit.WorkReleased
 All segments lowercase except the final PascalCase event name, which matches
 the past-tense domain event name in the code.
 
-:::caution Recorded honestly
+:::caution[Recorded honestly]
 The **running adapters still write the simpler envelope** in §2; the CloudEvents
 migration is documented but not implemented, and the sibling consumers expect
 the simpler shape. Both are described on the [Events](../api/events.md) page,

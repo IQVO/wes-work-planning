@@ -78,8 +78,11 @@ reference (e.g. the source order line), and enqueues it in that path's
 `WorkPool`. Optional `sku` and `giftWrap` ride along for the `WorkReleased`
 payload ([ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md),
 [ADR-0010](../adr/0010-gift-wrap-as-a-work-released-characteristic.md)).
-The first enqueue on a path creates its pool as release-fed with a WIP limit
-and alarm threshold of 1000 (`defaultWIPLimit`/`defaultAlarmThreshold`).
+The first enqueue on a path whose pool was never configured creates it as
+release-fed with a WIP limit and alarm threshold of 1000
+(`defaultWIPLimit`/`defaultAlarmThreshold`); an operator sets a path's mode and
+WIP limit explicitly with `PUT /paths/{pathId}/pool`
+([ADR-0033](../adr/0033-configure-pool-command.md)).
 Over REST with Postgres the call requires an `Idempotency-Key` header
 ([ADR-0022](../adr/0022-idempotency-key-middleware.md)); order-management
 reaches the same use case by event choreography

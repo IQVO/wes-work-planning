@@ -14,16 +14,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	inboundhttp "github.com/claudioed/wes-work-planning/internal/adapters/inbound/http"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
@@ -32,53 +28,14 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 )
 
-// idempotencyMigrationsDir resolves ./migrations from this package's
-// location — same relative depth idempotencyDB below needs, independent
-// of internal/adapters/outbound/postgres's own migrationsDir (a different
-// _test package, so not importable from here).
-func idempotencyMigrationsDir(t *testing.T) string {
-	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("..", "..", "..", "..", "migrations"))
-	if err != nil {
-		t.Fatalf("resolve migrations dir: %v", err)
-	}
-	return abs
-}
-
-// idempotencyDB boots a throwaway Postgres (testcontainers — the test owns
-// its own database, never an external DATABASE_URL) and runs every
-// migration in this repo, including the idempotency_keys one.
+// idempotencyDB empties the package's shared, migrated Postgres (TestMain,
+// main_integration_test.go — the test owns its database, never an external
+// DATABASE_URL) and returns a pool on it. Every migration in this repo,
+// including the idempotency_keys one, was applied once at package start.
 func idempotencyDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	ctx := context.Background()
-
-	container, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-		tcpostgres.WithDatabase("wes_work_planning"),
-		tcpostgres.WithUsername("wes"),
-		tcpostgres.WithPassword("wes"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(90*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("start postgres container: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := testcontainers.TerminateContainer(container); err != nil {
-			t.Logf("terminate postgres container: %v", err)
-		}
-	})
-
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
-	}
-	if err := postgres.Migrate(dsn, idempotencyMigrationsDir(t)); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	pool, err := postgres.Connect(ctx, dsn)
+	truncateAppTables(t)
+	pool, err := postgres.Connect(context.Background(), sharedDSN)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}

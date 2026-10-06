@@ -6,11 +6,6 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-	"time"
-
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
 )
@@ -32,35 +27,12 @@ func migrationsDir(t *testing.T) string {
 	return abs
 }
 
-// startPostgres boots an empty Postgres and returns its connection string.
+// startPostgres returns the connection string of a genuinely EMPTY, unmigrated
+// database. These tests need pristine state, so each gets its own database
+// inside the package's shared container (see main_integration_test.go).
 func startPostgres(t *testing.T) string {
 	t.Helper()
-	ctx := context.Background()
-
-	container, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-		tcpostgres.WithDatabase("wes_work_planning"),
-		tcpostgres.WithUsername("wes"),
-		tcpostgres.WithPassword("wes"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(90*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("start postgres container: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := testcontainers.TerminateContainer(container); err != nil {
-			t.Logf("terminate postgres container: %v", err)
-		}
-	})
-
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("postgres connection string: %v", err)
-	}
-	return dsn
+	return freshDatabase(t)
 }
 
 // The regression test for the bug this change fixes: against a completely

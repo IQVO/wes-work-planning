@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -22,17 +23,7 @@ func NewWorkPoolRepo(pool *pgxpool.Pool) *WorkPoolRepo {
 }
 
 func modeToString(m release.FeedMode) string {
-	if m == release.FlowFed {
-		return "FlowFed"
-	}
-	return "ReleaseFed"
-}
-
-func stringToMode(s string) release.FeedMode {
-	if s == "FlowFed" {
-		return release.FlowFed
-	}
-	return release.ReleaseFed
+	return m.String()
 }
 
 func (r *WorkPoolRepo) Save(ctx context.Context, wp *release.WorkPool) error {
@@ -110,7 +101,12 @@ func (r *WorkPoolRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (
 		return nil, err
 	}
 
-	wp := release.NewWorkPool(pathId, stringToMode(modeStr), wipLimit, alarmThreshold)
+	mode, err := release.ParseFeedMode(modeStr)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate work pool %q: mode %q: %w", pathId.String(), modeStr, err)
+	}
+
+	wp := release.NewWorkPool(pathId, mode, wipLimit, alarmThreshold)
 	wp.SetVersion(version)
 
 	if err := hydratePoolEntries(ctx, querierFrom(ctx, r.pool), pathId, wp); err != nil {
@@ -154,7 +150,11 @@ func hydratePoolEntries(ctx context.Context, q querier, pathId shared.PathId, wp
 // then release for "released"/"completed" states, then complete for
 // "completed" — the inverse of Save's state column derivation.
 func enqueueEntryState(wp *release.WorkPool, workUnitId string, cpt time.Time, state string) error {
-	return wp.RestoreEntry(workUnitId, shared.NewCPT(cpt), state == "released" || state == "completed", state == "completed")
+	isReleased, isCompleted, err := release.ParseEntryState(state)
+	if err != nil {
+		return fmt.Errorf("rehydrate work pool %q entry %q: state %q: %w", wp.PathId().String(), workUnitId, state, err)
+	}
+	return wp.RestoreEntry(workUnitId, shared.NewCPT(cpt), isReleased, isCompleted)
 }
 
 // insertPoolEntries writes every entry of wp in ONE statement (unnest over

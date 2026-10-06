@@ -28,6 +28,24 @@ func (s State) String() string {
 	}
 }
 
+// ParseState validates and converts the persisted string form of a State
+// (the inverse of State.String). Anything that is not exactly Pending,
+// Released or Completed — including "" and "Unknown" — is rejected with
+// ErrUnknownState, so a corrupt stored value can never become an invalid
+// state inside an aggregate.
+func ParseState(value string) (State, error) {
+	switch value {
+	case Pending.String():
+		return Pending, nil
+	case Released.String():
+		return Released, nil
+	case Completed.String():
+		return Completed, nil
+	default:
+		return Pending, ErrUnknownState
+	}
+}
+
 // WorkUnit is a releasable unit of work (e.g. a pick task). It is assigned
 // at most once at a time and cannot complete twice.
 type WorkUnit struct {

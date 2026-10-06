@@ -3,7 +3,7 @@ paths:
   - "docs/docs/adr/**"
 ---
 
-# ADR index (0001–0032)
+# ADR index (0001–0034)
 
 Full records live in `docs/docs/adr/` (index: `docs/docs/adr/index.md`).
 Read the relevant ADR before reversing a documented decision.
@@ -40,3 +40,5 @@ Read the relevant ADR before reversing a documented decision.
 - 0030 Kafka-sourced process-path catalogue (`PATH_CATALOGUE_SOURCE=kafka`) and boot-time dial retry (amends 0012)
 - 0031 consume `OrderAllocated`/`OrderPartiallyAllocated` by choreography, fire-and-forget
 - 0032 retention sweeper for `idempotency_keys` and published `outbox_events`
+- 0033 consume network-inventory-planning's `WorkDemandReleased` into transfer-referenced work units (choreography; `WorkReleased` carries optional transfer context)
+- 0034 `ConfigurePool` command (`PUT /paths/{pathId}/pool`): sets a pool's feed mode and WIP limit; lowering below current WIP never evicts, releases pause until WIP < limit

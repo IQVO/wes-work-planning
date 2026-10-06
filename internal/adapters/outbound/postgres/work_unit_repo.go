@@ -28,11 +28,13 @@ func stateToString(s workunit.State) string {
 
 func (r *WorkUnitRepo) Save(ctx context.Context, unit *workunit.WorkUnit) error {
 	_, err := querierFrom(ctx, r.pool).Exec(ctx, `
-		INSERT INTO work_units (id, path_id, cpt, reference, sku, gift_wrap, state, released_at, completed_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO work_units (id, path_id, cpt, reference, sku, gift_wrap, transfer_ref, work_kind, site_id, quantity, state, released_at, completed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (id) DO UPDATE SET
-			path_id = $2, cpt = $3, reference = $4, sku = $5, gift_wrap = $6, state = $7, released_at = $8, completed_at = $9
-	`, unit.Id(), unit.PathId().String(), unit.CPT().Time(), unit.Reference(), unit.SKU(), unit.GiftWrap(), stateToString(unit.State()), unit.ReleasedAt(), unit.CompletedAt())
+			path_id = $2, cpt = $3, reference = $4, sku = $5, gift_wrap = $6, transfer_ref = $7, work_kind = $8, site_id = $9, quantity = $10, state = $11, released_at = $12, completed_at = $13
+	`, unit.Id(), unit.PathId().String(), unit.CPT().Time(), unit.Reference(), unit.SKU(), unit.GiftWrap(),
+		unit.TransferRef(), unit.WorkKind().String(), unit.SiteId(), unit.Quantity(),
+		stateToString(unit.State()), unit.ReleasedAt(), unit.CompletedAt())
 	return err
 }
 
@@ -42,7 +44,7 @@ func missingTimestamp(id string, st workunit.State, column string) error {
 	return fmt.Errorf("rehydrate work unit %q: state %s but %s is NULL: %w", id, st, column, workunit.ErrMissingTransitionTime)
 }
 
-func (r *WorkUnitRepo) scanWorkUnit(id, pathIdStr, reference, sku, state string, giftWrap bool, cpt time.Time, releasedAt, completedAt *time.Time) (*workunit.WorkUnit, error) {
+func (r *WorkUnitRepo) scanWorkUnit(id, pathIdStr, reference, sku, state, transferRef, siteId, workKind string, giftWrap bool, quantity int, cpt time.Time, releasedAt, completedAt *time.Time) (*workunit.WorkUnit, error) {
 	st, err := workunit.ParseState(state)
 	if err != nil {
 		return nil, fmt.Errorf("rehydrate work unit %q: state %q: %w", id, state, err)
@@ -53,12 +55,28 @@ func (r *WorkUnitRepo) scanWorkUnit(id, pathIdStr, reference, sku, state string,
 		return nil, err
 	}
 
+	// work_kind is the one transfer column with an enum: validate it on the
+	// way in (the inverse of the setter), so a corrupt stored value fails
+	// loud instead of rehydrating an invalid WorkKind into the aggregate —
+	// the same contract ParseState gives `state`.
+	var kind workunit.WorkKind
+	if workKind != "" {
+		kind, err = workunit.ParseWorkKind(workKind)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate work unit %q: %w", id, err)
+		}
+	}
+
 	unit, err := workunit.NewWorkUnit(id, pathId, shared.NewCPT(cpt), reference)
 	if err != nil {
 		return nil, err
 	}
 	unit.SetSKU(sku)
 	unit.SetGiftWrap(giftWrap)
+	unit.SetTransferRef(transferRef)
+	unit.SetWorkKind(kind)
+	unit.SetSiteId(siteId)
+	unit.SetQuantity(quantity)
 
 	switch st {
 	case workunit.Pending:
@@ -89,28 +107,29 @@ func (r *WorkUnitRepo) scanWorkUnit(id, pathIdStr, reference, sku, state string,
 }
 
 func (r *WorkUnitRepo) FindById(ctx context.Context, id string) (*workunit.WorkUnit, error) {
-	var pathIdStr, reference, sku, state string
+	var pathIdStr, reference, sku, state, transferRef, siteId, workKind string
 	var giftWrap bool
+	var quantity int
 	var cpt time.Time
 	var releasedAt, completedAt *time.Time
 
 	row := querierFrom(ctx, r.pool).QueryRow(ctx, `
-		SELECT path_id, cpt, reference, sku, gift_wrap, state, released_at, completed_at
+		SELECT path_id, cpt, reference, sku, gift_wrap, state, released_at, completed_at, transfer_ref, work_kind, site_id, quantity
 		FROM work_units WHERE id = $1
 	`, id)
-	if err := row.Scan(&pathIdStr, &cpt, &reference, &sku, &giftWrap, &state, &releasedAt, &completedAt); err != nil {
+	if err := row.Scan(&pathIdStr, &cpt, &reference, &sku, &giftWrap, &state, &releasedAt, &completedAt, &transferRef, &workKind, &siteId, &quantity); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ports.ErrNotFound
 		}
 		return nil, err
 	}
 
-	return r.scanWorkUnit(id, pathIdStr, reference, sku, state, giftWrap, cpt, releasedAt, completedAt)
+	return r.scanWorkUnit(id, pathIdStr, reference, sku, state, transferRef, siteId, workKind, giftWrap, quantity, cpt, releasedAt, completedAt)
 }
 
 func (r *WorkUnitRepo) FindByPathId(ctx context.Context, pathId shared.PathId) ([]*workunit.WorkUnit, error) {
 	rows, err := querierFrom(ctx, r.pool).Query(ctx, `
-		SELECT id, cpt, reference, sku, gift_wrap, state, released_at, completed_at
+		SELECT id, cpt, reference, sku, gift_wrap, state, released_at, completed_at, transfer_ref, work_kind, site_id, quantity
 		FROM work_units WHERE path_id = $1
 	`, pathId.String())
 	if err != nil {
@@ -120,14 +139,15 @@ func (r *WorkUnitRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (
 
 	var out []*workunit.WorkUnit
 	for rows.Next() {
-		var id, reference, sku, state string
+		var id, reference, sku, state, transferRef, siteId, workKind string
 		var giftWrap bool
+		var quantity int
 		var cpt time.Time
 		var releasedAt, completedAt *time.Time
-		if err := rows.Scan(&id, &cpt, &reference, &sku, &giftWrap, &state, &releasedAt, &completedAt); err != nil {
+		if err := rows.Scan(&id, &cpt, &reference, &sku, &giftWrap, &state, &releasedAt, &completedAt, &transferRef, &workKind, &siteId, &quantity); err != nil {
 			return nil, err
 		}
-		unit, err := r.scanWorkUnit(id, pathId.String(), reference, sku, state, giftWrap, cpt, releasedAt, completedAt)
+		unit, err := r.scanWorkUnit(id, pathId.String(), reference, sku, state, transferRef, siteId, workKind, giftWrap, quantity, cpt, releasedAt, completedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -146,7 +166,7 @@ func (r *WorkUnitRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (
 // slice (not ports.ErrNotFound) when nothing matches.
 func (r *WorkUnitRepo) FindByReference(ctx context.Context, reference string) ([]*workunit.WorkUnit, error) {
 	rows, err := querierFrom(ctx, r.pool).Query(ctx, `
-		SELECT id, path_id, cpt, sku, gift_wrap, state, released_at, completed_at
+		SELECT id, path_id, cpt, sku, gift_wrap, state, released_at, completed_at, transfer_ref, work_kind, site_id, quantity
 		FROM work_units WHERE reference = $1
 	`, reference)
 	if err != nil {
@@ -156,14 +176,15 @@ func (r *WorkUnitRepo) FindByReference(ctx context.Context, reference string) ([
 
 	var out []*workunit.WorkUnit
 	for rows.Next() {
-		var id, pathIdStr, sku, state string
+		var id, pathIdStr, sku, state, transferRef, siteId, workKind string
 		var giftWrap bool
+		var quantity int
 		var cpt time.Time
 		var releasedAt, completedAt *time.Time
-		if err := rows.Scan(&id, &pathIdStr, &cpt, &sku, &giftWrap, &state, &releasedAt, &completedAt); err != nil {
+		if err := rows.Scan(&id, &pathIdStr, &cpt, &sku, &giftWrap, &state, &releasedAt, &completedAt, &transferRef, &workKind, &siteId, &quantity); err != nil {
 			return nil, err
 		}
-		unit, err := r.scanWorkUnit(id, pathIdStr, reference, sku, state, giftWrap, cpt, releasedAt, completedAt)
+		unit, err := r.scanWorkUnit(id, pathIdStr, reference, sku, state, transferRef, siteId, workKind, giftWrap, quantity, cpt, releasedAt, completedAt)
 		if err != nil {
 			return nil, err
 		}

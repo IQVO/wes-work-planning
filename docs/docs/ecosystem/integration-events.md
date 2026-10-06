@@ -236,6 +236,38 @@ observable signal of downstream progress — the same signal every other
 This was a confirmed v1 design choice made when rejecting order-management's
 former synchronous HTTP coupling, not an oversight.
 
+### `warehouse.network-inventory-planning.events` — `com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased`
+
+```json
+{
+  "specversion": "1.0", "id": "...", "type": "com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased",
+  "source": "/warehouse/network-inventory-planning", "subject": "demand-55601", "time": "...",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:network-inventory-planning:events:WorkDemandReleased:v1",
+  "data": {
+    "demand_id": "demand-55601", "work_kind": "TRANSFER_PICK", "transfer_ref": "TRF-2026-042",
+    "path_id": "pick-transfer-a", "site_id": "site-north-1", "cpt": "2026-10-06T23:00:00Z",
+    "sku": "SKU-T1", "quantity": 17
+  }
+}
+```
+
+One occurrence is one released **transfer demand leg**. `ApplyWorkDemandReleased`
+(ADR-0033) validates `path_id` against the process-path catalogue and
+`work_kind` against the declared enum (`TRANSFER_PICK | TRANSFER_DISPATCH |
+TRANSFER_ARRIVAL`) before anything is enqueued — an unrecognized value fails
+the whole message, which is retried and then dead-lettered. It then calls the
+existing `EnqueueWorkUnit` once, under the deterministic `work_unit_id` =
+`demand_id` (with `reference` = `demand_id` as the generic operator ref), so
+the same demand always maps to the same work unit: a redelivery of the same
+CloudEvents `id` is caught by the `processed_events` guard, and a *different*
+event carrying a `demand_id` already in a pool is a benign no-op
+(`ErrDuplicateEntry`), never a stall. The transfer metadata
+(`transfer_ref`, `work_kind`, `site_id`, `quantity`; `sku` already existed)
+rides the work unit and reappears as OPTIONAL fields on the published
+`WorkReleased` payload. Like the order integration, this is
+fire-and-forget: `WorkReleased` is the only signal back.
+
 ### `warehouse.process-path-management.events` — the process-path catalogue
 
 Consumed only when `PATH_CATALOGUE_SOURCE=kafka` (the default `file` source
@@ -289,6 +321,7 @@ Observable consequences, each covered by a unit test:
 | `ShiftPlanCommitted` | the labour projection is **not** re-written |
 | `TaskCompleted` | `RecordCompletion` is **not** called a second time |
 | `OrderAllocated` / `OrderPartiallyAllocated` | `EnqueueWorkUnit` is **not** called a second time per line |
+| `WorkDemandReleased` | `EnqueueWorkUnit` is **not** called a second time per demand |
 
 The last one matters operationally: `WorkUnit.Complete` already rejects
 double-completion with `ErrAlreadyCompleted`, so the aggregate would be safe

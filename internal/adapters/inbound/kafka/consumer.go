@@ -24,6 +24,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
+	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
 // shiftPlanCommittedData is Workforce Management's ShiftPlanCommitted
@@ -74,6 +75,21 @@ type orderLineData struct {
 	GiftWrap bool   `json:"gift_wrap"`
 }
 
+// workDemandReleasedData is network-inventory-planning's
+// WorkDemandReleased payload (the CloudEvents `data` object), mirrored
+// read-only from the producer's contract: one released transfer demand
+// leg, becoming one WorkUnit via ApplyWorkDemandReleased (ADR-0033).
+type workDemandReleasedData struct {
+	DemandId    string    `json:"demand_id"`
+	WorkKind    string    `json:"work_kind"`
+	TransferRef string    `json:"transfer_ref"`
+	PathId      string    `json:"path_id"`
+	SiteId      string    `json:"site_id"`
+	CPT         time.Time `json:"cpt"`
+	SKU         string    `json:"sku"`
+	Quantity    int       `json:"quantity"`
+}
+
 // dlqTopicSuffix names the dead-letter topic a poison message is
 // published to, relative to its OWN source topic (never a fixed
 // constant): each of the four consumed topics gets its own
@@ -100,7 +116,8 @@ const (
 )
 
 // Consumer consumes warehouse.workforce.events, warehouse.inventory.events,
-// warehouse.fulfillment.events, and warehouse.order-management.events. The
+// warehouse.fulfillment.events, warehouse.order-management.events, and
+// warehouse.network-inventory-planning.events. The
 // first two are projected into the labor-plan-view and inventory-view read
 // models; TaskCompleted from the third is fed into ApplyTaskCompleted (which
 // wraps the existing RecordCompletion) to close the control loop's feedback
@@ -108,7 +125,9 @@ const (
 // OrderPartiallyAllocated from the fourth is fed into ApplyOrderAllocated
 // (which wraps the existing EnqueueWorkUnit), replacing order-management's
 // former synchronous HTTP call to POST /paths/{pathId}/work-units with
-// event choreography.
+// event choreography; WorkDemandReleased from the fifth is fed into
+// ApplyWorkDemandReleased, which enqueues one transfer-referenced work unit
+// per demand leg under the deterministic id demand_id (ADR-0033).
 //
 // Idempotency lives in the use cases, never here: each one records the
 // CloudEvents id as processed in the SAME atomic scope as its effect, so a
@@ -119,6 +138,7 @@ type Consumer struct {
 	inventoryReader       *kafkago.Reader
 	fulfillmentReader     *kafkago.Reader
 	orderManagementReader *kafkago.Reader
+	networkDemandReader   *kafkago.Reader
 	// dlqWriters holds one *kafkago.Writer per consumed topic
 	// (topic -> writer), each publishing to that topic's own
 	// "<topic>.dlq" — see dlqPublish's doc comment. Keyed by the
@@ -126,17 +146,18 @@ type Consumer struct {
 	// so handleMessage/handleFulfillmentMessage can look up the right
 	// writer generically regardless of which reader the message came
 	// from.
-	dlqWriters          map[string]dlqWriter
-	observeLabor        *usecases.ObserveLaborPlan
-	observeInventory    *usecases.ObserveInventoryChange
-	applyTaskCompleted  *usecases.ApplyTaskCompleted
-	applyOrderAllocated *usecases.ApplyOrderAllocated
-	catalogue           ports.PathCatalogue
-	logger              *slog.Logger
+	dlqWriters              map[string]dlqWriter
+	observeLabor            *usecases.ObserveLaborPlan
+	observeInventory        *usecases.ObserveInventoryChange
+	applyTaskCompleted      *usecases.ApplyTaskCompleted
+	applyOrderAllocated     *usecases.ApplyOrderAllocated
+	applyWorkDemandReleased *usecases.ApplyWorkDemandReleased
+	catalogue               ports.PathCatalogue
+	logger                  *slog.Logger
 }
 
-func NewConsumer(brokers []string, groupID string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, applyTaskCompleted *usecases.ApplyTaskCompleted, applyOrderAllocated *usecases.ApplyOrderAllocated, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
-	return newConsumer(brokers, groupID, cloudevents.TopicFulfillmentEvents, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, catalogue, logger)
+func NewConsumer(brokers []string, groupID string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, applyTaskCompleted *usecases.ApplyTaskCompleted, applyOrderAllocated *usecases.ApplyOrderAllocated, applyWorkDemandReleased *usecases.ApplyWorkDemandReleased, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
+	return newConsumer(brokers, groupID, cloudevents.TopicFulfillmentEvents, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, applyWorkDemandReleased, catalogue, logger)
 }
 
 // NewConsumerForFulfillmentTopic is NewConsumer with the
@@ -145,12 +166,12 @@ func NewConsumer(brokers []string, groupID string, observeLabor *usecases.Observ
 // throwaway, uniquely-named topic instead of the pinned production
 // constant, mirroring this fleet's standing testcontainers pattern (see
 // inventory-storage's facilitycache consumer).
-func NewConsumerForFulfillmentTopic(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, applyTaskCompleted *usecases.ApplyTaskCompleted, applyOrderAllocated *usecases.ApplyOrderAllocated, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
-	return newConsumer(brokers, groupID, fulfillmentTopic, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, catalogue, logger)
+func NewConsumerForFulfillmentTopic(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, applyTaskCompleted *usecases.ApplyTaskCompleted, applyOrderAllocated *usecases.ApplyOrderAllocated, applyWorkDemandReleased *usecases.ApplyWorkDemandReleased, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
+	return newConsumer(brokers, groupID, fulfillmentTopic, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, applyWorkDemandReleased, catalogue, logger)
 }
 
-func newConsumer(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, applyTaskCompleted *usecases.ApplyTaskCompleted, applyOrderAllocated *usecases.ApplyOrderAllocated, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
-	topics := []string{cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, fulfillmentTopic, cloudevents.TopicOrderManagementEvents}
+func newConsumer(brokers []string, groupID string, fulfillmentTopic string, observeLabor *usecases.ObserveLaborPlan, observeInventory *usecases.ObserveInventoryChange, applyTaskCompleted *usecases.ApplyTaskCompleted, applyOrderAllocated *usecases.ApplyOrderAllocated, applyWorkDemandReleased *usecases.ApplyWorkDemandReleased, catalogue ports.PathCatalogue, logger *slog.Logger) *Consumer {
+	topics := []string{cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, fulfillmentTopic, cloudevents.TopicOrderManagementEvents, cloudevents.TopicNetworkDemandEvents}
 	dlqWriters := make(map[string]dlqWriter, len(topics))
 	for _, topic := range topics {
 		dlqWriters[topic] = newDLQWriter(brokers, topic)
@@ -176,13 +197,19 @@ func newConsumer(brokers []string, groupID string, fulfillmentTopic string, obse
 			GroupID: groupID,
 			Topic:   cloudevents.TopicOrderManagementEvents,
 		}),
-		dlqWriters:          dlqWriters,
-		observeLabor:        observeLabor,
-		observeInventory:    observeInventory,
-		applyTaskCompleted:  applyTaskCompleted,
-		applyOrderAllocated: applyOrderAllocated,
-		catalogue:           catalogue,
-		logger:              logger,
+		networkDemandReader: kafkago.NewReader(kafkago.ReaderConfig{
+			Brokers: brokers,
+			GroupID: groupID,
+			Topic:   cloudevents.TopicNetworkDemandEvents,
+		}),
+		dlqWriters:              dlqWriters,
+		observeLabor:            observeLabor,
+		observeInventory:        observeInventory,
+		applyTaskCompleted:      applyTaskCompleted,
+		applyOrderAllocated:     applyOrderAllocated,
+		applyWorkDemandReleased: applyWorkDemandReleased,
+		catalogue:               catalogue,
+		logger:                  logger,
 	}
 }
 
@@ -191,22 +218,24 @@ func (c *Consumer) Close() error {
 	err2 := c.inventoryReader.Close()
 	err3 := c.fulfillmentReader.Close()
 	err4 := c.orderManagementReader.Close()
-	errs := []error{err1, err2, err3, err4}
+	err5 := c.networkDemandReader.Close()
+	errs := []error{err1, err2, err3, err4, err5}
 	for _, w := range c.dlqWriters {
 		errs = append(errs, w.Close())
 	}
 	return errors.Join(errs...)
 }
 
-// Run consumes all four topics until ctx is cancelled.
+// Run consumes all five topics until ctx is cancelled.
 func (c *Consumer) Run(ctx context.Context) error {
-	errCh := make(chan error, 4)
+	errCh := make(chan error, 5)
 	go func() { errCh <- c.consumeLoop(ctx, c.workforceReader, c.handleWorkforceEvent) }()
 	go func() { errCh <- c.consumeLoop(ctx, c.inventoryReader, c.handleInventoryEvent) }()
 	go func() { errCh <- c.consumeLoop(ctx, c.fulfillmentReader, c.handleFulfillmentEvent) }()
 	go func() { errCh <- c.consumeLoop(ctx, c.orderManagementReader, c.handleOrderManagementEvent) }()
+	go func() { errCh <- c.consumeLoop(ctx, c.networkDemandReader, c.handleNetworkDemandEvent) }()
 
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		if err := <-errCh; err != nil {
 			return err
 		}
@@ -490,6 +519,44 @@ func (c *Consumer) handleOrderManagementEvent(ctx context.Context, env ce.Event)
 		OrderId:     data.OrderId,
 		PromiseDate: data.PromiseDate,
 		Lines:       lines,
+	})
+	return err
+}
+
+// handleNetworkDemandEvent filters for WorkDemandReleased and feeds the
+// payload into ApplyWorkDemandReleased, which enqueues one transfer work
+// unit through the existing EnqueueWorkUnit under the deterministic id
+// demand_id (ADR-0033) — the transfer-demand sibling of
+// handleOrderManagementEvent.
+//
+// The processed-event mark and the enqueue commit atomically (ADR-0028):
+// a failure commits nothing, the error is returned, and the event is
+// retried and finally dead-lettered (e.g. an unknown path_id or an
+// undeclared work_kind — deterministic poison) rather than silently
+// dropped with its transfer demand released but never worked. A
+// redelivery of the same CloudEvents id, or a different event carrying a
+// demand_id already in the pool, is a benign no-op inside the use case.
+func (c *Consumer) handleNetworkDemandEvent(ctx context.Context, env ce.Event) error {
+	if env.Type() != cloudevents.TypeWorkDemandReleased {
+		return nil
+	}
+
+	var data workDemandReleasedData
+	if err := env.DataAs(&data); err != nil {
+		return err
+	}
+
+	_, err := c.applyWorkDemandReleased.Execute(ctx, usecases.ApplyWorkDemandReleasedRequest{
+		EventId:     env.ID(),
+		OccurredAt:  env.Time(),
+		DemandId:    data.DemandId,
+		WorkKind:    workunit.WorkKind(data.WorkKind),
+		TransferRef: data.TransferRef,
+		PathId:      data.PathId,
+		SiteId:      data.SiteId,
+		SKU:         data.SKU,
+		Quantity:    data.Quantity,
+		CPT:         data.CPT,
 	})
 	return err
 }

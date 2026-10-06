@@ -56,7 +56,7 @@ func TestConsumer_PoisonMessage_AutoCreatesMissingDeadLetterTopic(t *testing.T) 
 	topic := cloudevents.TopicOrderManagementEvents
 	dlqTopic := topic + ".dlq"
 	// Source topics only: the ".dlq" topic must NOT exist up front.
-	if err := createTopics(ctx, brokers, cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, cloudevents.TopicFulfillmentEvents, topic); err != nil {
+	if err := createTopics(ctx, brokers, cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, cloudevents.TopicFulfillmentEvents, topic, cloudevents.TopicNetworkDemandEvents); err != nil {
 		t.Fatalf("create Kafka topics: %v", err)
 	}
 	if exists, err := topicExists(ctx, brokers, dlqTopic); err != nil {
@@ -105,6 +105,7 @@ func TestConsumer_PoisonMessage_AutoCreatesMissingDeadLetterTopic(t *testing.T) 
 		usecases.NewObserveInventoryChange(memory.NewInventoryViewRepo(), processed),
 		usecases.NewApplyTaskCompleted(recordCompletion, processed),
 		usecases.NewApplyOrderAllocated(enqueueWorkUnit, processed, catalogue),
+		usecases.NewApplyWorkDemandReleased(enqueueWorkUnit, processed, catalogue),
 		catalogue,
 		nil)
 	defer func() { _ = consumer.Close() }()

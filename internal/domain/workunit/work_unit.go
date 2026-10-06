@@ -55,6 +55,10 @@ type WorkUnit struct {
 	reference   string
 	sku         string
 	giftWrap    bool
+	transferRef string
+	workKind    WorkKind
+	siteId      string
+	quantity    int
 	state       State
 	releasedAt  *time.Time
 	completedAt *time.Time
@@ -108,6 +112,45 @@ func (w *WorkUnit) GiftWrap() bool { return w.giftWrap }
 // existing caller and test fixture compiling unchanged — GiftWrap is
 // additive, not a new invariant.
 func (w *WorkUnit) SetGiftWrap(giftWrap bool) { w.giftWrap = giftWrap }
+
+// TransferRef is the optional network transfer reference (NIP's
+// transfer_ref) this work unit executes a leg of. Empty on every
+// order-driven unit — transfer metadata is additive, never an invariant of
+// the aggregate itself (see ADR-0033). It exists so the outbound
+// WorkReleased publisher can stamp the transfer context onto the published
+// event's data payload at release time; nothing in this aggregate's own
+// lifecycle depends on it.
+func (w *WorkUnit) TransferRef() string { return w.transferRef }
+
+// SetTransferRef records the optional transfer reference after
+// construction, mirroring SetSKU's additive-setter discipline.
+func (w *WorkUnit) SetTransferRef(ref string) { w.transferRef = ref }
+
+// WorkKind returns the transfer leg this unit executes (TRANSFER_PICK,
+// TRANSFER_DISPATCH or TRANSFER_ARRIVAL), or "" for a plain order-driven
+// unit — "" must be read as "not transfer work", not an error.
+func (w *WorkUnit) WorkKind() WorkKind { return w.workKind }
+
+// SetWorkKind records the validated transfer leg after construction.
+// The wire form must already have gone through ParseWorkKind; the setter
+// itself does not re-validate, mirroring SetSKU/SetGiftWrap.
+func (w *WorkUnit) SetWorkKind(kind WorkKind) { w.workKind = kind }
+
+// SiteId is the optional network site (NIP's site_id — the transfer's
+// origin for a pick/dispatch leg, destination for an arrival leg) this
+// unit is anchored to. Empty when not transfer work.
+func (w *WorkUnit) SiteId() string { return w.siteId }
+
+// SetSiteId records the optional site id after construction.
+func (w *WorkUnit) SetSiteId(siteId string) { w.siteId = siteId }
+
+// Quantity is the optional number of units (per SKU) this transfer leg
+// moves. Zero when the caller did not supply one — read as "no quantity
+// known", not an error.
+func (w *WorkUnit) Quantity() int { return w.quantity }
+
+// SetQuantity records the optional transfer quantity after construction.
+func (w *WorkUnit) SetQuantity(quantity int) { w.quantity = quantity }
 
 // Release admits the unit into active work. A unit may be assigned/released
 // at most once — releasing an already-released or completed unit fails.

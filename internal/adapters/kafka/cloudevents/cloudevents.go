@@ -43,6 +43,7 @@ const (
 	TopicInventoryEvents       = "warehouse.inventory.events"
 	TopicFulfillmentEvents     = "warehouse.fulfillment.events"
 	TopicOrderManagementEvents = "warehouse.order-management.events"
+	TopicNetworkDemandEvents   = "warehouse.network-inventory-planning.events"
 )
 
 // Full CloudEvents `type` strings this service CONSUMES from other bounded
@@ -55,6 +56,7 @@ const (
 	TypeTaskCompleted           = "com.warehouse.wes.fulfillment-execution.task.TaskCompleted"
 	TypeOrderAllocated          = "com.warehouse.wes.order-management.order.OrderAllocated"
 	TypeOrderPartiallyAllocated = "com.warehouse.wes.order-management.order.OrderPartiallyAllocated"
+	TypeWorkDemandReleased      = "com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased"
 	TypeProcessPathCreated      = "com.warehouse.wes.process-path-management.processpath.ProcessPathCreated"
 	TypeProcessPathUpdated      = "com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated"
 	TypeProcessPathDeactivated  = "com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated"

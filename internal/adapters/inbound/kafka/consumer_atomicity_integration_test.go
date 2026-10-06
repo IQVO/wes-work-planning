@@ -154,7 +154,7 @@ func TestConsumer_ProcessedMarkCommitsAtomicallyWithHandling(t *testing.T) {
 	fulfillmentDLQ := cloudevents.TopicFulfillmentEvents + ".dlq"
 	orderDLQ := cloudevents.TopicOrderManagementEvents + ".dlq"
 	if err := createTopics(ctx, brokers, cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents,
-		cloudevents.TopicFulfillmentEvents, cloudevents.TopicOrderManagementEvents, fulfillmentDLQ, orderDLQ); err != nil {
+		cloudevents.TopicFulfillmentEvents, cloudevents.TopicOrderManagementEvents, cloudevents.TopicNetworkDemandEvents, fulfillmentDLQ, orderDLQ); err != nil {
 		t.Fatalf("create Kafka topics: %v", err)
 	}
 
@@ -199,13 +199,14 @@ func TestConsumer_ProcessedMarkCommitsAtomicallyWithHandling(t *testing.T) {
 	recordCompletion := usecases.NewRecordCompletion(workUnits, pools, publisher, clock).WithUnitOfWork(uow)
 	applyTaskCompleted := usecases.NewApplyTaskCompleted(recordCompletion, processed).WithUnitOfWork(uow)
 	applyOrderAllocated := usecases.NewApplyOrderAllocated(enqueue, processed, catalogue).WithUnitOfWork(uow)
+	applyWorkDemandReleased := usecases.NewApplyWorkDemandReleased(enqueue, processed, catalogue).WithUnitOfWork(uow)
 	observeLabor := usecases.NewObserveLaborPlan(postgres.NewLaborPlanViewRepo(pool), processed).WithUnitOfWork(uow)
 	observeInventory := usecases.NewObserveInventoryChange(postgres.NewInventoryViewRepo(pool), processed).WithUnitOfWork(uow)
 
 	logs := &lockedBuffer{}
 	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	groupID := fmt.Sprintf("wes-atomic-itest-%d", time.Now().UnixNano())
-	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, catalogue, logger)
+	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, applyWorkDemandReleased, catalogue, logger)
 	defer func() { _ = consumer.Close() }()
 
 	consumeCtx, consumeCancel := context.WithCancel(ctx)

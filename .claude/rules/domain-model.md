@@ -30,8 +30,8 @@ paths:
 - **WorkUnit.SKU** — optional SKU carried by a WorkUnit (threaded from
   `EnqueueWorkUnitRequest.SKU`), used ONLY to look up the SKU's
   `ProductClassification` from `inventory-storage` once, at release time.
-- **Product classification propagation** — `ReleaseNextWork` reads a
-  released WorkUnit's SKU classification (via
+- **Product classification propagation** — `ReleaseNextWork`'s outbound
+  `WorkReleased` publisher reads a released WorkUnit's SKU classification (via
   `ports.ProductClassificationLookup`, a synchronous HTTP read mirroring
   inventory-storage's own facilitylayout adapter pattern;
   permissive-by-default, `PRODUCT_CLASSIFICATION_MODE=http|permissive`) and
@@ -86,7 +86,11 @@ paths:
 `SampleBacklog` only when the caller supplies a CPT `CutoffAt` — see
 ADR-0018; reports this path's remaining admission capacity, correlated by
 CPT cutoff timestamp; consumed by order-management's `kafkapathcapacity`
-adapter behind its `PathCapacity` port).
+adapter behind its `PathCapacity` port and by network-fulfillment's
+`pathcapacitycache` adapter), `PathPlanDriftDetected` (raised by
+`CommitShiftPlan` or `ObserveLaborPlan`, whichever commits second, when our
+`PathPlan` and Workforce's `LaborPlanObserved` disagree on planned heads —
+ADR-0019).
 
 `OccurredAt` on every event comes from the injected `Clock` port, never
 `time.Now()` inside the domain — event-timing assertions in tests are exact,
@@ -99,14 +103,16 @@ right now" — check the actual env var.
 
 Two events are actually **consumed** by another service today:
 `WorkReleased`, by `fulfillment-execution`, which turns it into a `Task`, and
-`PathCapacityChanged`, by `order-management` (its path-capacity cache). The
-rest are published for observability/future subscribers.
+`PathCapacityChanged`, by `order-management` (its path-capacity cache) and
+`network-fulfillment` (its `pathcapacitycache`). The rest are published for
+observability/future subscribers.
 
 ## Use cases (application layer)
 
 1. `ReceiveChargeForecast(path, cptBuckets)` → ChargeForecast
 2. `CommitShiftPlan(path, heads, rate, hours)` → ShiftPlan (validates
-   invariant)
+   invariant); optional travel-distance hint (ADR-0017) and drift
+   reconciliation against `LaborPlanObserved` (ADR-0019)
 3. `EnqueueWorkUnit(path, cpt, ref)` → WorkUnit added to pool
 4. `ReleaseNextWork(path)` → applies release policy, returns released
    unit(s); also stamps product-classification hints (see above)
@@ -119,3 +125,9 @@ rest are published for observability/future subscribers.
    `warehouse-ops-agent`'s docs)
 9. `GetWorkUnit(workUnitId)` → read-only identity lookup of one WorkUnit
    (`GET /work-units/{id}`); unknown id → `ports.ErrNotFound` (404)
+10. `LaborPlanView(path)` / `InventoryView(sku)` → read-only projection
+    queries
+11. Inbound-event use cases, each idempotent via `onceAtomically`
+    (ADR-0028): `ObserveLaborPlan`, `ObserveInventoryChange`,
+    `ApplyTaskCompleted` (wraps `RecordCompletion`), `ApplyOrderAllocated`
+    (wraps `EnqueueWorkUnit`, ADR-0031)

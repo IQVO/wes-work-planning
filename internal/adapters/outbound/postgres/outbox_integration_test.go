@@ -26,13 +26,22 @@ import (
 // migrate_integration_test.go). They never read DATABASE_URL and never
 // skip — a broken outbox must fail CI, not silently pass.
 
-// outboxDB boots Postgres, migrates it, and returns a pool.
-func outboxDB(t *testing.T) *pgxpool.Pool {
+// migratedDSN boots a throwaway Postgres, applies the real migrations, and
+// returns its connection string — for tests that must build the pool
+// themselves (e.g. after installing a tracer provider).
+func migratedDSN(t *testing.T) string {
 	t.Helper()
 	dsn := startPostgres(t)
 	if err := postgres.Migrate(dsn, migrationsDir(t)); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	return dsn
+}
+
+// outboxDB boots Postgres, migrates it, and returns a pool.
+func outboxDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	dsn := migratedDSN(t)
 	pool, err := postgres.Connect(context.Background(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)

@@ -35,7 +35,7 @@ help: ## Print the available targets
 	@echo "  lint         golangci-lint run ./... (pinned $(GOLANGCI_LINT_VERSION))"
 	@echo "  test         go test ./... -race (unit + httptest + bdd layers)"
 	@echo "  coverage     Coverage profile + $(COVERAGE_THRESHOLD)% gate (same command as CI)"
-	@echo "  integration  go test -tags=integration ./... -race -count=1 (NEEDS DATABASE_URL / a running Postgres)"
+	@echo "  integration  go test -tags=integration ./... -race -count=1 (testcontainers; needs only Docker)"
 	@echo "  bdd          go test ./... -run TestFeatures -v (godog acceptance tests)"
 	@echo "  contract     scripts/contract-test.sh — Schemathesis vs apis/openapi.yaml"
 	@echo "               (boots the service in-memory; needs st: pip install"
@@ -87,11 +87,7 @@ coverage: ## Coverage profile + gate (mirrors the CI `test` job)
 		exit 1; \
 	fi
 
-integration: ## Integration tests — REQUIRES DATABASE_URL and a running Postgres
-	@if [ -z "$$DATABASE_URL" ]; then \
-		echo "warning: DATABASE_URL is not set — the integration tests will skip."; \
-		echo "start Postgres with 'docker compose up -d' and export DATABASE_URL first."; \
-	fi
+integration: ## Integration tests — testcontainers boots its own Postgres/Kafka (needs only Docker)
 	go test -tags=integration ./... -race -count=1
 
 bdd: ## godog/Gherkin acceptance tests

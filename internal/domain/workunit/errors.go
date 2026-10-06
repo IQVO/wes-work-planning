@@ -16,4 +16,5 @@ var (
 	ErrMissingTransitionTime = errors.New("persisted work unit state has no matching transition timestamp")
 	ErrEmptyId               = errors.New("work unit id must not be empty")
 	ErrEmptyReference        = errors.New("work unit reference must not be empty")
+	ErrUnknownWorkKind       = errors.New("unknown transfer work kind")
 )

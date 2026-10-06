@@ -20,6 +20,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/otelkafka"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
+	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
 // hazmatTag and fragileTag are the ProductClassification.HandlingTags
@@ -320,14 +321,22 @@ func (p *Publisher) dataFor(ctx context.Context, e shared.DomainEvent) (json.Raw
 // workReleasedData builds the WorkReleased payload: the path/work-unit
 // identity plus the CPT, reference and gift-wrap characteristics READ off
 // the WorkUnit repo at encode time, and the strictly-additive
-// classification hints (ADR-0009/0010).
+// classification hints (ADR-0009/0010). A transfer-referenced unit also
+// carries its transfer context (ADR-0033), read off the WorkUnit exactly
+// like cpt/ref — never looked up from another service.
 func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased) (json.RawMessage, error) {
 	cpt, ref, sku, giftWrap := "", "", "", false
+	transferRef, siteId, quantity := "", "", 0
+	var workKind workunit.WorkKind
 	if unit, err := p.workUnits.FindById(ctx, ev.WorkUnitId); err == nil {
 		cpt = unit.CPT().Time().Format(time.RFC3339)
 		ref = unit.Reference()
 		sku = unit.SKU()
 		giftWrap = unit.GiftWrap()
+		transferRef = unit.TransferRef()
+		workKind = unit.WorkKind()
+		siteId = unit.SiteId()
+		quantity = unit.Quantity()
 	}
 
 	requiredCapabilities, fragile := p.classificationHints(ctx, sku)
@@ -357,6 +366,24 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 	// Same omit-when-false discipline as fragile.
 	if giftWrap {
 		data["gift_wrap"] = giftWrap
+	}
+	// Transfer context (ADR-0033): same strictly-additive discipline —
+	// the four OPTIONAL fields appear only on a transfer-referenced unit
+	// (work_kind is the discriminator: a non-transfer unit has none), so
+	// the payload of every order-driven unit stays byte-identical to
+	// before this feature existed. Consumers must treat absent as "not
+	// transfer work".
+	if workKind != "" {
+		data["work_kind"] = workKind.String()
+		if transferRef != "" {
+			data["transfer_ref"] = transferRef
+		}
+		if siteId != "" {
+			data["site_id"] = siteId
+		}
+		if quantity > 0 {
+			data["quantity"] = quantity
+		}
 	}
 	return json.Marshal(data)
 }

@@ -84,6 +84,7 @@ info:
     com.warehouse.wes.fulfillment-execution.task.TaskCompleted
     com.warehouse.wes.order-management.order.OrderAllocated
     com.warehouse.wes.order-management.order.OrderPartiallyAllocated
+    com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased
     com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
     com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated
     com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
@@ -101,13 +102,18 @@ info:
     `warehouse.inventory.events` (projected into the SKU-keyed
     `UsableInventoryObserved` view), `TaskCompleted` from
     fulfillment-execution on `warehouse.fulfillment.events` (fed into the
-    `RecordCompletion` use case to close the execution feedback loop), and
+    `RecordCompletion` use case to close the execution feedback loop),
     `OrderAllocated`/`OrderPartiallyAllocated` from order-management on
     `warehouse.order-management.events` (fed into the existing
     `EnqueueWorkUnit` use case, once per order line — the event-choreography
     replacement for order-management's former synchronous call to
     `POST /paths/{pathId}/work-units`; deliberately fire-and-forget, with no
-    reply event published back). All consumer paths are idempotent under
+    reply event published back), and `WorkDemandReleased` from
+    network-inventory-planning on
+    `warehouse.network-inventory-planning.events` (fed into the existing
+    `EnqueueWorkUnit` use case, one work unit per released transfer demand
+    leg under the deterministic id `demand_id` — see ADR-0033; also
+    fire-and-forget). All consumer paths are idempotent under
     at-least-once redelivery: the CloudEvents `id` is recorded as processed
     in the SAME transaction as the event's effect (ADR-0028), so a failed
     attempt is retried and, once retries are exhausted, dead-lettered to
@@ -226,6 +232,29 @@ channels:
           - $ref: "#/components/messages/PathCapacityChangedAnalytics"
           - $ref: "#/components/messages/PathPlanDriftDetectedAnalytics"
 
+  warehouse.network-inventory-planning.events:
+    description: >-
+      network-inventory-planning's integration topic, CONSUMED by this
+      service (owned by that bounded context; listed here read-only for
+      orientation, mirroring its own apis/asyncapi.yaml). This service
+      consumes only WorkDemandReleased and ignores every other type.
+    publish:
+      operationId: consumeWorkDemandReleased
+      summary: Consume network-inventory-planning's released transfer work demands.
+      description: >-
+        Subscribe to receive WorkDemandReleased — one leg of an approved
+        inter-site transfer that the network has released for warehouse
+        execution. Messages are CloudEvents 1.0 structured-mode JSON
+        (dataschema
+        `urn:warehouse:network-inventory-planning:events:WorkDemandReleased:v1`)
+        keyed by demand_id. Each demand is fed into ApplyWorkDemandReleased
+        and becomes exactly one work unit under the deterministic id
+        `demand_id` (ADR-0033), so redelivery is idempotent. An unknown
+        `path_id` or `work_kind` fails loud and is dead-lettered to
+        `<topic>.dlq`.
+      message:
+        $ref: "#/components/messages/WorkDemandReleased"
+
 components:
   messages:
     ChargeForecastReceived:
@@ -322,6 +351,47 @@ components:
             data:
               path_id: pick-to-tote
               work_unit_id: wu-10231
+
+    WorkDemandReleased:
+      name: WorkDemandReleased
+      title: Work Demand Released (consumed)
+      summary: network-inventory-planning released a transfer work demand leg.
+      description: >-
+        CONSUMED from `warehouse.network-inventory-planning.events` — this
+        entry mirrors the producer's own contract read-only and is NOT
+        published by this service. One occurrence = one released transfer
+        demand leg. `ApplyWorkDemandReleased` validates `path_id` against
+        the process-path catalogue and `work_kind` against the declared
+        enum, then enqueues exactly one work unit with the deterministic
+        id `demand_id` and `ref` = `demand_id` (ADR-0033). Redelivery of
+        the same CloudEvents `id`, or a different event carrying a
+        `demand_id` already in a pool, is a benign no-op.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/WorkDemandReleasedEvent"
+      examples:
+        - name: workDemandReleased
+          summary: A transfer pick leg was released for execution.
+          payload:
+            specversion: "1.0"
+            id: 5a1e8d42-9c47-4b58-a1f6-3d8b9e0c4a71
+            source: /warehouse/network-inventory-planning
+            type: com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased
+            subject: demand-55601
+            time: "2026-10-06T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:network-inventory-planning:events:WorkDemandReleased:v1
+            data:
+              demand_id: demand-55601
+              work_kind: TRANSFER_PICK
+              transfer_ref: TRF-2026-042
+              path_id: pick-transfer-a
+              site_id: site-north-1
+              cpt: "2026-10-06T23:00:00Z"
+              sku: SKU-T1
+              quantity: 17
 
     WorkReleased:
       name: WorkReleased
@@ -933,6 +1003,80 @@ components:
                   type: string
                   description: Identifier of the newly created work unit.
 
+    WorkDemandReleasedEvent:
+      title: WorkDemandReleased CloudEvent (consumed)
+      description: >-
+        CloudEvent envelope of network-inventory-planning's released
+        transfer work demand, mirrored read-only from the producer's own
+        contract. This service consumes it; it never publishes it.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type (the producer's own).
+              const: "com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased"
+            dataschema:
+              type: string
+              description: The producer's payload schema id.
+              const: "urn:warehouse:network-inventory-planning:events:WorkDemandReleased:v1"
+            data:
+              type: object
+              description: >-
+                One released transfer demand leg. Every field is required by
+                the producer; this service validates path_id against its
+                process-path catalogue and work_kind against the declared
+                enum before enqueueing the work unit.
+              required:
+                - demand_id
+                - work_kind
+                - transfer_ref
+                - path_id
+                - site_id
+                - cpt
+              properties:
+                demand_id:
+                  type: string
+                  description: >-
+                    Identity of the work demand. Becomes the deterministic
+                    work_unit_id (and the generic operator `ref`) of the
+                    enqueued work unit.
+                work_kind:
+                  type: string
+                  description: Which leg of the transfer this demand executes.
+                  enum:
+                    - TRANSFER_PICK
+                    - TRANSFER_DISPATCH
+                    - TRANSFER_ARRIVAL
+                transfer_ref:
+                  type: string
+                  description: The network transfer this demand belongs to.
+                path_id:
+                  type: string
+                  description: >-
+                    Process path the demand's work executes on (validated
+                    against this service's process-path catalogue).
+                site_id:
+                  type: string
+                  description: >-
+                    Network site anchoring the leg — origin for
+                    pick/dispatch, destination for arrival.
+                cpt:
+                  type: string
+                  description: RFC3339 Critical Pull Time carried by the demand.
+                sku:
+                  type: string
+                  description: OPTIONAL. SKU the demand moves, when known.
+                quantity:
+                  type: integer
+                  description: OPTIONAL. Units of the SKU the leg moves.
+                  minimum: 0
+
     WorkReleasedEvent:
       title: WorkReleased CloudEvent
       description: >-
@@ -1029,6 +1173,46 @@ components:
                     — when gift wrap was not requested. Consumers must
                     treat an absent field identically to `false`.
                   example: true
+                work_kind:
+                  type: string
+                  description: >-
+                    OPTIONAL (ADR-0033). Present only on a
+                    transfer-referenced work unit (one enqueued from
+                    network-inventory-planning's WorkDemandReleased); names
+                    the transfer leg it executes. Its presence is the
+                    discriminator for "this is transfer work": every
+                    order-driven unit omits all four transfer fields, so
+                    its payload is byte-identical to before transfer
+                    support existed. Consumers must treat absent as "not
+                    transfer work".
+                  enum:
+                    - TRANSFER_PICK
+                    - TRANSFER_DISPATCH
+                    - TRANSFER_ARRIVAL
+                  example: TRANSFER_PICK
+                transfer_ref:
+                  type: string
+                  description: >-
+                    OPTIONAL (ADR-0033). The network transfer reference this
+                    released unit executes a leg of. Present only on a
+                    transfer-referenced unit, and only when the demand
+                    carried one.
+                  example: TRF-2026-042
+                site_id:
+                  type: string
+                  description: >-
+                    OPTIONAL (ADR-0033). The network site anchoring this
+                    transfer leg — origin for pick/dispatch, destination for
+                    arrival. Present only on a transfer-referenced unit.
+                  example: site-north-1
+                quantity:
+                  type: integer
+                  description: >-
+                    OPTIONAL (ADR-0033). Units of the SKU this transfer leg
+                    moves. Present only on a transfer-referenced unit that
+                    carried a positive quantity.
+                  minimum: 0
+                  example: 17
 
     WorkUnitCompletedEvent:
       title: WorkUnitCompleted CloudEvent

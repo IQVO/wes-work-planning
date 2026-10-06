@@ -66,6 +66,8 @@ func statusFor(err error) int {
 		errors.Is(err, plan.ErrThroughputNotFinite),
 		errors.Is(err, workunit.ErrEmptyId),
 		errors.Is(err, workunit.ErrEmptyReference),
+		errors.Is(err, release.ErrInvalidWIPLimit),
+		errors.Is(err, release.ErrUnknownFeedMode),
 		errors.Is(err, release.ErrUnknownEntry):
 		return http.StatusBadRequest
 	default:
@@ -120,6 +122,8 @@ var problemCatalog = []problemCategory{
 	{workunit.ErrEmptyId, "work-unit-id-required", "Work unit id is required"},
 	{workunit.ErrEmptyReference, "work-unit-reference-required", "Work unit reference is required"},
 	{release.ErrUnknownEntry, "work-pool-entry-not-found", "Work unit not found in this pool"},
+	{release.ErrInvalidWIPLimit, "invalid-wip-limit", "Invalid WIP limit"},
+	{release.ErrUnknownFeedMode, "unknown-feed-mode", "Unknown work pool feed mode"},
 }
 
 // problemFor returns the RFC 7807 (type, title) pair for a category of

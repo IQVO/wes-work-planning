@@ -54,6 +54,10 @@ tags:
     description: >
       Continuous, priority-ordered admission of work into a process path's
       work pool (waveless) — earliest-CPT-first, at-most-once handout.
+  - name: Pool Configuration
+    description: >
+      The explicit operator command that sets a process path's work pool feed
+      mode and WIP limit (ADR-0033). Lowering a limit never evicts work.
   - name: Telemetry
     description: >
       Live buffer telemetry read models (backlog depth, WIP, feed mode)
@@ -441,6 +445,94 @@ paths:
                 status: 409
                 detail: "WIP limit reached"
                 instance: /paths/pick-a/release
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /paths/{pathId}/pool:
+    put:
+      operationId: configurePool
+      summary: Configure a process path's work pool (feed mode and WIP limit)
+      description: >
+        The ConfigurePool command (ADR-0033): sets the pool's feed mode
+        (`ReleaseFed` or `FlowFed`) and its WIP limit, creating the pool when
+        none exists yet. This is the only way to obtain a flow-fed pool; a
+        path nobody configured keeps the fallback `EnqueueWorkUnit` seeds on
+        first enqueue (`ReleaseFed`, WIP limit 1000).
+
+
+        **Idempotent.** `PUT` fully describes the desired configuration: the
+        same body always yields the same result, and an identical repeat
+        writes nothing. The alarm threshold and the pool's entries are not
+        part of this command and are never touched.
+
+
+        **Lowering a limit never evicts work.** If the new `wipLimit` is below
+        the current `wip`, nothing is cancelled or taken back: the pool is
+        simply saturated and `POST /paths/{pathId}/release` answers
+        `409 wip-limit-reached` until completions bring `wip` strictly below
+        the new limit. Raising the limit takes effect on the next release. The
+        response reports the live `wip` so the caller can see the overshoot.
+        On a `FlowFed` pool the limit is stored but not enforced (flow-fed
+        pools only alarm, see ADR-0003).
+
+
+        Raises no event. REST only: no MCP tool exposes this command.
+      tags: [Pool Configuration]
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigurePoolRequest"
+            example:
+              mode: ReleaseFed
+              wipLimit: 200
+      responses:
+        "200":
+          description: The pool as configured, with its live occupancy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PoolConfigResponse"
+              example:
+                pathId: pick-a
+                mode: ReleaseFed
+                wipLimit: 200
+                wip: 4
+                backlogDepth: 12
+        "400":
+          description: >
+            Malformed body, a missing `wipLimit`, a `wipLimit` that is not a
+            positive integer (`invalid-wip-limit`), a `mode` other than
+            `ReleaseFed`/`FlowFed` (`unknown-feed-mode`), or a `pathId`
+            outside the deployment's declared process-path families
+            (`unknown-path-id`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://errors.wes-work-planning.warehouse-systems.dev/invalid-wip-limit
+                title: Invalid WIP limit
+                status: 400
+                detail: "work pool WIP limit must be a positive integer"
+                instance: /paths/pick-a/pool
+        "409":
+          description: >
+            The pool was modified concurrently and the retry budget was
+            exhausted; retry the request (`concurrent-modification`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://errors.wes-work-planning.warehouse-systems.dev/concurrent-modification
+                title: The work pool was modified concurrently; retry the request
+                status: 409
+                detail: "concurrent modification"
+                instance: /paths/pick-a/pool
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1218,6 +1310,49 @@ components:
         an alarm threshold, not enforced).
       enum: [ReleaseFed, FlowFed]
       example: ReleaseFed
+
+    ConfigurePoolRequest:
+      type: object
+      properties:
+        mode:
+          $ref: "#/components/schemas/PoolMode"
+        wipLimit:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >
+            The pool's WIP limit: a positive integer. Enforced as a hard
+            invariant on `ReleaseFed` pools, stored but only informative on
+            `FlowFed` pools. May be set below the current WIP: nothing is
+            evicted, releases pause until WIP drops below it.
+          example: 200
+      required: [mode, wipLimit]
+
+    PoolConfigResponse:
+      type: object
+      properties:
+        pathId:
+          type: string
+          example: pick-a
+        mode:
+          $ref: "#/components/schemas/PoolMode"
+        wipLimit:
+          type: integer
+          format: int64
+          example: 200
+        wip:
+          type: integer
+          format: int64
+          description: >
+            Released-but-not-completed entries right now. May exceed
+            `wipLimit` after a limit was lowered below it.
+          example: 4
+        backlogDepth:
+          type: integer
+          format: int64
+          description: Entries still pending release.
+          example: 12
+      required: [pathId, mode, wipLimit, wip, backlogDepth]
 
     BacklogSnapshotResponse:
       type: object

@@ -131,6 +131,7 @@ const sidebars: SidebarsConfig = {
         'adr/0030-kafka-sourced-path-catalogue',
         'adr/0031-order-allocated-choreography',
         'adr/0032-housekeeping-retention-sweeper',
+        'adr/0033-configure-pool-command',
       ],
     },
   ],

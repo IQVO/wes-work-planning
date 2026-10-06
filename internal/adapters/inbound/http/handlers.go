@@ -15,6 +15,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/charge"
 	"github.com/claudioed/wes-work-planning/internal/domain/laborview"
 	"github.com/claudioed/wes-work-planning/internal/domain/plan"
+	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
@@ -53,6 +54,10 @@ type Handlers struct {
 	// (GET /work-units/{id}), so a client holding only a WorkUnitId never
 	// has to parse the id string to recover its sku/reference/path.
 	GetWorkUnit *usecases.GetWorkUnit
+
+	// ConfigurePool backs PUT /paths/{pathId}/pool (ADR-0033): the explicit
+	// operator command that sets a path's pool mode and WIP limit.
+	ConfigurePool *usecases.ConfigurePool
 
 	// IdempotencyPool, when non-nil, wires RequireIdempotencyKey onto
 	// POST /paths/{pathId}/work-units (see router.go and idempotency.go).
@@ -287,6 +292,53 @@ func (h *Handlers) postWorkUnit(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Location", "/work-units/"+unit.Id())
 	writeJSON(w, http.StatusCreated, toWorkUnitResponseDTO(unit))
+}
+
+// putPool is the ConfigurePool command (ADR-0033): PUT is idempotent by
+// construction -- the body fully describes the desired mode and WIP limit.
+// It validates pathId against the catalogue because it can seed a new pool.
+func (h *Handlers) putPool(w http.ResponseWriter, r *http.Request) {
+	pathId, err := pathIdParam(r)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if err := h.validatePathId(pathId); err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	var body configurePoolRequestDTO
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.WIPLimit == nil {
+		writeError(w, r, fmt.Errorf("%w: wipLimit is required", errMalformedBody))
+		return
+	}
+	mode, err := release.ParseFeedMode(body.Mode)
+	if err != nil {
+		writeError(w, r, fmt.Errorf("%w: mode %q (want ReleaseFed or FlowFed)", err, body.Mode))
+		return
+	}
+
+	pool, err := h.ConfigurePool.Execute(r.Context(), usecases.ConfigurePoolRequest{
+		PathId:   pathId,
+		Mode:     mode,
+		WIPLimit: *body.WIPLimit,
+	})
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, poolConfigResponseDTO{
+		PathId:       pool.PathId().String(),
+		Mode:         pool.Mode().String(),
+		WIPLimit:     pool.WIPLimit(),
+		WIP:          pool.WIP(),
+		BacklogDepth: pool.BacklogDepth(),
+	})
 }
 
 func (h *Handlers) postRelease(w http.ResponseWriter, r *http.Request) {

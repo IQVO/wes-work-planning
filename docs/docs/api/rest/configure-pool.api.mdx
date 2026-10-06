@@ -1,0 +1,76 @@
+---
+id: configure-pool
+title: "Configure a process path's work pool (feed mode and WIP limit)"
+description: "The ConfigurePool command (ADR-0033): sets the pool's feed mode (`ReleaseFed` or `FlowFed`) and its WIP limit, creating the pool when none exists yet. This is the only way to obtain a flow-fed pool; a path nobody configured keeps the fallback `EnqueueWorkUnit` seeds on first enqueue (`ReleaseFed`, WIP limit 1000)."
+sidebar_label: "Configure a process path's work pool (feed mode and WIP limit)"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "put api-method"
+info_path: docs/api/rest/wes-work-planning-release
+custom_edit_url: null
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Configure a process path's work pool (feed mode and WIP limit)"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"put"}
+  path={"/paths/{pathId}/pool"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+The ConfigurePool command (ADR-0033): sets the pool's feed mode (`ReleaseFed` or `FlowFed`) and its WIP limit, creating the pool when none exists yet. This is the only way to obtain a flow-fed pool; a path nobody configured keeps the fallback `EnqueueWorkUnit` seeds on first enqueue (`ReleaseFed`, WIP limit 1000).
+
+**Idempotent.** `PUT` fully describes the desired configuration: the same body always yields the same result, and an identical repeat writes nothing. The alarm threshold and the pool's entries are not part of this command and are never touched.
+
+**Lowering a limit never evicts work.** If the new `wipLimit` is below the current `wip`, nothing is cancelled or taken back: the pool is simply saturated and `POST /paths/{pathId}/release` answers `409 wip-limit-reached` until completions bring `wip` strictly below the new limit. Raising the limit takes effect on the next release. The response reports the live `wip` so the caller can see the overshoot. On a `FlowFed` pool the limit is stored but not enforced (flow-fed pools only alarm, see ADR-0003).
+
+Raises no event. REST only: no MCP tool exposes this command.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./configure-pool.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./configure-pool.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./configure-pool.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

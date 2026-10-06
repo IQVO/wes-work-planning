@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,11 @@ func (r *WorkUnitRepo) Save(ctx context.Context, unit *workunit.WorkUnit) error 
 }
 
 func (r *WorkUnitRepo) scanWorkUnit(id, pathIdStr, reference, sku, state string, giftWrap bool, cpt time.Time, releasedAt, completedAt *time.Time) (*workunit.WorkUnit, error) {
+	st, err := workunit.ParseState(state)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate work unit %q: state %q: %w", id, state, err)
+	}
+
 	pathId, err := shared.NewPathId(pathIdStr)
 	if err != nil {
 		return nil, err
@@ -48,12 +54,14 @@ func (r *WorkUnitRepo) scanWorkUnit(id, pathIdStr, reference, sku, state string,
 	unit.SetSKU(sku)
 	unit.SetGiftWrap(giftWrap)
 
-	switch state {
-	case workunit.Released.String():
+	switch st {
+	case workunit.Pending:
+		// NewWorkUnit already yields a Pending unit.
+	case workunit.Released:
 		if err := unit.Release(*releasedAt); err != nil {
 			return nil, err
 		}
-	case workunit.Completed.String():
+	case workunit.Completed:
 		if err := unit.Release(*releasedAt); err != nil {
 			return nil, err
 		}

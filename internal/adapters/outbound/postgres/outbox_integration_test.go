@@ -21,24 +21,21 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 )
 
-// These tests own their database: a throwaway testcontainers Postgres with
-// the real migrations applied (startPostgres/migrationsDir live in
-// migrate_integration_test.go). They never read DATABASE_URL and never
-// skip — a broken outbox must fail CI, not silently pass.
+// These tests own their database: the package's shared testcontainers
+// Postgres (TestMain, main_integration_test.go) with the real migrations
+// applied once. They never read DATABASE_URL and never skip — a broken
+// outbox must fail CI, not silently pass.
 
-// migratedDSN boots a throwaway Postgres, applies the real migrations, and
-// returns its connection string — for tests that must build the pool
+// migratedDSN returns the shared, migrated database's connection string with
+// every application table emptied — for tests that must build the pool
 // themselves (e.g. after installing a tracer provider).
 func migratedDSN(t *testing.T) string {
 	t.Helper()
-	dsn := startPostgres(t)
-	if err := postgres.Migrate(dsn, migrationsDir(t)); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	return dsn
+	truncateAppTables(t)
+	return sharedDSN
 }
 
-// outboxDB boots Postgres, migrates it, and returns a pool.
+// outboxDB empties the shared migrated database and returns a pool on it.
 func outboxDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := migratedDSN(t)

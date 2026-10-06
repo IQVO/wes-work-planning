@@ -12,6 +12,33 @@ const (
 	FlowFed
 )
 
+// String is the persisted form of a FeedMode (inverse of ParseFeedMode).
+func (m FeedMode) String() string {
+	switch m {
+	case ReleaseFed:
+		return "ReleaseFed"
+	case FlowFed:
+		return "FlowFed"
+	default:
+		return "Unknown"
+	}
+}
+
+// ParseFeedMode validates and converts the persisted string form of a
+// FeedMode. Anything other than exactly "ReleaseFed" or "FlowFed" —
+// including "" — is rejected with ErrUnknownFeedMode rather than silently
+// defaulting to a mode.
+func ParseFeedMode(value string) (FeedMode, error) {
+	switch value {
+	case ReleaseFed.String():
+		return ReleaseFed, nil
+	case FlowFed.String():
+		return FlowFed, nil
+	default:
+		return ReleaseFed, ErrUnknownFeedMode
+	}
+}
+
 type entryState int
 
 const (
@@ -19,6 +46,31 @@ const (
 	released
 	completed
 )
+
+// Persisted forms of a pool entry's state.
+const (
+	entryStatePending   = "pending"
+	entryStateReleased  = "released"
+	entryStateCompleted = "completed"
+)
+
+// ParseEntryState validates the persisted string form of a pool entry state
+// ("pending", "released", "completed") and returns it as the
+// (isReleased, isCompleted) pair RestoreEntry takes. Anything else —
+// including "" — is rejected with ErrUnknownEntryState rather than being
+// silently rehydrated as pending.
+func ParseEntryState(value string) (isReleased, isCompleted bool, err error) {
+	switch value {
+	case entryStatePending:
+		return false, false, nil
+	case entryStateReleased:
+		return true, false, nil
+	case entryStateCompleted:
+		return true, true, nil
+	default:
+		return false, false, ErrUnknownEntryState
+	}
+}
 
 type poolEntry struct {
 	workUnitId string

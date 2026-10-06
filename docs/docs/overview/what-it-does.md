@@ -55,7 +55,8 @@ Two optional enrichments ride on the same commit:
 
 - **Travel-distance hint** — when the caller supplies both
   `fromLocationCode` and `toLocationCode`, facility-layout's `GET /distance`
-  is read once and stamped on the `PathPlan`
+  is read once and stamped on the `PathPlan` and stored with it
+  (`shift_plans.travel_distance_m` / `travel_distance_estimated`)
   ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)).
   Fail-open.
 - **Drift reconciliation** — if Workforce has already committed a labor plan

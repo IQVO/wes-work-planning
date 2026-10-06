@@ -122,7 +122,7 @@ array — and call the existing `EnqueueWorkUnit` use case once per line, with
 a deterministic `work_unit_id` derived as `"{order_id}-line-{line_no}"`. This
 edge is deliberately **fire-and-forget**: no reply event is published back to
 order-management. See
-[Integration events](../ecosystem/integration-events.md#warehouseorder-managementevents--orderallocated-orderpartiallyallocated).
+[Integration events](../ecosystem/integration-events.md#warehouseorder-managementevents--comwarehousewesorder-managementorderorderallocated-orderpartiallyallocated).
 
 In the other direction, order-management consumes our `PathCapacityChanged`
 to learn each path's remaining admission capacity per CPT cutoff

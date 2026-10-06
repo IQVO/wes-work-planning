@@ -26,6 +26,7 @@ Open-Host Service (OHS), Published Language (PL), Partnership (P).
 | `fulfillment-execution` (feedback edge) | upstream of us | **Customer/Supplier**, roles reversed | `TaskCompleted` flows back and closes the loop. Two directed relationships between the same pair, not one bidirectional one. |
 | `order-management` | upstream of us | **Customer/Supplier**, with an **ACL on our side** | `OrderAllocated`/`OrderPartiallyAllocated` become one `EnqueueWorkUnit` per line. Fire-and-forget. |
 | `order-management` (capacity edge) | downstream of us | **Customer/Supplier**, we are the supplier; **OHS + Published Language** | We publish `PathCapacityChanged` (ADR-0018); its `kafkapathcapacity` adapter caches remaining capacity per (path, cutoff). |
+| `network-fulfillment` | downstream of us | **OHS + Published Language** on our side, **Conformist** on theirs | Its `pathcapacitycache` adapter consumes the same `PathCapacityChanged` into its `CapabilityOffer`; we do not know about it. |
 | `facility-layout` | upstream of us | **Conformist to its OHS** | `CommitShiftPlan` reads `GET /distance` once at commit time (ADR-0017); permissive by default and fail-open. |
 | `process-path-management` | upstream of us | **Conformist to its OHS/PL** | Owns the process-path catalogue every `pathId` is validated against (ADR-0012); consumed from Kafka with `PATH_CATALOGUE_SOURCE=kafka`, else from the same catalogue as YAML. |
 
@@ -58,7 +59,8 @@ type inventoryEventData struct {
 ```
 
 That struct is unexported and never crosses into the application layer. What
-crosses is a translated call into a projector use case. Inventory's wire format
+crosses is a translated call into an inbound-event use case
+(`ObserveInventoryChange`). Inventory's wire format
 can change without a single domain file being touched — which is the entire
 point of an ACL, and the reason it is worth the extra type.
 
@@ -113,10 +115,12 @@ instead of duplicating it in every context. See the
 Two patterns that would be wrong to claim here:
 
 - **Not a Shared Kernel** with any sibling. No types, schemas or database
-  tables are shared. The envelope shape is *duplicated by agreement* in each
-  service's own `envelope` package — deliberately copied rather than extracted
-  into a shared library, so no service can be forced to redeploy by another
-  service's release.
+  tables are shared. The CloudEvents envelope and the cross-service `type`
+  strings are *duplicated by agreement* in each service's own
+  `internal/adapters/kafka/cloudevents` package
+  ([ADR-0027](../adr/0027-cloudevents-mandatory-event-envelope.md)) —
+  deliberately copied rather than extracted into a shared library, so no
+  service can be forced to redeploy by another service's release.
 - **Not a Partnership.** The reference model uses Partnership for contexts that
   must evolve together (orchestration and labour assignment as two halves of one
   optimisation loop). This platform split those into separate services with an

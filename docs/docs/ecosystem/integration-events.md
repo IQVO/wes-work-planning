@@ -263,7 +263,7 @@ flowchart LR
     P -->|"primary-key collision<br/>(already processed)"| SKIP["skip the effect<br/><b>ack anyway</b>"]
     P -->|"inserted"| APPLY["apply the effect<br/>(projection or use case)"]
     APPLY -->|"ok"| COMMIT["COMMIT mark + effect"] --> ACK["ack"]
-    APPLY -->|"error"| RB["ROLLBACK mark + effect"] --> RETRY["retry (3 attempts),<br/>then &lt;topic&gt;.dlq"]
+    APPLY -->|"error"| RB["ROLLBACK mark + effect"] --> RETRY["retry, 3 attempts in total,<br/>then the topic .dlq"]
 ```
 
 The mark and the effect are **one transaction**

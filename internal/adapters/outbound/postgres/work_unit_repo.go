@@ -36,6 +36,12 @@ func (r *WorkUnitRepo) Save(ctx context.Context, unit *workunit.WorkUnit) error 
 	return err
 }
 
+// missingTimestamp reports a Released/Completed row whose transition
+// timestamp column is NULL, instead of dereferencing the nil pointer.
+func missingTimestamp(id string, st workunit.State, column string) error {
+	return fmt.Errorf("rehydrate work unit %q: state %s but %s is NULL: %w", id, st, column, workunit.ErrMissingTransitionTime)
+}
+
 func (r *WorkUnitRepo) scanWorkUnit(id, pathIdStr, reference, sku, state string, giftWrap bool, cpt time.Time, releasedAt, completedAt *time.Time) (*workunit.WorkUnit, error) {
 	st, err := workunit.ParseState(state)
 	if err != nil {
@@ -58,10 +64,19 @@ func (r *WorkUnitRepo) scanWorkUnit(id, pathIdStr, reference, sku, state string,
 	case workunit.Pending:
 		// NewWorkUnit already yields a Pending unit.
 	case workunit.Released:
+		if releasedAt == nil {
+			return nil, missingTimestamp(id, st, "released_at")
+		}
 		if err := unit.Release(*releasedAt); err != nil {
 			return nil, err
 		}
 	case workunit.Completed:
+		if releasedAt == nil {
+			return nil, missingTimestamp(id, st, "released_at")
+		}
+		if completedAt == nil {
+			return nil, missingTimestamp(id, st, "completed_at")
+		}
 		if err := unit.Release(*releasedAt); err != nil {
 			return nil, err
 		}

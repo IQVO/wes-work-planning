@@ -58,7 +58,6 @@ flowchart LR
     R1["LaborPlanObserved with drift"]:::readmodel
     E3["Path plan drift detected"]:::event
     H1["No context consumes drift yet"]:::hotspot
-    H2["Travel hint is not persisted"]:::hotspot
 
     Planner --> C1 --> A1 --> E1
     Planner --> C2
@@ -69,7 +68,6 @@ flowchart LR
     P1 --> E3
     P2 --> E3
     E3 -.- H1
-    R0 -.- H2
 
     classDef actor fill:#fff59d,stroke:#c9b800,color:#000,font-size:11px
     classDef command fill:#4aa3df,stroke:#1f6f9f,color:#000
@@ -244,7 +242,6 @@ Each hotspot is a known gap visible in code or ADRs, not a guess.
 | Hotspot | Evidence |
 |---|---|
 | `PathPlanDriftDetected` has no consumer | No sibling references the type; [ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md) reports drift, it does not correct it |
-| Travel-distance hint is not persisted | `shift_plans` has no travel columns; `postgres.PlanRepo` drops it |
 | `WorkPool` entries are never pruned and every save rewrites them | `WorkPoolRepo.Save` deletes and re-inserts all `work_pool_entries` for the path |
 | Hot `WorkPool` row under concurrent writes | [ADR-0029](../adr/0029-work-pool-optimistic-concurrency.md); `maxPoolSaveAttempts = 12`, then 409 `concurrent-modification` |
 | `RateDeviationDetected` is declared but never raised | no `NewRateDeviationDetected` call outside tests |

@@ -3,13 +3,13 @@ id: entity-relationship
 title: Entity-relationship diagram
 sidebar_label: ER diagram
 sidebar_position: 8
-description: The final Postgres schema after migrations 0001 to 0009 and the separate analytics database, with the table-to-aggregate mapping.
+description: The final Postgres schema after migrations 0001 to 0010 and the separate analytics database, with the table-to-aggregate mapping.
 ---
 
 # Entity-relationship diagram
 
 The schema below is the **final state** after applying `migrations/0001` to
-`migrations/0009` in order (golang-migrate, run on start-up by
+`migrations/0010` in order (golang-migrate, run on start-up by
 `cmd/wes` when `DATABASE_URL` is set, over `MIGRATIONS_DATABASE_URL` if given —
 [ADR-0026](../adr/0026-migrations-direct-postgres-connection.md)), plus the
 separate **analytical** database built from `migrations/analytics/`.
@@ -34,6 +34,8 @@ erDiagram
         integer installed_stations
         double_precision rate_units_per_hr
         double_precision hours
+        double_precision travel_distance_m "nullable, 0010"
+        boolean travel_distance_estimated "nullable, 0010"
     }
     work_pools {
         text path_id PK
@@ -108,10 +110,11 @@ erDiagram
     }
 ```
 
-Source: `migrations/0001_init.up.sql` to `migrations/0009_labor_plan_view_drift.up.sql`.
+Source: `migrations/0001_init.up.sql` to `migrations/0010_shift_plan_travel_distance.up.sql`.
 Omits: golang-migrate's own `schema_migrations` bookkeeping table, column
 defaults and `NOT NULL` flags (every column above is `NOT NULL` except
-`released_at`, `completed_at`, `drift_heads`, `drift_detected_at`, `key`,
+`released_at`, `completed_at`, `drift_heads`, `drift_detected_at`,
+`travel_distance_m`, `travel_distance_estimated`, `key`,
 `published_at`, `last_error` and the idempotency outcome columns).
 
 **The only foreign key in the schema** is
@@ -183,6 +186,7 @@ migrator (`CREATE TABLE IF NOT EXISTS` in `migrate.go`), not a migration file.
 | `throughput_rollup` | **Analytics projection** (not a source of truth) | `analyticsstore.PostgresProjection` / `PostgresReport` |
 | `analytics_processed_events`, `analytics_consumed_events` | **Infrastructure**: analytics idempotency layers | `analyticsstore` |
 
-`travelDistanceM` / `travelDistanceEstimated` on `PathPlan` have **no
-column**: the travel-distance hint is returned in the `POST /paths/{pathId}/plan`
-response but not persisted by `postgres.PlanRepo`.
+`travelDistanceM` / `travelDistanceEstimated` on `PathPlan` (the optional
+ADR-0017 hint) are stored in the nullable `shift_plans.travel_distance_m` /
+`travel_distance_estimated` columns (migration `0010`); `NULL`
+`travel_distance_m` means no hint was recorded.

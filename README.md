@@ -352,7 +352,8 @@ curl localhost:8080/readyz
 `/healthz` is liveness. `/readyz` is readiness: it flips to not-ready as the
 first step of graceful shutdown, before the consumers, the HTTP server and
 the outbox relay stop ([ADR-0023](docs/docs/adr/0023-resilience-circuit-breakers-retry-dlq-shutdown.md)).
-`/readyz` is an operational probe and is not part of `apis/openapi.yaml`.
+`/readyz` is documented in `apis/openapi.yaml` (tag Health): 200 `{"status":"ready"}`,
+503 `{"status":"not_ready"}` once shutdown has begun.
 
 ## Local development / quality gate
 

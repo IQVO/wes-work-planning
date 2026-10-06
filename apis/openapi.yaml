@@ -30,7 +30,7 @@ info:
     hypermedia controls.
   contact:
     name: WES Work Planning & Release
-    url: https://github.com/claudioed/wes-work-planning
+    url: https://github.com/IQVO/wes-work-planning
 servers:
   - url: http://localhost:8080
     description: Local development (in-memory or Postgres adapters, see README)
@@ -101,6 +101,46 @@ paths:
                 required: [status]
               example:
                 status: ok
+
+  /readyz:
+    get:
+      operationId: readinessCheck
+      summary: Readiness check
+      description: >
+        Readiness probe for the service. Returns 200 `{"status":"ready"}`
+        while the process accepts traffic, and 503 `{"status":"not_ready"}`
+        once graceful shutdown has begun (readiness is flipped first so a
+        Kubernetes readinessProbe stops routing new requests during the
+        drain window). Separate from `/healthz`, which is liveness and is
+        never flipped by shutdown. Does not check downstream dependencies.
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is ready to receive traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+                required: [status]
+              example:
+                status: ready
+        "503":
+          description: Service is shutting down and no longer ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: not_ready
+                required: [status]
+              example:
+                status: not_ready
 
   /paths/{pathId}/charge:
     post:

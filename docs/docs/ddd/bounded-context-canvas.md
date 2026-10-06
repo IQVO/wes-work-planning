@@ -159,7 +159,5 @@ Top terms:
 - `WorkPool` entries are never removed, so a long-lived path's pool grows
   without bound and every save rewrites all entries.
 - `PathPlanDriftDetected` has no consumer yet; who acts on drift?
-- The travel-distance hint is returned by `POST /paths/{pathId}/plan` but not
-  persisted.
 - `order-management` gets no reply event for `OrderAllocated`; it cannot learn
   from Kafka whether its lines were enqueued (a deliberate v1 choice, ADR-0031).

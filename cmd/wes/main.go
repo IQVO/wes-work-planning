@@ -60,7 +60,12 @@ func run() error {
 		defer repos.pgPool.Close()
 	}
 
-	publisher, relay, stopPublisher, err := wireEventPublisher(logger, cfg.eventPublisherKind, cfg.kafkaBrokers, repos.workUnits, repos.classificationLookup(logger), repos.pgPool)
+	classification, err := buildClassification(loadClassificationConfig(cfg.kafkaBrokers), repos.pgPool, logger)
+	if err != nil {
+		return err
+	}
+
+	publisher, relay, stopPublisher, err := wireEventPublisher(logger, cfg.eventPublisherKind, cfg.kafkaBrokers, repos.workUnits, classification.lookup, repos.pgPool)
 	if err != nil {
 		return err
 	}
@@ -75,6 +80,7 @@ func run() error {
 		catalogue:               catalogue,
 		kafkaCatalogue:          kafkaCatalogue,
 		cancelCatalogueConsumer: cancelCatalogueConsumer,
+		classification:          classification,
 	}).run()
 }
 

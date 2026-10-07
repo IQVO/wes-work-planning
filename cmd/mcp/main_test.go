@@ -11,6 +11,7 @@ import (
 	inboundmcp "github.com/claudioed/wes-work-planning/internal/adapters/inbound/mcp"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
+	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/productclassificationcopy"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 )
 
@@ -134,12 +135,30 @@ func TestNewEventIDIsUUIDv4(t *testing.T) {
 	}
 }
 
-func TestBuildClassificationLookup_PermissiveByDefault(t *testing.T) {
-	if got := buildClassificationLookup("", "", nil, slog.Default()); got == nil {
-		t.Fatal("expected a permissive lookup, got nil")
+func TestBuildClassificationLookup_Modes(t *testing.T) {
+	lookup, err := buildClassificationLookup("", nil, slog.Default())
+	if err != nil {
+		t.Fatalf("default mode: %v", err)
 	}
-	if got := buildClassificationLookup("http", "http://inventory.invalid", nil, slog.Default()); got == nil {
-		t.Fatal("expected an http lookup, got nil")
+	if _, ok := lookup.(*productclassificationcopy.PermissiveLookup); !ok {
+		t.Fatalf("default lookup = %T, want permissive", lookup)
+	}
+	// kafka without a database: the MCP server has no copy to read and
+	// never starts a consumer, so it degrades to permissive.
+	lookup, err = buildClassificationLookup("kafka", nil, slog.Default())
+	if err != nil {
+		t.Fatalf("kafka mode: %v", err)
+	}
+	if _, ok := lookup.(*productclassificationcopy.PermissiveLookup); !ok {
+		t.Fatalf("kafka lookup without DATABASE_URL = %T, want permissive", lookup)
+	}
+}
+
+func TestBuildClassificationLookup_RejectsHTTPAtBoot(t *testing.T) {
+	for _, mode := range []string{"http", "bogus"} {
+		if _, err := buildClassificationLookup(mode, nil, slog.Default()); err == nil {
+			t.Fatalf("PRODUCT_CLASSIFICATION_MODE=%s must fail at boot", mode)
+		}
 	}
 }
 

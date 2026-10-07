@@ -11,7 +11,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
-	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/productclassification"
+	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/productclassificationcopy"
 	"github.com/claudioed/wes-work-planning/internal/domain/productclassificationview"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
@@ -176,7 +176,7 @@ func TestPublisher_WorkReleased_UnclassifiedSKU_OmitsBothFields(t *testing.T) {
 
 func TestPublisher_WorkReleased_LookupUnavailable_OmitsBothFieldsAndStillPublishes(t *testing.T) {
 	workUnits := newReleasedWorkUnit(t, "wu-4", "sku-hazmat")
-	lookup := &fakeClassificationLookup{err: errors.New("inventory-storage unreachable")}
+	lookup := &fakeClassificationLookup{err: errors.New("classification copy unreadable")}
 	writer := &fakeWriter{}
 	pub := outboundkafka.NewPublisherWithWriter(writer, workUnits, lookup, func() string { return "evt-4" })
 
@@ -243,7 +243,7 @@ func TestPublisher_WorkReleased_EmptySKU_SkipsLookupEntirely(t *testing.T) {
 func TestPublisher_WorkReleased_PermissiveLookup_OmitsBothFields(t *testing.T) {
 	workUnits := newReleasedWorkUnit(t, "wu-7", "sku-hazmat")
 	writer := &fakeWriter{}
-	pub := outboundkafka.NewPublisherWithWriter(writer, workUnits, productclassification.NewPermissiveLookup(), func() string { return "evt-7" })
+	pub := outboundkafka.NewPublisherWithWriter(writer, workUnits, productclassificationcopy.NewPermissiveLookup(), func() string { return "evt-7" })
 
 	pathId, _ := shared.NewPathId("pick-a")
 	event := shared.NewWorkReleased("wu-7", pathId, time.Now())
@@ -263,7 +263,7 @@ func TestPublisher_WorkReleased_PermissiveLookup_OmitsBothFields(t *testing.T) {
 func TestPublisher_WorkReleased_BaseFieldsStillPopulated(t *testing.T) {
 	workUnits := newReleasedWorkUnit(t, "wu-8", "sku-plain")
 	writer := &fakeWriter{}
-	pub := outboundkafka.NewPublisherWithWriter(writer, workUnits, productclassification.NewPermissiveLookup(), func() string { return "evt-8" })
+	pub := outboundkafka.NewPublisherWithWriter(writer, workUnits, productclassificationcopy.NewPermissiveLookup(), func() string { return "evt-8" })
 
 	pathId, _ := shared.NewPathId("pick-a")
 	event := shared.NewWorkReleased("wu-8", pathId, time.Now())

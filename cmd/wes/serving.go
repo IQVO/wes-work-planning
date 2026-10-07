@@ -39,6 +39,10 @@ type serving struct {
 	housekeeper             *postgres.Housekeeper
 	publisher               ports.EventPublisher
 	clock                   ports.Clock
+	// classification is what PRODUCT_CLASSIFICATION_MODE wired (ADR-0035);
+	// stopClassification is set while its ProductClassified consumer runs.
+	classification     classificationWiring
+	stopClassification func(ctx context.Context)
 }
 
 // servingDeps is everything run() has wired by the time it can build the
@@ -52,6 +56,7 @@ type servingDeps struct {
 	catalogue               ports.PathCatalogue
 	kafkaCatalogue          *kafkacatalog.Consumer
 	cancelCatalogueConsumer context.CancelFunc
+	classification          classificationWiring
 }
 
 // newServing builds the HTTP handlers, the server, and the serving group
@@ -82,6 +87,7 @@ func newServing(d servingDeps) *serving {
 		enqueueWorkUnit:         usecases.NewEnqueueWorkUnit(d.repos.workUnits, d.repos.pools, d.publisher, clock).WithUnitOfWork(d.repos.uow),
 		cancelCatalogueConsumer: d.cancelCatalogueConsumer,
 		kafkaCatalogue:          d.kafkaCatalogue,
+		classification:          d.classification,
 	}
 }
 
@@ -125,6 +131,11 @@ func (s *serving) run() error {
 	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
 	defer cancelConsumer()
 	consumer, consumerDone := s.startConsumer(consumerCtx)
+
+	// The ProductClassified consumer (ADR-0035) feeds the local
+	// classification copy; only wired in PRODUCT_CLASSIFICATION_MODE=kafka.
+	s.startClassificationConsumer()
+	defer s.stopClassificationConsumerBounded()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -205,8 +216,8 @@ func (s *serving) newInboundConsumer(groupID string) *inboundkafka.Consumer {
 }
 
 // gracefulShutdown drains the process (ADR-0023 §graceful shutdown):
-// readiness flips first, consumers and the catalogue consumer stop and
-// close, the HTTP server drains within 5s, and the outbox relay is
+// readiness flips first, the integration consumer, the ProductClassified
+// consumer (ADR-0035) and the catalogue consumer stop and close, the HTTP server drains within 5s, and the outbox relay is
 // allowed to finish its in-flight pass so an event committed by a
 // request that completed just before shutdown is not stranded until the
 // next pod boots.
@@ -228,6 +239,7 @@ func (s *serving) gracefulShutdown(cancelConsumer context.CancelFunc, consumer *
 	if consumer != nil {
 		_ = consumer.Close()
 	}
+	s.stopClassificationConsumer(ctx)
 	s.cancelCatalogueConsumer()
 	if s.kafkaCatalogue != nil {
 		_ = s.kafkaCatalogue.Close()

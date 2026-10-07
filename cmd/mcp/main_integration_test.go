@@ -150,3 +150,73 @@ func TestMCPReleaseNextWork_WritesOutboxRows(t *testing.T) {
 		}
 	}
 }
+
+// ADR-0035: with PRODUCT_CLASSIFICATION_MODE=kafka the MCP server reads the
+// product_classification_copy table cmd/wes maintains (read-only, no
+// consumer of its own), so a WorkReleased raised through MCP carries the
+// same hazmat/fragile hints as one raised through REST.
+func TestMCPReleaseNextWork_ReadsTheClassificationCopy(t *testing.T) {
+	ctx := context.Background()
+	dsn := startPostgres(t)
+	migrations, err := filepath.Abs(filepath.Join("..", "..", "migrations"))
+	if err != nil {
+		t.Fatalf("migrations dir: %v", err)
+	}
+	if err := postgres.Migrate(dsn, migrations); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	logger := slog.Default()
+	repos, err := wireRepositories(logger, dsn)
+	if err != nil {
+		t.Fatalf("wireRepositories: %v", err)
+	}
+	t.Cleanup(repos.close)
+
+	// What cmd/wes's ProductClassified consumer would have written.
+	if _, err := repos.pool.Exec(ctx, `INSERT INTO product_classification_copy (sku, handling_tags, version, updated_at) VALUES ('sku-haz', '{Hazmat,Fragile}', 2, now())`); err != nil {
+		t.Fatalf("seed copy: %v", err)
+	}
+	lookup, err := buildClassificationLookup("kafka", repos.pool, logger)
+	if err != nil {
+		t.Fatalf("buildClassificationLookup: %v", err)
+	}
+	publisher, stop, err := wireEventPublisher(logger, "kafka", "kafka.invalid:9092", repos, lookup)
+	if err != nil {
+		t.Fatalf("wireEventPublisher: %v", err)
+	}
+	t.Cleanup(stop)
+
+	pathID, err := shared.NewPathId("pick-mcp-haz")
+	if err != nil {
+		t.Fatalf("path id: %v", err)
+	}
+	enqueue := usecases.NewEnqueueWorkUnit(repos.workUnits, repos.pools, publisher, memory.SystemClock{}).WithUnitOfWork(repos.uow)
+	if _, err := enqueue.Execute(ctx, usecases.EnqueueWorkUnitRequest{
+		WorkUnitId: "wu-mcp-haz", PathId: pathID, CPT: shared.NewCPT(time.Now().Add(time.Hour)), Reference: "order-mcp-haz", SKU: "sku-haz",
+	}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	srv := httptest.NewServer(newRouter(inboundmcp.Handler(inboundmcp.NewServer(newMCPServerDeps(logger, repos, publisher))), "wes-work-planning-mcp-test"))
+	t.Cleanup(srv.Close)
+	session, err := sdk.NewClient(&sdk.Implementation{Name: "it", Version: "0.0.1"}, nil).
+		Connect(ctx, &sdk.StreamableClientTransport{Endpoint: srv.URL + "/mcp", HTTPClient: &http.Client{}}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	res, err := session.CallTool(ctx, &sdk.CallToolParams{Name: "release_next_work", Arguments: map[string]any{"pathId": "pick-mcp-haz"}})
+	if err != nil || res.IsError {
+		t.Fatalf("release_next_work: %v %+v", err, res)
+	}
+
+	var value string
+	if err := repos.pool.QueryRow(ctx,
+		`SELECT convert_from(value, 'UTF8') FROM outbox_events WHERE topic = $1 AND event_type = $2`,
+		cloudevents.TopicWorkPlanningEvents, "com.warehouse.wes.work-planning.workunit.WorkReleased").Scan(&value); err != nil {
+		t.Fatalf("read WorkReleased row: %v", err)
+	}
+	if !strings.Contains(value, `"required_capabilities":["hazmat"]`) || !strings.Contains(value, `"fragile":true`) {
+		t.Fatalf("WorkReleased raised through MCP lacks the copy's hints: %s", value)
+	}
+}

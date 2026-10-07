@@ -11,7 +11,6 @@ import (
 
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
-	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/productclassification"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/traveldistance"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
@@ -33,16 +32,6 @@ type repositories struct {
 	processedEvts  ports.ProcessedEventRepo
 	pgPool         *pgxpool.Pool
 	uow            ports.UnitOfWork
-}
-
-// classificationLookup wires the product-classification ACL behind the
-// shared circuit-breaker gauge (ADR-0023).
-func (r repositories) classificationLookup(logger *slog.Logger) ports.ProductClassificationLookup {
-	breakerMetrics, err := telemetry.NewCircuitBreakerMetrics()
-	if err != nil {
-		logger.Warn("circuit breaker metrics not registered; continuing without them", "error", err)
-	}
-	return buildClassificationLookup(getenv("PRODUCT_CLASSIFICATION_MODE", "permissive"), os.Getenv("INVENTORY_STORAGE_BASE_URL"), breakerMetrics, logger)
 }
 
 // travelDistanceLookup wires the facility-layout travel-distance ACL
@@ -152,28 +141,10 @@ func postgresRepositories(databaseURL, migrationsDatabaseURL, migrationsPath str
 	}, nil
 }
 
-// buildClassificationLookup selects the outbound
-// ports.ProductClassificationLookup adapter via PRODUCT_CLASSIFICATION_MODE
-// (http|permissive), defaulting to "permissive" so existing tests, CI and
-// deployments that do not set the env var are unaffected — mirroring
-// inventory-storage's own LOCATION_LOOKUP_MODE=http|permissive pattern (see
-// ADR-0009). "http" requires INVENTORY_STORAGE_BASE_URL. In "http" mode the
-// client is wrapped with a per-dependency circuit breaker + jittered retry
-// (ADR-0023); recorder may be nil (breaker metrics unavailable), a
-// documented no-op.
-func buildClassificationLookup(mode, inventoryStorageBaseURL string, recorder resilience.StateRecorder, logger *slog.Logger) ports.ProductClassificationLookup {
-	if !strings.EqualFold(mode, "http") {
-		return productclassification.NewPermissiveLookup()
-	}
-	logger.Info("product classification lookup configured", "mode", "http", "inventory_storage_base_url", inventoryStorageBaseURL)
-	return productclassification.NewBreakerClient(productclassification.NewClient(inventoryStorageBaseURL, nil), recorder)
-}
-
 // buildTravelDistanceLookup selects the outbound ports.TravelDistanceLookup
 // adapter via TRAVEL_DISTANCE_MODE (http|permissive), defaulting to
 // "permissive" so existing tests, CI and deployments that do not set the
-// env var are unaffected — mirroring buildClassificationLookup's own
-// PRODUCT_CLASSIFICATION_MODE pattern exactly (see ADR-0017, Phase B3).
+// env var are unaffected (see ADR-0017, Phase B3).
 // "http" requires FACILITY_LAYOUT_BASE_URL. In "http" mode the client is
 // wrapped with a per-dependency circuit breaker + jittered retry
 // (ADR-0023); recorder may be nil (breaker metrics unavailable), a

@@ -1,10 +1,8 @@
 // Package traveldistance provides outbound ports.TravelDistanceLookup
 // implementations: an HTTP client that calls facility-layout's travel-graph
 // endpoint, and a permissive no-op used by default so existing tests, CI
-// and deployments are unaffected (mirrors this repo's own
-// PRODUCT_CLASSIFICATION_MODE=http|permissive productclassification
-// adapter pattern, and inventory-storage's LOCATION_LOOKUP_MODE — see
-// ADR-0017).
+// and deployments are unaffected (mirrors inventory-storage's
+// LOCATION_LOOKUP_MODE=http|permissive pattern — see ADR-0017).
 package traveldistance
 
 import (

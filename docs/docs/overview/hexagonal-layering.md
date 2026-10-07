@@ -44,7 +44,7 @@ flowchart TB
         EV["adapters/outbound/events<br/>log publisher"]
         KOUT["adapters/outbound/kafka<br/>Kafka publishers"]
         CAT["adapters/outbound/filecatalog · kafkacatalog<br/>process-path catalogue"]
-        LOOK["adapters/outbound/productclassification · traveldistance<br/>sibling REST lookups"]
+        LOOK["adapters/outbound/productclassificationcopy · traveldistance<br/>local classification copy · sibling REST lookup"]
     end
 
     HTTP --> UC
@@ -79,7 +79,7 @@ internal/
     laborview/                  LaborPlanObserved read-model value
     inventoryview/              UsableInventoryObserved read-model value
     pathcatalog/                process-path catalogue + prefix lookup (ADR-0012)
-    productclassificationview/  SKU classification read-model value (ADR-0009)
+    productclassificationview/  SKU classification read-model value (ADR-0009, ADR-0035)
     traveldistanceview/         travel-distance read-model value (ADR-0017)
   analytics/report/             analytics report model (ADR-0011)
   application/
@@ -87,7 +87,7 @@ internal/
     usecases/                   one struct per use case
   adapters/
     inbound/http/               chi router, DTOs, domain-error → HTTP mapping
-    inbound/kafka/              integration-event consumer (4 topics) + analytics consumer
+    inbound/kafka/              integration-event consumer (5 topics), ProductClassified consumer (ADR-0035) + analytics consumer
     inbound/mcp/                MCP tools, resources, prompts (ADR-0008)
     outbound/postgres/          pgxpool repositories, UnitOfWork, outbox + relay (ADR-0014)
     outbound/memory/            thread-safe in-memory repositories
@@ -95,7 +95,7 @@ internal/
     outbound/kafka/             integration + analytics publishers, outbox encoders, RelaySink
     outbound/filecatalog/       process-path catalogue from YAML (PATH_CATALOGUE_SOURCE=file)
     outbound/kafkacatalog/      process-path catalogue from Kafka (PATH_CATALOGUE_SOURCE=kafka)
-    outbound/productclassification/  inventory-storage REST lookup
+    outbound/productclassificationcopy/  local copy of product-master's classification (ADR-0035)
     outbound/traveldistance/    facility-layout REST lookup
     outbound/analyticsstore/    analytics Postgres store
     outbound/telemetry/         OpenTelemetry setup
@@ -126,7 +126,8 @@ so the domain never learns that Postgres or Kafka exist:
 | `UnitOfWork` | run a use case's save + publish in one Postgres transaction (ADR-0014) |
 | `ReleaseMetrics` | record the `wes.work_units.released` business counter (ADR-0013) |
 | `PathCatalogue` | look up a `pathId` in the declared process-path catalogue (ADR-0012) |
-| `ProductClassificationLookup` | read a SKU's classification from inventory-storage (ADR-0009) |
+| `ProductClassificationLookup` | read a SKU's classification from the local copy of product-master's events (ADR-0009, ADR-0035) |
+| `ProductClassificationCopyRepo` | apply a `ProductClassified` to that copy, version-guarded (ADR-0035) |
 | `TravelDistanceLookup` | read a travel distance from facility-layout (ADR-0017) |
 
 The composition root picks each implementation from environment variables:

@@ -16,9 +16,9 @@ import (
 // is no "distance changed" domain event to consume — a travel distance
 // between two static warehouse locations changes only when the physical
 // layout itself changes, which is exactly the kind of static fact a
-// synchronous read-through is right for (mirrors ADR-0009's
-// ProductClassificationLookup: read the sibling's real, current contract
-// rather than build a consumer for an event that does not exist).
+// synchronous read-through is right for. (ProductClassificationLookup used
+// the same reasoning under ADR-0009 until product-master started publishing
+// ProductClassified; it is a Kafka-fed local copy since ADR-0035.)
 type TravelDistanceLookup interface {
 	GetDistance(ctx context.Context, from, to string) (traveldistanceview.TravelDistanceView, error)
 }

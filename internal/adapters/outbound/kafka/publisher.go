@@ -24,7 +24,8 @@ import (
 )
 
 // hazmatTag and fragileTag are the ProductClassification.HandlingTags
-// values inventory-storage uses that this service maps onto the
+// values product-master publishes (ADR-0035; formerly inventory-storage's)
+// that this service maps onto the
 // WorkReleased integration event's derived hints (see ADR-0009). Named as
 // constants here — not shared as a Go type across the repository boundary —
 // because this is exactly the same translate-at-the-ACL discipline this
@@ -60,7 +61,7 @@ type Publisher struct {
 // used to enrich WorkReleased with derived hazmat-capability/fragile hints
 // by looking up the released unit's SKU once at publish time (see
 // ADR-0009); a nil classifications is treated exactly like
-// productclassification.PermissiveLookup — those two optional fields are
+// productclassificationcopy.PermissiveLookup — those two optional fields are
 // simply omitted/false, so every existing caller of NewPublisher keeps
 // compiling and behaving unchanged.
 //
@@ -430,7 +431,9 @@ func pathPlanDriftDetectedData(ev shared.PathPlanDriftDetected) json.RawMessage 
 // Hazmat, and fragile=true when it is classified Fragile. This is the
 // concrete implementation of ADR-0009's "read-once-at-release, stamp onto
 // WorkReleased" decision — fulfillment-execution's Task then carries these
-// hints without ever calling back to inventory-storage.
+// hints without ever calling back to a classification owner. Since ADR-0035
+// the read is against this context's own local copy of product-master's
+// ProductClassified events.
 //
 // A missing sku, a nil classifications port, an unclassified SKU (Known
 // but no relevant tag, or altogether unknown), or a lookup error are all

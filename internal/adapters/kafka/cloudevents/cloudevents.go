@@ -44,6 +44,7 @@ const (
 	TopicFulfillmentEvents     = "warehouse.fulfillment.events"
 	TopicOrderManagementEvents = "warehouse.order-management.events"
 	TopicNetworkDemandEvents   = "warehouse.network-inventory-planning.events"
+	TopicProductMasterEvents   = "warehouse.product-master.events"
 )
 
 // Full CloudEvents `type` strings this service CONSUMES from other bounded
@@ -60,6 +61,9 @@ const (
 	TypeProcessPathCreated      = "com.warehouse.wes.process-path-management.processpath.ProcessPathCreated"
 	TypeProcessPathUpdated      = "com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated"
 	TypeProcessPathDeactivated  = "com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated"
+	// TypeProductClassified is product-master's classification event
+	// (warehouse.product-master.events), feeding the local copy (ADR-0035).
+	TypeProductClassified = "com.warehouse.wms.product-master.product.ProductClassified"
 )
 
 // ErrNotCloudEvent marks a message that is not a valid CloudEvents 1.0 event.

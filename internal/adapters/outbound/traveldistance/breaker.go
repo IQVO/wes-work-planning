@@ -1,7 +1,6 @@
 // breaker.go wraps Client with a per-dependency circuit breaker
 // (sony/gobreaker/v2, ADR-0023) AND jittered retry (cenkalti/backoff/v4)
-// — GetDistance is a pure GET/read, safe to retry, mirroring
-// productclassification's identical breaker shape. While the breaker is
+// — GetDistance is a pure GET/read, safe to retry. While the breaker is
 // OPEN, this falls back to PermissiveLookup's existing fail-open
 // behaviour (Known=false, nil error) — the SAME fallback this client
 // already had for a transport error, a 404, or a 422 (ADR-0017), just
@@ -27,7 +26,7 @@ import (
 const DependencyName = "facility-layout"
 
 // maxRetryAttempts caps the jittered retry at 3 total attempts (1
-// original + 2 retries), mirroring productclassification's bound.
+// original + 2 retries).
 const maxRetryAttempts = 3
 
 // retryInitialInterval/retryMaxInterval bound the exponential-backoff-

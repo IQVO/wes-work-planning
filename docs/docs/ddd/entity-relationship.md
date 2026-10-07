@@ -75,6 +75,14 @@ erDiagram
         integer usable_quantity
         timestamptz observed_at
     }
+    product_classification_copy {
+        text sku PK
+        text_array handling_tags
+        text temperature_class "nullable"
+        smallint dot_hazard_class "nullable"
+        bigint version "producer aggregate version"
+        timestamptz updated_at
+    }
     processed_events {
         text event_id PK
         timestamptz processed_at
@@ -110,12 +118,13 @@ erDiagram
     }
 ```
 
-Source: `migrations/0001_init.up.sql` to `migrations/0010_shift_plan_travel_distance.up.sql`.
+Source: `migrations/0001_init.up.sql` to `migrations/0012_product_classification_copy.up.sql`.
 Omits: golang-migrate's own `schema_migrations` bookkeeping table, column
 defaults and `NOT NULL` flags (every column above is `NOT NULL` except
 `released_at`, `completed_at`, `drift_heads`, `drift_detected_at`,
 `travel_distance_m`, `travel_distance_estimated`, `key`,
-`published_at`, `last_error` and the idempotency outcome columns).
+`published_at`, `last_error`, `temperature_class`, `dot_hazard_class` and
+the idempotency outcome columns).
 
 **The only foreign key in the schema** is
 `work_pool_entries.path_id → work_pools.path_id`. Everything else is linked
@@ -131,6 +140,9 @@ logically, by value, with no constraint — on purpose:
   is owned by process-path-management.
 - `usable_inventory_view.sku` ↔ `work_units.sku` — different contexts' keys;
   inventory-storage owns the SKU.
+- `product_classification_copy.sku` ↔ `work_units.sku` — product-master owns
+  the classification; the copy is fed by its `ProductClassified` events
+  ([ADR-0035](../adr/0035-product-classification-local-copy.md)).
 
 ## Analytics database
 
@@ -179,6 +191,7 @@ migrator (`CREATE TABLE IF NOT EXISTS` in `migrate.go`), not a migration file.
 | `work_units` | `WorkUnit` aggregate | `postgres.WorkUnitRepo` |
 | `labor_plan_view` | **Read model** `LaborPlanObserved` + ADR-0019 drift | `postgres.LaborPlanViewRepo` |
 | `usable_inventory_view` | **Read model** `UsableInventoryObserved` | `postgres.InventoryViewRepo` |
+| `product_classification_copy` | **Local copy** of product-master's classification, read as `ProductClassificationView` ([ADR-0035](../adr/0035-product-classification-local-copy.md)) | `productclassificationcopy.Store` |
 | `processed_events` | **Infrastructure**: consumer inbox / dedupe on CloudEvents `id` ([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)) | `postgres.ProcessedEventRepo` |
 | `outbox_events` | **Infrastructure**: transactional outbox, one row per topic per event ([ADR-0014](../adr/0014-transactional-outbox.md)); published rows swept after `OUTBOX_RETENTION` | `postgres.OutboxPublisher`, `postgres.OutboxRelay` |
 | `idempotency_keys` | **Infrastructure**: `Idempotency-Key` replay store ([ADR-0022](../adr/0022-idempotency-key-middleware.md)); swept after `IDEMPOTENCY_KEY_TTL` | `RequireIdempotencyKey`, `postgres` housekeeper |

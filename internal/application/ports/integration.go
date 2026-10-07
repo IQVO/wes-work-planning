@@ -54,16 +54,29 @@ type ProcessedEventReleaser interface {
 	ReleaseProcessed(ctx context.Context, eventId string) error
 }
 
-// ProductClassificationLookup is the outbound port for the synchronous
-// cross-context read from inventory-storage's product-classification
-// endpoint (GET /products/{sku}/classification), used at work-release time
-// to stamp derived hazmat/fragile hints onto the published WorkReleased
-// event without a live callback from fulfillment-execution (see ADR-0009).
+// ProductClassificationLookup is the outbound port for reading a SKU's
+// product classification at work-release time, used to stamp derived
+// hazmat/fragile hints onto the published WorkReleased event without a live
+// callback from fulfillment-execution (see ADR-0009).
 //
-// This is a synchronous HTTP read, not a Kafka projection, because
-// inventory-storage's own outbound Kafka publisher does not forward
-// ProductClassified to the broker — see the productclassificationview
-// package doc comment for the evidence.
+// Since ADR-0035 it is backed by this context's own local copy of
+// product-master's ProductClassified events (ProductClassificationCopyRepo
+// below), not by a synchronous HTTP call. The contract is unchanged:
+// Known=false for an unknown SKU, and implementations fail open (Known=false,
+// nil error) when the copy cannot be read, so a classification problem never
+// blocks a release.
 type ProductClassificationLookup interface {
 	GetClassification(ctx context.Context, sku string) (productclassificationview.ProductClassificationView, error)
+}
+
+// ProductClassificationCopyRepo maintains the local copy of product-master's
+// classification, one row per SKU, fed by the ProductClassified consumer
+// (ADR-0035).
+type ProductClassificationCopyRepo interface {
+	// ApplyIfNewer stores view's SKU, HandlingTags and TemperatureClass with
+	// dotHazardClass (0 = none) and version when no row exists for the SKU
+	// or the stored version is lower than version. It returns applied=false,
+	// changing nothing, when the stored version is equal or higher (a replay
+	// or an out-of-order redelivery). view.Known is ignored.
+	ApplyIfNewer(ctx context.Context, view productclassificationview.ProductClassificationView, dotHazardClass int, version int64, updatedAt time.Time) (applied bool, err error)
 }

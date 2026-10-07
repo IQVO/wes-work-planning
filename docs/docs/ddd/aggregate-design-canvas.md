@@ -426,7 +426,7 @@ facts belong to someone else or are computed on read. See
 |---|---|---|
 | `LaborPlanObserved` (+ `Drift`) | `internal/domain/laborview` | Kafka projection of Workforce's `ShiftPlanCommitted`, persisted in `labor_plan_view` |
 | `UsableInventoryObserved` | `internal/domain/inventoryview` | Kafka projection of `StockReserved` / `ReservationRevoked`, persisted in `usable_inventory_view`. Decided 2026-10-06: read-only context by design ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)); gating release on it would be a new business rule |
-| `ProductClassificationView` | `internal/domain/productclassificationview` | synchronous REST read from inventory-storage at release, never persisted |
+| `ProductClassificationView` | `internal/domain/productclassificationview` | read at release from `product_classification_copy`, a version-guarded local copy of product-master's `ProductClassified` ([ADR-0035](../adr/0035-product-classification-local-copy.md)) |
 | `TravelDistanceView` | `internal/domain/traveldistanceview` | synchronous REST read from facility-layout at plan commit, never persisted |
 | `PathDefinition` / `Catalogue` | `internal/domain/pathcatalog` | in-memory copy of process-path-management's catalogue |
 | `BacklogSnapshot`, `RebalanceRecommendation` | `internal/application/usecases` | computed on read from a `WorkPool` |

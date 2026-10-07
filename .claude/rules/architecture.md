@@ -27,7 +27,7 @@ internal/
     laborview/                read-only LaborPlanObserved projection (NOT an aggregate — see ADR-0006)
     inventoryview/           read-only UsableInventoryObserved projection, keyed by SKU
     pathcatalog/             process-path catalogue value type (ADR-0012)
-    productclassificationview/  cached SKU -> ProductClassification lookups (ADR-0009)
+    productclassificationview/  SKU -> ProductClassification view value (ADR-0009; local copy since ADR-0035)
     traveldistanceview/      TravelDistance read-model value from facility-layout (ADR-0017)
 
   application/
@@ -37,7 +37,10 @@ internal/
   adapters/
     inbound/http/            REST handlers (chi), DTOs, RFC 7807 error mapping
     inbound/kafka/           consumer for warehouse.workforce.events, warehouse.inventory.events,
-                              warehouse.fulfillment.events, warehouse.order-management.events
+                              warehouse.fulfillment.events, warehouse.order-management.events,
+                              warehouse.network-inventory-planning.events; plus the
+                              ProductClassified consumer of warehouse.product-master.events
+                              (ADR-0035, own group PRODUCT_CLASSIFICATION_CONSUMER_GROUP)
     inbound/mcp/             MCP tool registrations (ADR-0008)
     outbound/postgres/       repository impls (pgx), transactional outbox + relay (ADR-0014)
     outbound/memory/         in-memory repo impls for tests/local
@@ -46,7 +49,9 @@ internal/
     outbound/kafkacatalog/   Kafka-sourced path-catalogue adapter (PATH_CATALOGUE_SOURCE=kafka;
                               replays warehouse.process-path-management.events, own consumer group)
     outbound/filecatalog/    file-sourced path-catalogue adapter (default; PATH_CATALOGUE_FILE)
-    outbound/productclassification/  synchronous HTTP client to inventory-storage
+    outbound/productclassificationcopy/  local copy of product-master's classification (Postgres
+                              Store, MemoryStore, PermissiveLookup; PRODUCT_CLASSIFICATION_MODE=
+                              kafka|permissive, ADR-0035) — no live lookup to inventory-storage
     outbound/traveldistance/ synchronous HTTP client to facility-layout GET /distance (ADR-0017)
     outbound/analyticsstore/ analytics Postgres reader/writer
     outbound/telemetry/      OpenTelemetry wiring / metrics adapters

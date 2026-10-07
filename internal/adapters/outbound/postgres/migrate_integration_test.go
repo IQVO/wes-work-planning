@@ -77,6 +77,7 @@ func TestMigrateCreatesTheSchemaOnAnEmptyDatabase(t *testing.T) {
 		"labor_plan_view",
 		"usable_inventory_view",
 		"processed_events",
+		"product_classification_copy",
 		"events",
 	} {
 		var exists bool

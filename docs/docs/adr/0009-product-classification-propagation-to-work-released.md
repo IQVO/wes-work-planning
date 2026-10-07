@@ -10,7 +10,11 @@ description: Why fulfillment-execution's hazmat-capability/fragile hints are rea
 
 ## Status
 
-**Accepted.**
+**Accepted. Decision §1 (synchronous HTTP lookup) and §2 (un-persisted
+read model) superseded by
+[ADR-0035](./0035-product-classification-local-copy.md)**: the
+classification now comes from a local copy of product-master's
+`ProductClassified` events. §3–§5 still apply.
 
 ## Context
 

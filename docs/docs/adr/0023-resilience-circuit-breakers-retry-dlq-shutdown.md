@@ -11,6 +11,10 @@ description: "ADR 0023 — Phase 2 resilience for wes-work-planning, ported verb
 ## Status
 
 Accepted — implemented in the same change that introduced this record.
+The product-classification breaker and retry described here were retired
+with the HTTP client by
+[ADR-0035](./0035-product-classification-local-copy.md); the
+travel-distance parts stand.
 This is Phase 2 (resilience) of the fleet production-readiness plan,
 ported verbatim from order-management's reference implementation
 (ADR-0025 there, PR #107) as the copy-verbatim pattern for this phase.

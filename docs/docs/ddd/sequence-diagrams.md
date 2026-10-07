@@ -402,7 +402,6 @@ sequenceDiagram
     participant UC as Any use case
     participant OP as OutboxPublisher
     participant ENC as kafka Publisher Encode
-    participant IS as inventory-storage
     participant Outbox as outbox_events
     participant Relay as OutboxRelay
     participant K as Kafka
@@ -411,8 +410,7 @@ sequenceDiagram
     OP->>ENC: Encode CloudEvents, key is subject
     opt WorkReleased
         ENC->>ENC: read cpt, ref, sku, gift_wrap from WorkUnitRepo
-        ENC->>IS: GET /products/{sku}/classification
-        IS-->>ENC: Hazmat or Fragile hints, failure omits them
+        ENC->>ENC: read Hazmat or Fragile hints from product_classification_copy in a savepoint, failure omits them
     end
     OP->>Outbox: INSERT one row per topic
     Note over Outbox: commits with the aggregate change

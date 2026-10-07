@@ -29,6 +29,7 @@ flowchart TB
     subgraph wms["WMS tier — what and where"]
         INV["inventory-storage<br/><i>Core</i>"]
         OM["order-management<br/><i>Generic/Supporting</i>"]
+        PM["product-master<br/><i>Supporting</i>"]
     end
     subgraph wes["WES tier — when and in what order"]
         WP["<b>wes-work-planning</b><br/><i>Core — this service</i>"]
@@ -49,7 +50,7 @@ flowchart TB
     WP -->|"PathCapacityChanged"| OM
     WP -->|"PathCapacityChanged"| NF
     FE -->|"TaskCompleted"| WP
-    WP -.->|"GET /products/{sku}/classification"| INV
+    PM -->|"ProductClassified<br/>(local copy, ADR-0035)"| WP
     WP -.->|"GET /distance"| FL
 
     style WP fill:#2e6da4,color:#ffffff,stroke:#1b4368,stroke-width:3px

@@ -22,11 +22,11 @@ are and why the rule holds.
 | **Rebalance recommendation** | `path_id` | computed from the same pool snapshot on read | `GET /paths/{pathId}/rebalance` |
 | **`LaborPlanObserved`** | `path_id` | `ShiftPlanCommitted` events from `workforce-management`, plus the drift outcome of comparing it with our `PathPlan` ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)) | `GET /paths/{pathId}/labor-plan-view` (`driftHeads`, `driftDetectedAt`) |
 | **`UsableInventoryObserved`** | **`sku`** | `StockReserved` / `ReservationRevoked` events from `inventory-storage` | `GET /inventory-view/{sku}` |
+| **Product classification copy** | **`sku`** | `ProductClassified` events from `product-master`, applied only when `version` is newer ([ADR-0035](../adr/0035-product-classification-local-copy.md)) | not exposed; read once per `WorkReleased` as `ProductClassificationView` |
 
-Two further read-only views are **not persisted at all**: the
-`ProductClassificationView` read from inventory-storage once per
-`WorkReleased`, and the `TravelDistanceView` read from facility-layout once
-per `CommitShiftPlan`. The analytics `throughput_rollup` is a fifth,
+One further read-only view is **not persisted at all**: the
+`TravelDistanceView` read from facility-layout once
+per `CommitShiftPlan`. The analytics `throughput_rollup` is a further,
 out-of-process projection owned by `cmd/wes-projector`
 ([Release throughput report](../analytics/release-throughput-report.md)).
 

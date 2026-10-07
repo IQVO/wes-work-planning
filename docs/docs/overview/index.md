@@ -59,8 +59,8 @@ it decides *when* work enters the floor and *in what order*.
 - **Inbound adapters**: REST (chi), Kafka consumer, MCP (Streamable HTTP)
 - **Outbound adapters**: Postgres (pgx/v5, transactional outbox), in-memory,
   log and Kafka event publishers, process-path catalogue (file or Kafka),
-  inventory-storage classification lookup, facility-layout travel-distance
-  lookup
+  product-master classification local copy (Kafka-fed), facility-layout
+  travel-distance lookup
 - **Aggregates**: `ChargeForecast`, `ShiftPlan`/`PathPlan`, `WorkPool`, `WorkUnit`
 - **Read models (projections, not aggregates)**: `LaborPlanObserved` (with
   the ADR-0019 drift outcome), `UsableInventoryObserved`, backlog telemetry,

@@ -146,12 +146,29 @@ never parsed as a legacy shape.
    `POST /paths/{pathId}/work-units` with event choreography — verify
    against `internal/adapters/inbound/kafka/consumer.go`'s doc comment
    before assuming scope, this list grows.
+5. `warehouse.network-inventory-planning.events`,
+   `com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased`
+   → `ApplyWorkDemandReleased` (one transfer work unit per demand, ADR-0033).
 
-All four run under one consumer group, `KAFKA_CONSUMER_GROUP` (default
-`wes-work-planning`, resolved by `consumerGroupID` in `cmd/wes/main.go`).
+All five run under one consumer group, `KAFKA_CONSUMER_GROUP` (default
+`wes-work-planning`, resolved by `consumerGroupID` in `cmd/wes/config.go`).
 Any second process on the shared broker (a local `go run`, the e2e harness)
 must set a unique value, or the rebalance gives the single partition to one
 member and the other silently consumes nothing.
+
+Separately, with `PRODUCT_CLASSIFICATION_MODE=kafka` (ADR-0035),
+`internal/adapters/inbound/kafka/product_classification_consumer.go` reads
+`warehouse.product-master.events` under its own STABLE group
+`PRODUCT_CLASSIFICATION_CONSUMER_GROUP` (unset = boot error), acts only on
+`com.warehouse.wms.product-master.product.ProductClassified`, and feeds
+`ObserveProductClassification`: CloudEvents `id` claim + version-guarded
+upsert into `product_classification_copy` in one UnitOfWork. Invalid
+CloudEvents/payloads are WARN-skipped; transient errors retry the same
+message; the offset is committed after success. The WorkReleased encoder
+reads that copy through `ports.ProductClassificationLookup` (fail-open).
+`PRODUCT_CLASSIFICATION_MODE=http` (the old live lookup against
+inventory-storage) is rejected at boot. `cmd/mcp` never consumes: in kafka
+mode it reads the same table read-only (permissive without a database).
 
 Separately, with `PATH_CATALOGUE_SOURCE=kafka`,
 `internal/adapters/outbound/kafkacatalog` replays
@@ -176,7 +193,8 @@ as defense in depth.
 
 The mark and the effect MUST commit atomically (ADR-0028): every inbound
 event goes through an application-layer use case (`ObserveLaborPlan`,
-`ObserveInventoryChange`, `ApplyTaskCompleted`, `ApplyOrderAllocated`) that
+`ObserveInventoryChange`, `ApplyTaskCompleted`, `ApplyOrderAllocated`,
+`ApplyWorkDemandReleased`, `ObserveProductClassification`) that
 calls `onceAtomically` and is wired `.WithUnitOfWork(repos.uow)` in
 `cmd/wes`. Never call `TryMarkProcessed` from the Kafka adapter or outside
 the effect's scope, because a mark committed before a failed effect turns the
@@ -199,7 +217,10 @@ in-request. Without `DATABASE_URL`, events publish directly (no outbox).
 
 `apis/asyncapi.yaml` declares 11 messages on `warehouse.work-planning.events`
 and their 11 analytics counterparts on `warehouse.wes.analytics`, each with
-its exact `type` const and `dataschema` const; `defaultContentType` is
+its exact `type` const and `dataschema` const, plus the consumed
+`WorkDemandReleased` (`warehouse.network-inventory-planning.events`) and
+`ProductClassified` (`warehouse.product-master.events`, ADR-0035) mirrored
+read-only from their producers; `defaultContentType` is
 `application/cloudevents+json` and every CloudEvents attribute is required.
 `RateDeviationDetected` is declared but not yet raised by any use case.
 Narrative docs (`docs/docs/ddd/domain-events.md`, `docs/docs/api/events.md`,

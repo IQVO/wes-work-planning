@@ -63,7 +63,7 @@ release-fed by `EnqueueWorkUnit`; no API creates a flow-fed pool.
 | **Usable inventory (observed)** | Read-only projection, keyed by **SKU**, of usable quantity as Inventory last reported it. | `inventoryview.UsableInventoryObserved` | yes — *UsableInventoryObserved* |
 | **Process-path catalogue** | The declared set of paths every `pathId` is validated against (longest-prefix match). | `pathcatalog.Catalogue`, `ports.PathCatalogue` | no |
 | **SKU** (on a work unit) | Optional inventory SKU the work unit's order line corresponds to. Empty is valid. Exists so release can look up a product classification. | `WorkUnit.sku` | no |
-| **Product classification** | A plain, un-persisted read model — the result of a **synchronous** HTTP read from inventory-storage's `GET /products/{sku}/classification`, made once at release time. | `productclassificationview.ProductClassificationView` | yes — *ProductClassificationView* |
+| **Product classification** | This context's **local copy** of product-master's classification for a SKU: one row per SKU in `product_classification_copy`, fed by `ProductClassified` events (version-guarded) and read once at release time (ADR-0035). | `productclassificationview.ProductClassificationView` | yes — *ProductClassificationView* |
 | **Gift wrap** (on a work unit) | Optional, caller-stated at enqueue time: whether the requester asked for a gift package. Stamped onto `WorkReleased` as `gift_wrap`. | `WorkUnit.giftWrap` | no |
 | **Travel distance** | Optional hint: metres between two location codes, read once from facility-layout at plan commit. | `traveldistanceview.TravelDistanceView`, `PathPlan.travelDistanceM` | no |
 
@@ -108,29 +108,33 @@ none of them is a field maintained on an aggregate. See
 
 ### Trap 4 — `ProductClassificationView` is not `UsableInventoryObserved`
 
-Both originate in `inventory-storage` and both are keyed by SKU. They do not
-arrive the same way.
+Both are keyed by SKU and both are local copies built from Kafka events, but
+they come from different owners and answer different questions.
 
 `UsableInventoryObserved` is a **persisted Kafka projection** of
-`StockReserved` and `ReservationRevoked`.
+inventory-storage's `StockReserved` and `ReservationRevoked`: a running
+tally that changes with every reservation.
 
-`ProductClassificationView` is a **synchronous HTTP read, not persisted at
-all**. inventory-storage's `ProductClassified` event is not forwarded to the
-broker, so there is nothing to consume. `ReleaseNextWork`'s outbound publisher
-calls `GET /products/{sku}/classification` **once**, when a unit is released,
-and stamps the result onto that one `WorkReleased` event. See
-[ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md).
+`ProductClassificationView` is read from a **local copy of product-master's
+`ProductClassified`** events: a full-state replacement per SKU, applied only
+when the event's `version` is newer. `ReleaseNextWork`'s outbound publisher
+reads it **once**, when a unit is released, and stamps the result onto that
+one `WorkReleased` event. Until ADR-0035 it was a synchronous HTTP read from
+inventory-storage and was not persisted at all. See
+[ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md)
+and [ADR-0035](../adr/0035-product-classification-local-copy.md).
 
 ### Trap 5 — `GiftWrap` is not a `ProductClassification` tag
 
 Both `gift_wrap` and `fragile` are optional booleans on the same
 `WorkReleased.data` payload, both omitted when false.
 
-`fragile` is **derived**: looked up from inventory-storage's classification
-for the released unit's SKU. It says something about the *product*.
+`fragile` is **derived**: read from the local copy of product-master's
+classification for the released unit's SKU. It says something about the
+*product*.
 
 `gift_wrap` is **caller-supplied** on `EnqueueWorkUnitRequest` and read
-straight off the `WorkUnit`. It never touches inventory-storage and says
+straight off the `WorkUnit`. It never touches the classification and says
 something about *this particular unit of work*. See
 [ADR-0010](../adr/0010-gift-wrap-as-a-work-released-characteristic.md).
 

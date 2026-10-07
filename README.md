@@ -44,7 +44,7 @@ internal/
     outbound/kafka/          integration + analytics publishers (also the outbox's Encoders) and the relay's RelaySink
     outbound/filecatalog/    process-path catalogue from a YAML file (PATH_CATALOGUE_SOURCE=file, ADR-0012)
     outbound/kafkacatalog/   process-path catalogue replayed from process-path-management's topic (PATH_CATALOGUE_SOURCE=kafka)
-    outbound/productclassification/  inventory-storage classification lookup (ADR-0009)
+    outbound/productclassificationcopy/  local copy of product-master's classification (ADR-0035)
     outbound/traveldistance/ facility-layout travel-distance lookup (ADR-0017)
     outbound/analyticsstore/ analytics Postgres projection + report reader
     outbound/telemetry/      OpenTelemetry setup
@@ -105,8 +105,8 @@ opens the pool, so there is no separate `migrate` step.
 | `HOUSEKEEPING_INTERVAL` | `1h` | Time between retention sweeps of `idempotency_keys` / `outbox_events` (Go duration). Only used with Postgres ([ADR-0032](docs/docs/adr/0032-housekeeping-retention-sweeper.md)) |
 | `IDEMPOTENCY_KEY_TTL` | `24h` | How long an `Idempotency-Key` row is kept before the sweeper deletes it; `0` disables that sweep |
 | `OUTBOX_RETENTION` | `168h` (7d) | How long a **published** `outbox_events` row is kept; unpublished rows are never deleted; `0` disables that sweep |
-| `PRODUCT_CLASSIFICATION_MODE` | `permissive` | `permissive` (default, no-op, always omits hazmat/fragile hints) or `http` — synchronous lookup of a released unit's SKU classification from inventory-storage |
-| `INVENTORY_STORAGE_BASE_URL` | (unset) | Base URL for inventory-storage's REST API; required when `PRODUCT_CLASSIFICATION_MODE=http` |
+| `PRODUCT_CLASSIFICATION_MODE` | `permissive` | `permissive` (default, no-op, always omits hazmat/fragile hints) or `kafka` — keep a local copy of product-master's `ProductClassified` events (`warehouse.product-master.events`, table `product_classification_copy`) and read a released unit's SKU classification from it ([ADR-0035](docs/docs/adr/0035-product-classification-local-copy.md)). `http` (the retired live lookup against inventory-storage) and any other value fail at boot |
+| `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | (unset) | Stable Kafka consumer group of the `ProductClassified` consumer; required (with `KAFKA_BROKERS`) when `PRODUCT_CLASSIFICATION_MODE=kafka`. Every replica shares it. For an in-memory run (no `DATABASE_URL`) use a fresh value per run so the copy is replayed |
 | `TRAVEL_DISTANCE_MODE` | `permissive` | `permissive` (default, no-op, always omits the travel-distance hint) or `http` — synchronous lookup of the real travel distance between two facility-layout LocationCodes at shift-plan-commit time (ADR-0017) |
 | `FACILITY_LAYOUT_BASE_URL` | (unset) | Base URL for facility-layout's REST API; required when `TRAVEL_DISTANCE_MODE=http` |
 | `PATH_CATALOGUE_SOURCE` | `file` | `file` (default) reads `PATH_CATALOGUE_FILE` once at boot; `kafka` (requires `KAFKA_BROKERS`) replays process-path-management's `warehouse.process-path-management.events` topic into an in-memory catalogue, blocks startup until the replay completes, then keeps it current live. The replay uses its own per-process consumer group, independent of `KAFKA_CONSUMER_GROUP` |
@@ -459,11 +459,12 @@ Topic `warehouse.work-planning.events`:
 
   Additive: `data` also carries two OPTIONAL fields when there is a hint to
   give — `required_capabilities` (array, containing `"hazmat"` when the
-  released unit's SKU is classified `Hazmat` in inventory-storage) and
-  `fragile` (bool, `true` when the SKU is classified `Fragile`). Looked up
-  once, synchronously, from inventory-storage's
-  `GET /products/{sku}/classification` at publish time — see
-  [ADR-0009](./docs/docs/adr/0009-product-classification-propagation-to-work-released.md).
+  released unit's SKU is classified `Hazmat` by product-master) and
+  `fragile` (bool, `true` when the SKU is classified `Fragile`). Read once,
+  at publish time, from this service's local copy of product-master's
+  `ProductClassified` events — see
+  [ADR-0009](./docs/docs/adr/0009-product-classification-propagation-to-work-released.md)
+  and [ADR-0035](./docs/docs/adr/0035-product-classification-local-copy.md).
   Both fields are omitted, not defaulted to empty/false, when unavailable.
   A third OPTIONAL field, `gift_wrap` (bool), is present and `true` only when
   the caller asked for gift wrap at enqueue time — read straight off the

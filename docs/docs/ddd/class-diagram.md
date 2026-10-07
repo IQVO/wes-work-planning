@@ -69,6 +69,7 @@ classDiagram
         -poolEntry[] entries
         -int64 version
         +Enqueue(workUnitId, cpt) error
+        +Configure(mode, wipLimit) bool, error
         +ReleaseNext() string
         +Release(workUnitId) error
         +Complete(workUnitId) error
@@ -222,6 +223,7 @@ classDiagram
         <<DomainEvent>>
         +PathId PathId
     }
+    note for RateDeviationDetected "Reserved, not emitted (decided 2026-10-06)"
     class PathThrottled {
         <<DomainEvent>>
         +PathId PathId

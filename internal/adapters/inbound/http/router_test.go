@@ -55,6 +55,7 @@ func newTestHandlers() *inboundhttp.Handlers {
 		InventoryView:           usecases.NewInventoryView(inventoryViews),
 		GetWorkUnitsByReference: usecases.NewGetWorkUnitsByReference(workUnits),
 		GetWorkUnit:             usecases.NewGetWorkUnit(workUnits),
+		ConfigurePool:           usecases.NewConfigurePool(pools),
 		Catalogue:               testCatalogue,
 	}
 

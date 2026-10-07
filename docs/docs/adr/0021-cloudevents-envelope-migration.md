@@ -14,7 +14,7 @@ description: Migrate warehouse.work-planning.events and warehouse.fulfillment.ev
 (2026-09-30). Originally accepted 2026-09-26 as a companion to
 fulfillment-execution ADR-0027.
 
-:::warning Superseded
+:::warning[Superseded]
 The fleet chose a single coordinated cutover instead of the bake period
 described below. The flat envelope, dual-write, dual-read and the
 `EVENT_ENVELOPE_MODE` toggle this record introduces have all been removed;

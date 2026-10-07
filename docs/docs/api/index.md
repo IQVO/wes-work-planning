@@ -17,7 +17,7 @@ Spectral on every push and pull request:
 | **REST** — OpenAPI 3.0.3 | [`apis/openapi.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi.yaml) | [REST API](./rest-overview.md) — **generated from the spec**, not hand-transcribed |
 | **Events** — AsyncAPI 2.6.0 | [`apis/asyncapi.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/asyncapi.yaml) | [Events](./events.md) |
 
-## Endpoint coverage: 13 operations
+## Endpoint coverage: 14 operations
 
 Every route registered in `internal/adapters/inbound/http/router.go` is
 documented in `apis/openapi.yaml`, and therefore appears in the generated
@@ -40,6 +40,7 @@ not-ready first on graceful shutdown
 | 11 | `GET` | `/work-units/{id}` | GetWorkUnit | `getWorkUnit` |
 | 12 | `GET` | `/healthz` | — | `healthCheck` |
 | 13 | `GET` | `/readyz` | — | `readinessCheck` |
+| 14 | `PUT` | `/paths/{pathId}/pool` | ConfigurePool ([ADR-0034](../adr/0034-configure-pool-command.md)) | `configurePool` |
 
 ## Design constraints
 

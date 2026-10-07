@@ -71,7 +71,7 @@ func TestConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPartition(t 
 
 	topic := cloudevents.TopicWorkforceEvents
 	dlqTopic := topic + ".dlq"
-	if err := createTopics(ctx, brokers, cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, cloudevents.TopicFulfillmentEvents, cloudevents.TopicOrderManagementEvents, dlqTopic); err != nil {
+	if err := createTopics(ctx, brokers, cloudevents.TopicWorkforceEvents, cloudevents.TopicInventoryEvents, cloudevents.TopicFulfillmentEvents, cloudevents.TopicOrderManagementEvents, cloudevents.TopicNetworkDemandEvents, dlqTopic); err != nil {
 		t.Fatalf("create Kafka topics: %v", err)
 	}
 
@@ -101,6 +101,7 @@ func TestConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPartition(t 
 	consumer := inboundkafka.NewConsumer(brokers, groupID, observeLabor, observeInventory,
 		usecases.NewApplyTaskCompleted(recordCompletion, realProcessed),
 		usecases.NewApplyOrderAllocated(enqueue, realProcessed, catalogue),
+		usecases.NewApplyWorkDemandReleased(enqueue, realProcessed, catalogue),
 		catalogue, nil)
 	defer func() { _ = consumer.Close() }()
 

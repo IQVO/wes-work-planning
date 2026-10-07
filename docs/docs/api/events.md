@@ -114,7 +114,7 @@ Topic `warehouse.work-planning.events`. Eleven event types are catalogued; the
 | **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` (+ optional `required_capabilities`, `fragile`, `gift_wrap`) | the release policy admits the earliest-CPT unit |
 | `workunit.WorkUnitCompleted` | `path_id`, `work_unit_id` | a released unit completes |
 | `workpool.BacklogThresholdBreached` | `path_id` | backlog depth crosses the pool's alarm threshold |
-| `workpool.RateDeviationDetected` | `path_id` | *declared in the catalogue; **no use case raises it today*** |
+| `workpool.RateDeviationDetected` | `path_id` | *reserved: declared in the catalogue for a future detection rule ([ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md) defers it); **not emitted today** (decided 2026-10-06)* |
 | `workpool.PathThrottled` | `path_id` | flow balancing decides to throttle upstream release |
 | `workpool.LaborReassignmentFlagged` | `path_id` | flow balancing recommends moving headcount |
 | `workpool.PathCapacityChanged` | `path_id`, `cutoff_at`, `remaining_units`, `known` | `SampleBacklog` is called with a `cutoffAt` query parameter (ADR-0018) |

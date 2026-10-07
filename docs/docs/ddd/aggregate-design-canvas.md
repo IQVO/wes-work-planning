@@ -230,8 +230,11 @@ stateDiagram-v2
 
 Source: `internal/domain/release/work_pool.go`,
 `internal/domain/release/errors.go`. Omits: `RestoreEntry`, which only
-rehydrates stored rows in the repository adapter, and the pool-level
-`ErrEmptyPool` / `ErrUnknownEntry` failures.
+rehydrates stored rows in the repository adapter, the pool-level
+`ErrEmptyPool` / `ErrUnknownEntry` failures, and `Configure` (ADR-0034), which
+sets the pool's mode and WIP limit and never changes any entry's state, so it
+adds no transition: lowering the limit below the current WIP only makes the
+`ErrWIPLimitReached` self-loop above apply until completions drain WIP.
 
 ### 4. Enforced invariants
 
@@ -245,11 +248,14 @@ rehydrates stored rows in the repository adapter, and the pool-level
 | W6 | An entry completes only after it was released | `Complete` → `release.ErrNotReleased` |
 | W7 | **Earliest CPT first** — the priority function | `nextPendingIndex` |
 | W8 | Concurrent saves never silently overwrite each other | `WorkPoolRepo.Save` matches `version`; zero rows → `ports.ErrConcurrentModification`, retried up to 12 times by `retryOnPoolConflict`, then HTTP 409 `concurrent-modification` |
+| W9 | **The WIP limit is a positive integer and the mode a known `FeedMode`; reconfiguring never evicts work** | `Configure` → `release.ErrInvalidWIPLimit` / `release.ErrUnknownFeedMode` (HTTP 400); entries are untouched, so lowering the limit below the current WIP just pauses releases (W2) until WIP < limit ([ADR-0034](../adr/0034-configure-pool-command.md)) |
 
 W2 is conditional by design: on a **flow-fed** pool the WIP limit is not
 enforced and only `alarmThreshold` applies (`IsOverAlarmThreshold`). You can
 only enforce a limit on an input you control
-([ADR-0003](../adr/0003-flow-balancing-as-domain-service.md)).
+([ADR-0003](../adr/0003-flow-balancing-as-domain-service.md)). A pool becomes
+flow-fed only through `ConfigurePool` (W9); an unconfigured path keeps the
+`ReleaseFed` / 1000 fallback.
 
 ### 5. Corrective policies
 
@@ -267,7 +273,8 @@ only enforce a limit on an input you control
 
 | Command | Entry points | Pool method |
 |---|---|---|
-| `EnqueueWorkUnit` | `POST /paths/{pathId}/work-units` (`Idempotency-Key` with Postgres); `ApplyOrderAllocated` from Kafka | `Enqueue` (creates the pool on first enqueue: `ReleaseFed`, WIP limit and alarm threshold 1000) |
+| `EnqueueWorkUnit` | `POST /paths/{pathId}/work-units` (`Idempotency-Key` with Postgres); `ApplyOrderAllocated` from Kafka | `Enqueue` (creates the pool on first enqueue **if none was configured**: `ReleaseFed`, WIP limit and alarm threshold 1000) |
+| `ConfigurePool` | `PUT /paths/{pathId}/pool` (REST only, no MCP tool; [ADR-0034](../adr/0034-configure-pool-command.md)) | `Configure` (creates the pool if absent; idempotent; raises no event) |
 | `ReleaseNextWork` | `POST /paths/{pathId}/release`; MCP `release_next_work` | `ReleasePolicy.Apply` → `ReleaseNext`, plus `Reconcile` |
 | `RecordCompletion` | `POST /work-units/{id}/complete`; `ApplyTaskCompleted` from Kafka | `Reconcile` |
 | `SampleBacklog` | `GET /paths/{pathId}/telemetry`; MCP `get_backlog_telemetry` | read-only: `BacklogDepth`, `WIP`, `IsOverAlarmThreshold`, `RemainingCapacity` |
@@ -281,7 +288,7 @@ only enforce a limit on an input you control
 | `PathCapacityChanged` | `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` | `SampleBacklog`, only when `cutoffAt` is supplied ([ADR-0018](../adr/0018-path-capacity-changed.md)) |
 | `PathThrottled` | `com.warehouse.wes.work-planning.workpool.PathThrottled` | `RebalanceDecision` |
 | `LaborReassignmentFlagged` | `com.warehouse.wes.work-planning.workpool.LaborReassignmentFlagged` | `RebalanceDecision` |
-| `RateDeviationDetected` | `com.warehouse.wes.work-planning.workpool.RateDeviationDetected` | **declared only — no use case raises it** |
+| `RateDeviationDetected` | `com.warehouse.wes.work-planning.workpool.RateDeviationDetected` | **reserved — declared for a future detection rule, not emitted** (decided 2026-10-06; [ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md) defers it) |
 
 `WorkUnitCreated` and `WorkReleased` are raised in the same use cases that
 change the pool, but they describe the `WorkUnit` and are typed under
@@ -418,7 +425,7 @@ facts belong to someone else or are computed on read. See
 | Type | Package | Kind |
 |---|---|---|
 | `LaborPlanObserved` (+ `Drift`) | `internal/domain/laborview` | Kafka projection of Workforce's `ShiftPlanCommitted`, persisted in `labor_plan_view` |
-| `UsableInventoryObserved` | `internal/domain/inventoryview` | Kafka projection of `StockReserved` / `ReservationRevoked`, persisted in `usable_inventory_view` |
+| `UsableInventoryObserved` | `internal/domain/inventoryview` | Kafka projection of `StockReserved` / `ReservationRevoked`, persisted in `usable_inventory_view`. Decided 2026-10-06: read-only context by design ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)); gating release on it would be a new business rule |
 | `ProductClassificationView` | `internal/domain/productclassificationview` | synchronous REST read from inventory-storage at release, never persisted |
 | `TravelDistanceView` | `internal/domain/traveldistanceview` | synchronous REST read from facility-layout at plan commit, never persisted |
 | `PathDefinition` / `Catalogue` | `internal/domain/pathcatalog` | in-memory copy of process-path-management's catalogue |

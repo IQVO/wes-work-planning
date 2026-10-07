@@ -57,6 +57,16 @@ type EnqueueWorkUnitRequest struct {
 	// another service; it is exactly what the caller supplied. False by
 	// default — not every caller requests gift wrap.
 	GiftWrap bool
+	// TransferRef, WorkKind, SiteId and Quantity are the optional
+	// transfer metadata of a network-inventory-planning work demand
+	// (ADR-0033), threaded through to the WorkUnit so the outbound
+	// WorkReleased publisher can stamp them onto the published event at
+	// release time. Zero values mean "not transfer work" — the fields are
+	// additive, exactly like SKU/GiftWrap, never new invariants.
+	TransferRef string
+	WorkKind    workunit.WorkKind
+	SiteId      string
+	Quantity    int
 }
 
 func (uc *EnqueueWorkUnit) Execute(ctx context.Context, req EnqueueWorkUnitRequest) (*workunit.WorkUnit, error) {
@@ -83,6 +93,10 @@ func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitR
 	}
 	unit.SetSKU(req.SKU)
 	unit.SetGiftWrap(req.GiftWrap)
+	unit.SetTransferRef(req.TransferRef)
+	unit.SetWorkKind(req.WorkKind)
+	unit.SetSiteId(req.SiteId)
+	unit.SetQuantity(req.Quantity)
 
 	pool, err := uc.pools.FindByPathId(ctx, req.PathId)
 	if errors.Is(err, ports.ErrNotFound) {

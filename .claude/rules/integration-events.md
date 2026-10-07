@@ -7,13 +7,14 @@ paths:
 
 # Integration & REST reference — wes-work-planning
 
-## REST API (inbound adapter, 12 operationIds in apis/openapi.yaml)
+## REST API (inbound adapter, 14 operationIds in apis/openapi.yaml)
 
 - `GET  /healthz`                          → healthCheck
 - `POST /paths/{pathId}/charge`            → receiveChargeForecast
 - `POST /paths/{pathId}/plan`              → commitShiftPlan
 - `POST /paths/{pathId}/work-units`        → enqueueWorkUnit
 - `POST /paths/{pathId}/release`           → releaseNextWork
+- `PUT  /paths/{pathId}/pool`              → configurePool (ADR-0034)
 - `GET  /paths/{pathId}/telemetry`         → sampleBacklog
 - `GET  /paths/{pathId}/rebalance`         → rebalanceDecision
 - `GET  /paths/{pathId}/labor-plan-view`   → getLaborPlanView
@@ -23,7 +24,7 @@ paths:
 - `GET  /inventory-view/{sku}`             → getInventoryView
 
 `GET /readyz` (readiness probe, flipped not-ready first on shutdown,
-ADR-0023) is also routed but is NOT in `apis/openapi.yaml`.
+ADR-0023) is declared as `readinessCheck` in `apis/openapi.yaml`.
 
 `GET /work-units?reference=` is the read side backing the fleet's
 cross-service Order Lifecycle console screen — see ADR-0002 in

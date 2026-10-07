@@ -58,6 +58,7 @@ process-path catalogue (process-path-management).
 | Planner / supervisor | `CommitShiftPlan` | Command | REST `POST /paths/{pathId}/plan` | OHS |
 | Any upstream caller | `EnqueueWorkUnit` | Command | REST `POST /paths/{pathId}/work-units` (`Idempotency-Key` required with Postgres) | OHS |
 | Supervisor / agent | `ReleaseNextWork` | Command | REST `POST /paths/{pathId}/release`; MCP tool `release_next_work` | OHS |
+| Operator | `ConfigurePool` | Command | REST `PUT /paths/{pathId}/pool` (no MCP tool; [ADR-0034](../adr/0034-configure-pool-command.md)) | OHS |
 | Station / supervisor | `RecordCompletion` | Command | REST `POST /work-units/{id}/complete` | OHS |
 | Supervisor / warehouse-ops-agent | `SampleBacklog` | Query (may emit events) | REST `GET /paths/{pathId}/telemetry?cutoffAt=`; MCP tool `get_backlog_telemetry`; MCP resource `telemetry://{pathId}/backlog` | OHS |
 | Supervisor / warehouse-ops-agent | `RebalanceDecision` | Query (may emit events) | REST `GET /paths/{pathId}/rebalance`; MCP tool `get_rebalance_recommendation` | OHS |
@@ -77,7 +78,7 @@ process-path catalogue (process-path-management).
 | fulfillment-execution | `WorkReleased` | Event | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.workunit.WorkReleased` | OHS + Published Language (we supply) |
 | order-management | `PathCapacityChanged` | Event | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` | OHS + PL ([ADR-0018](../adr/0018-path-capacity-changed.md)) |
 | network-fulfillment | `PathCapacityChanged` | Event | same topic and type | OHS + PL; network-fulfillment is Conformist |
-| *(no consumer today)* | `ChargeForecastReceived`, `ShiftPlanCommitted`, `WorkUnitCreated`, `WorkUnitCompleted`, `BacklogThresholdBreached`, `RateDeviationDetected` (declared only), `PathThrottled`, `LaborReassignmentFlagged`, `PathPlanDriftDetected` | Event | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.<entity>.<Event>` | Published for observability |
+| *(no consumer today)* | `ChargeForecastReceived`, `ShiftPlanCommitted`, `WorkUnitCreated`, `WorkUnitCompleted`, `BacklogThresholdBreached`, `RateDeviationDetected` (reserved, not emitted; decided 2026-10-06), `PathThrottled`, `LaborReassignmentFlagged`, `PathPlanDriftDetected` | Event | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.<entity>.<Event>` | Published for observability |
 | own analytics projector (`cmd/wes-projector`) | all 11 domain events | Event | Kafka `warehouse.wes.analytics`, same CloudEvents types, dataschema `urn:warehouse:wes-work-planning:analytics:<Event>:v1` | Internal data product ([ADR-0011](../adr/0011-analytical-data-product.md)) |
 | inventory-storage | product classification | Query | REST `GET /products/{sku}/classification`, once per `WorkReleased` | Conformist to its OHS ([ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md)) |
 | facility-layout | travel distance | Query | REST `GET /distance?from=&to=`, once per `CommitShiftPlan` with both codes | Conformist to its OHS ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) |
@@ -106,8 +107,12 @@ Top terms:
   [ADR-0002](../adr/0002-waveless-continuous-release.md)).
 - The **WIP limit is enforced only on release-fed pools**; flow-fed pools only
   alarm ([ADR-0003](../adr/0003-flow-balancing-as-domain-service.md)).
-- The first enqueue on a path creates its pool **release-fed with WIP limit
-  and alarm threshold 1000** (`defaultWIPLimit`, `defaultAlarmThreshold`).
+- The first enqueue on a path whose pool was never configured creates it
+  **release-fed with WIP limit and alarm threshold 1000** (`defaultWIPLimit`,
+  `defaultAlarmThreshold`). An operator sets a path's mode and WIP limit
+  explicitly with `PUT /paths/{pathId}/pool` (`ConfigurePool`,
+  [ADR-0034](../adr/0034-configure-pool-command.md)); lowering a limit below the
+  current WIP never evicts work, releases pause until WIP < limit.
 - A flow-fed path reports remaining capacity as **`Known=false`**, always
   ([ADR-0018](../adr/0018-path-capacity-changed.md),
   [ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md)).
@@ -153,9 +158,18 @@ Top terms:
 
 - `RateDeviationDetected` is declared, catalogued and counted by the analytics
   projector but **no use case raises it** — it needs a time-windowed
-  actual-rate projection that does not exist.
-- Nothing in production code creates a **flow-fed** pool or changes a pool's
-  WIP limit; both are reachable only by seeding storage.
+  actual-rate projection that does not exist. **Decided 2026-10-06: kept
+  reserved** (declared for a future detection rule, [ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md)
+  defers it; not emitted today; not removed).
+- ~~Nothing in production code creates a **flow-fed** pool or changes a pool's
+  WIP limit.~~ **Resolved 2026-10-06:** `PUT /paths/{pathId}/pool`
+  ([ADR-0034](../adr/0034-configure-pool-command.md)).
+- `UsableInventoryObserved` feeds no decision. **Decided 2026-10-06:
+  read-only context by design ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md));
+  gating release on it would be a new business rule** (reservations in
+  inventory-storage already guard availability).
+- The `events` table (migration `0001`) is unused. **Decided 2026-10-06:
+  legacy, unused; retained, additive migrations only.**
 - `WorkPool` entries are never removed, so a long-lived path's pool grows
   without bound and every save rewrites all entries.
 - `PathPlanDriftDetected` has no consumer yet; who acts on drift?

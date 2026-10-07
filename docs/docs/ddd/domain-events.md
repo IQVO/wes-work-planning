@@ -40,7 +40,7 @@ CloudEvents `subject`: the **work unit id** for `workunit` events, the
 | **`com.warehouse.wes.work-planning.workunit.WorkReleased`** | work unit id | `path_id`, `work_unit_id`, `cpt`, `ref`, optional `required_capabilities`, `fragile`, `gift_wrap` | `ReleaseNextWork` (REST or MCP) | **fulfillment-execution** — `internal/adapters/inbound/kafka/consumer.go` turns it into a `Task` |
 | `com.warehouse.wes.work-planning.workunit.WorkUnitCompleted` | work unit id | `path_id`, `work_unit_id` | `RecordCompletion` (REST or `ApplyTaskCompleted`) | — |
 | `com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached` | path id | `path_id` | `SampleBacklog` when backlog depth exceeds the alarm threshold | — |
-| `com.warehouse.wes.work-planning.workpool.RateDeviationDetected` | path id | `path_id` | **nothing** — declared only | — |
+| `com.warehouse.wes.work-planning.workpool.RateDeviationDetected` | path id | `path_id` | **nothing** — reserved for a future detection rule, not emitted (decided 2026-10-06: kept) | — |
 | `com.warehouse.wes.work-planning.workpool.PathThrottled` | path id | `path_id` | `RebalanceDecision`, flow-fed pool over threshold | — |
 | `com.warehouse.wes.work-planning.workpool.LaborReassignmentFlagged` | path id | `path_id` | `RebalanceDecision`, release-fed pool at WIP limit with backlog | — |
 | **`com.warehouse.wes.work-planning.workpool.PathCapacityChanged`** | path id | `path_id`, `cutoff_at`, `remaining_units`, `known` | `SampleBacklog`, only when `cutoffAt` is supplied ([ADR-0018](../adr/0018-path-capacity-changed.md)) | **order-management** — `internal/adapters/outbound/kafkapathcapacity/consumer.go`; **network-fulfillment** — `internal/adapters/outbound/pathcapacitycache/consumer.go` |
@@ -59,6 +59,10 @@ sibling's `origin/develop`.
 `RateDeviationDetected` is declared in the domain, in `apis/asyncapi.yaml`
 and in the analytics rollup, but no use case raises it — computing rate
 deviation needs a time-windowed actual-rate projection that is not built.
+**Decided 2026-10-06: kept reserved.** It is declared for a future detection
+rule ([ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md) defers
+it), is not emitted today, and is not removed (removing a declared message would
+be a contract removal).
 
 Kafka publication is **opt-in at runtime** via `EVENT_PUBLISHER=kafka`. With
 the default `EVENT_PUBLISHER=log`, every event above goes to the log

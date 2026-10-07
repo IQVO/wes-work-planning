@@ -66,7 +66,10 @@ paths:
 
 - **WorkPool**: hands out work in priority order, at most once. WIP limit is
   an enforceable invariant on release-fed pools; an alarm threshold on
-  flow-fed.
+  flow-fed. A pool is created/configured ONLY by the explicit `ConfigurePool`
+  command (ADR-0034, `PUT /paths/{pathId}/pool`); an unconfigured path keeps
+  `EnqueueWorkUnit`'s ReleaseFed 1000/1000 fallback. Lowering the limit below
+  current WIP never evicts work: releases pause until WIP < limit.
 - **WorkUnit**: at most one active assignment; no double-complete; carries
   CPT.
 - **ShiftPlan**: plannedHeads(path) ≤ installedStations(path); sum of hours

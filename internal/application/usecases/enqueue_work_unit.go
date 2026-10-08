@@ -67,6 +67,12 @@ type EnqueueWorkUnitRequest struct {
 	WorkKind    workunit.WorkKind
 	SiteId      string
 	Quantity    int
+	// LineNo is optional: the 1-based order line this work unit is for
+	// (ADR-0036). 0 means "unknown"; a negative value is rejected with
+	// workunit.ErrInvalidLineNo. Threaded through to the WorkUnit so the
+	// outbound WorkReleased publisher can stamp line_no at release time. It
+	// never alters WorkUnitId.
+	LineNo int
 }
 
 func (uc *EnqueueWorkUnit) Execute(ctx context.Context, req EnqueueWorkUnitRequest) (*workunit.WorkUnit, error) {
@@ -91,6 +97,10 @@ func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitR
 	if err != nil {
 		return nil, err
 	}
+	if req.LineNo < 0 {
+		return nil, workunit.ErrInvalidLineNo
+	}
+	unit.SetLineNo(req.LineNo)
 	unit.SetSKU(req.SKU)
 	unit.SetGiftWrap(req.GiftWrap)
 	unit.SetTransferRef(req.TransferRef)

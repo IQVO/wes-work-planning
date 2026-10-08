@@ -70,6 +70,7 @@ no scheduler).
 | [0033](./0033-transfer-work-demand-choreography.md) | Consume NIP `WorkDemandReleased` into transfer-referenced work units; `WorkReleased` gains optional transfer fields on the same v1 payload | Accepted |
 | [0034](./0034-configure-pool-command.md) | `ConfigurePool` command (`PUT /paths/{pathId}/pool`) sets a pool's mode and WIP limit; lowering below WIP never evicts | Accepted |
 | [0035](./0035-product-classification-local-copy.md) | Product classification from a local copy of product-master's `ProductClassified` events; `PRODUCT_CLASSIFICATION_MODE=kafka\|permissive`, `http` rejected at boot | Accepted |
+| [0036](./0036-work-unit-line-no-on-work-released.md) | `WorkUnit` stores an optional `line_no` (nullable column, optional `lineNo` on the REST enqueue); `WorkReleased` v1 carries it on both topics (per-line confirm-pick, fleet decision 18) | Accepted |
 
 ## The template
 

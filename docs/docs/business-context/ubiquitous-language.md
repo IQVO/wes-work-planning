@@ -65,6 +65,7 @@ release-fed by `EnqueueWorkUnit`; no API creates a flow-fed pool.
 | **SKU** (on a work unit) | Optional inventory SKU the work unit's order line corresponds to. Empty is valid. Exists so release can look up a product classification. | `WorkUnit.sku` | no |
 | **Product classification** | This context's **local copy** of product-master's classification for a SKU: one row per SKU in `product_classification_copy`, fed by `ProductClassified` events (version-guarded) and read once at release time (ADR-0035). | `productclassificationview.ProductClassificationView` | yes — *ProductClassificationView* |
 | **Gift wrap** (on a work unit) | Optional, caller-stated at enqueue time: whether the requester asked for a gift package. Stamped onto `WorkReleased` as `gift_wrap`. | `WorkUnit.giftWrap` | no |
+| **Line number** (on a work unit) | Optional 1-based order line the work unit was made for, taken from the `OrderAllocated` line (or the optional `lineNo` of the REST enqueue). `NULL`/absent means unknown. Stamped onto `WorkReleased` as `line_no` on both topics (ADR-0036); it never changes the `{order_id}-line-{line_no}` id. | `WorkUnit.lineNo` | no |
 | **Travel distance** | Optional hint: metres between two location codes, read once from facility-layout at plan commit. | `traveldistanceview.TravelDistanceView`, `PathPlan.travelDistanceM` | no |
 
 ## The traps

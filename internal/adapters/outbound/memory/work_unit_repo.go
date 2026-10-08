@@ -78,6 +78,7 @@ func cloneWorkUnit(u *workunit.WorkUnit) *workunit.WorkUnit {
 	cp.SetWorkKind(u.WorkKind())
 	cp.SetSiteId(u.SiteId())
 	cp.SetQuantity(u.Quantity())
+	cp.SetLineNo(u.LineNo())
 	if at := u.ReleasedAt(); at != nil {
 		_ = cp.Release(*at)
 	}

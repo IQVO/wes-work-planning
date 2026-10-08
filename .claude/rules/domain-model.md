@@ -117,7 +117,12 @@ observability/future subscribers.
 2. `CommitShiftPlan(path, heads, rate, hours)` → ShiftPlan (validates
    invariant); optional travel-distance hint (ADR-0017) and drift
    reconciliation against `LaborPlanObserved` (ADR-0019)
-3. `EnqueueWorkUnit(path, cpt, ref)` → WorkUnit added to pool
+3. `EnqueueWorkUnit(path, cpt, ref, lineNo?)` → WorkUnit added to pool. The
+   optional `lineNo` (>= 1, else 400 `invalid-line-no`) is stored on the unit
+   (nullable `line_no`, ADR-0036); `ApplyOrderAllocated` passes the line it
+   already receives, and the `<order>-line-<n>` id is unchanged. `WorkReleased`
+   v1 carries it as the optional `line_no` on both topics (omitted when unknown;
+   never for transfer units)
 4. `ReleaseNextWork(path)` → applies release policy, returns released
    unit(s); also stamps product-classification hints (see above)
 5. `RecordCompletion(workUnitId)` → WorkUnitCompleted, updates telemetry

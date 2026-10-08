@@ -148,6 +148,10 @@ have two different controllable inputs. See
 
 - **Inventory truth** — owned by `inventory-storage`. This service only keeps
   a read-only SKU-keyed projection of what Inventory last reported.
+- **Product master data** (handling classification) — owned by
+  `product-master`. This service only keeps a version-guarded local copy of
+  its `ProductClassified` events to stamp the `hazmat`/`fragile` hints on
+  `WorkReleased` ([ADR-0035](../adr/0035-product-classification-local-copy.md)).
 - **Workforce scheduling / individual labor assignment** — owned by
   `workforce-management`. This service only keeps a read-only path-keyed
   projection of the labor plan Workforce last committed.

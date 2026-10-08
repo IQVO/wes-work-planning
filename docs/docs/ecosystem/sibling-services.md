@@ -8,7 +8,7 @@ description: What each warehouse-systems bounded context this service integrates
 
 # Sibling services
 
-The seven bounded contexts this service integrates with directly, summarised
+The eight bounded contexts this service integrates with directly, summarised
 from each repository's own `CLAUDE.md` and adapter code. Each is an independent Go service with its own model, its own
 database and its own deployment lifecycle.
 
@@ -36,6 +36,37 @@ strands an order.
 reservation events and project them into `UsableInventoryObserved`, keyed by
 SKU. That projection is read-only context: **usable, not total, is what
 constrains release**, and this is the only channel through which we learn it.
+
+inventory-storage no longer owns product classification (its ADR 0034): that
+moved to `product-master`, below. This service never called inventory-storage
+for anything else, so since
+[ADR-0035](../adr/0035-product-classification-local-copy.md) it makes no
+call to it at all.
+
+---
+
+## `product-master` — WMS tier, **Supporting**
+
+> The single source of truth for SKU-level product master data: handling
+> classification and physical profile.
+
+Owns the `Product` aggregate: a SKU's handling classification (`Hazmat`,
+`Fragile`, `TemperatureSensitive`, `Oversized`, `HighValue`, a temperature
+class and a DOT hazard class) and its physical profile (declared vs measured
+unit dimensions and weight). It calls no sibling service.
+
+| | |
+|---|---|
+| Aggregate | `Product` (classification, physical profile) |
+| Publishes | `ProductRegistered`, `ProductDescriptionChanged`, `ProductClassified`, `ProductDimensionsDeclared`, `ProductMeasured` on `warehouse.product-master.events` (CloudEvents `com.warehouse.wms.product-master.product.*`, key and `subject` = the SKU) |
+
+**Relationship to this service:** upstream, Published Language into a local
+copy. With `PRODUCT_CLASSIFICATION_MODE=kafka` we consume only
+`ProductClassified` (stable group `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`)
+into `product_classification_copy`, applying a message only when its
+`version` is newer than the stored row, and read that copy once per
+`WorkReleased` to stamp the `hazmat`/`fragile` hints. We never call it
+([ADR-0035](../adr/0035-product-classification-local-copy.md)).
 
 ---
 

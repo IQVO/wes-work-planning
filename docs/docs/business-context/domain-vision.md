@@ -56,6 +56,11 @@ usable quantity, two systems would disagree about stock during every network
 partition, and the disagreement would be invisible until a picker found an
 empty bin.
 
+Nor does it own product classification: `product-master` does. This context
+keeps a version-guarded local copy of `product-master`'s `ProductClassified`
+events, used only to stamp fail-open `hazmat`/`fragile` hints on released
+work ([ADR-0035](../adr/0035-product-classification-local-copy.md)).
+
 ### It does not assign individual people to individual tasks
 
 Headcount *planning* per process path lives in `workforce-management`;

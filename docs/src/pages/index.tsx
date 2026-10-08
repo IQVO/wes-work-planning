@@ -101,7 +101,7 @@ function Wiring() {
     <section className={styles.wiring}>
       <div className="container">
         <Heading as="h2" className={styles.sectionTitle}>
-          Wired into four bounded contexts
+          Four of its integration edges
         </Heading>
         <div className="row">
           <div className="col col--3">
@@ -134,7 +134,11 @@ function Wiring() {
           </div>
         </div>
         <p className={styles.wiringFoot}>
-          Every consumer path is idempotent under at-least-once redelivery.{' '}
+          It also consumes order-management's <code>OrderAllocated</code>,
+          process-path-management's catalogue, network-inventory-planning's{' '}
+          <code>WorkDemandReleased</code> and, into a local copy,
+          product-master's <code>ProductClassified</code>. Every consumer path
+          is idempotent under at-least-once redelivery.{' '}
           <Link to="/docs/ecosystem/context-map">See the full context map →</Link>
         </p>
       </div>

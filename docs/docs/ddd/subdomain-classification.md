@@ -50,6 +50,7 @@ released work (`WorkReleased` to Execution).
 | Service | Tier | Subdomain | Why |
 |---|---|---|---|
 | `inventory-storage` | WMS | **Core** | Owns inventory truth: stock ledger, bin-accurate location, chaotic stow, revocable reservations. Random stow with bin-accurate tracking is a genuine operational differentiator. |
+| `product-master` | WMS | **Supporting** | Single source of truth for SKU master data: handling classification and declared vs measured physical profile. Needed by many contexts, not a differentiator; we keep a local copy of its `ProductClassified` events ([ADR-0035](../adr/0035-product-classification-local-copy.md)). |
 | **`wes-work-planning`** | **WES** | **Core** | **This service.** Real-time orchestration built in-house — release policy, WIP backpressure, flow balancing. |
 | `workforce-management` | — | **Supporting** | Allocating workforce to workload is necessary and industry-common, not a differentiator. Deliberately stops at the path boundary. |
 | `fulfillment-execution` | WES/WCS-adjacent | **Core** | Pick/Pack/SLAM task lifecycle with pull-based `claimNext` and lease semantics — directly drives throughput and accuracy at scale. |

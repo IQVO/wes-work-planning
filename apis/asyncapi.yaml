@@ -113,7 +113,12 @@ info:
     `warehouse.network-inventory-planning.events` (fed into the existing
     `EnqueueWorkUnit` use case, one work unit per released transfer demand
     leg under the deterministic id `demand_id` — see ADR-0033; also
-    fire-and-forget). All consumer paths are idempotent under
+    fire-and-forget), and `ProductClassified` from product-master on
+    `warehouse.product-master.events` (applied to this context's local
+    classification copy, version-guarded, by a dedicated consumer under
+    `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`; the copy is what the
+    `WorkReleased` encoder reads for its hazmat/fragile hints — see
+    ADR-0035). All consumer paths are idempotent under
     at-least-once redelivery: the CloudEvents `id` is recorded as processed
     in the SAME transaction as the event's effect (ADR-0028), so a failed
     attempt is retried and, once retries are exhausted, dead-lettered to
@@ -255,6 +260,30 @@ channels:
       message:
         $ref: "#/components/messages/WorkDemandReleased"
 
+  warehouse.product-master.events:
+    description: >-
+      product-master's integration topic, CONSUMED by this service (owned by
+      that bounded context; listed here read-only for orientation, mirroring
+      its own apis/asyncapi.yaml). Key = the SKU. This service consumes only
+      ProductClassified and ignores every other type on the topic
+      (ProductRegistered, ProductDescriptionChanged,
+      ProductDimensionsDeclared, ProductMeasured). See ADR-0035.
+    publish:
+      operationId: consumeProductClassified
+      summary: Consume product-master's ProductClassified into the local classification copy.
+      description: >-
+        A dedicated consumer reads this topic under the stable consumer group
+        `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` (only with
+        `PRODUCT_CLASSIFICATION_MODE=kafka`) and keeps one row per SKU in
+        `product_classification_copy`. It claims the CloudEvents `id` and
+        applies the classification in ONE transaction, overwriting a stored
+        row only when the incoming `version` is greater (an equal or older
+        version is a no-op). Invalid CloudEvents and invalid payloads are
+        WARN-logged and skipped; transient failures retry the same message
+        and the offset is committed only after success.
+      message:
+        $ref: "#/components/messages/ProductClassified"
+
 components:
   messages:
     ChargeForecastReceived:
@@ -393,6 +422,45 @@ components:
               sku: SKU-T1
               quantity: 17
 
+    ProductClassified:
+      name: ProductClassified
+      title: Product Classified (consumed)
+      summary: product-master set or replaced a SKU's handling classification.
+      description: >-
+        CONSUMED from `warehouse.product-master.events` — this entry mirrors
+        the producer's own contract read-only and is NOT published by this
+        service. A full-state replacement of one SKU's classification at the
+        producer's aggregate `version`; `temperature_class` and
+        `dot_hazard_class` are omitted when unset. Applied to the local
+        `product_classification_copy` only when `version` is greater than the
+        stored one (ADR-0035); `classification_source` is ignored. The
+        `WorkReleased` encoder maps `Hazmat` to `required_capabilities:
+        ["hazmat"]` and `Fragile` to `fragile: true`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProductClassifiedEvent"
+      examples:
+        - name: hazmatFrozen
+          summary: SKU-1 classified Hazmat + TemperatureSensitive (Frozen), DOT class 3.
+          payload:
+            specversion: "1.0"
+            id: 0f6d8a2b-3c4e-4d5f-8a9b-7c6d5e4f3a2b
+            source: /warehouse/product-master
+            type: com.warehouse.wms.product-master.product.ProductClassified
+            subject: SKU-1
+            time: "2026-10-06T21:02:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:product-master:events:ProductClassified:v1
+            data:
+              sku: SKU-1
+              handling_tags: ["Hazmat", "TemperatureSensitive"]
+              temperature_class: Frozen
+              dot_hazard_class: 3
+              classification_source: native
+              version: 3
+
     WorkReleased:
       name: WorkReleased
       title: Work Released
@@ -406,12 +474,17 @@ components:
         The outbound adapter enriches the `data` payload with the unit's
         `cpt` and `ref` by reading the WorkUnit repository, since the domain
         event itself only carries the identifiers. When the released unit
-        carries a known SKU, the adapter also performs a synchronous read of
-        that SKU's classification from inventory-storage
-        (`GET /products/{sku}/classification`, see ADR-0009 in this
-        service's ADR index) and stamps two OPTIONAL derived fields,
+        carries a known SKU, the adapter also reads that SKU's
+        classification from this context's local copy of product-master's
+        `ProductClassified` events (ADR-0035; previously a synchronous read
+        from inventory-storage, ADR-0009) and stamps two OPTIONAL derived
+        fields,
         `required_capabilities` and `fragile`, present only when there is a
-        hint to give.
+        hint to give. It also stamps the OPTIONAL `line_no` — the order
+        line the unit was made for, stored on the WorkUnit from the
+        `OrderAllocated` line that created it (ADR-0036) — omitted when
+        unknown. The same `line_no` rides on the analytics-stream
+        `WorkReleased` (`warehouse.wes.analytics`).
       contentType: application/cloudevents+json
       tags:
         - name: workunit
@@ -434,6 +507,25 @@ components:
               work_unit_id: wu-10231
               cpt: "2026-08-22T02:00:00Z"
               ref: order-88421-line-3
+        - name: workReleasedOrderLine
+          summary: >-
+            The line-3 pick task of an order was released; line_no states the
+            line explicitly (ADR-0036).
+          payload:
+            specversion: "1.0"
+            id: 3f9a6d12-5e84-4b60-8c17-0a2d4e6f8b35
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkReleased
+            subject: order-88421-line-3
+            time: "2026-08-21T22:12:45Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:WorkReleased:v1
+            data:
+              path_id: pick-to-tote
+              work_unit_id: order-88421-line-3
+              cpt: "2026-08-22T02:00:00Z"
+              ref: order-88421
+              line_no: 3
         - name: workReleasedHazmatFragile
           summary: >-
             A pick task for a SKU classified both Hazmat and Fragile in
@@ -769,6 +861,22 @@ components:
         - name: workunit
       payload:
         $ref: "#/components/schemas/WorkReleasedAnalyticsEvent"
+      examples:
+        - name: workReleasedAnalytics
+          summary: The line-3 pick task of an order was released (analytics stream).
+          payload:
+            specversion: "1.0"
+            id: 4a6c8e10-2b3d-4f57-9a81-6c0d2e4f7b93
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkReleased
+            subject: order-88421-line-3
+            time: "2026-08-21T22:12:30Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:analytics:WorkReleased:v1
+            data:
+              path_id: pick-to-tote
+              work_unit_id: order-88421-line-3
+              line_no: 3
 
     WorkUnitCompletedAnalytics:
       name: WorkUnitCompletedAnalytics
@@ -1092,6 +1200,84 @@ components:
                   description: OPTIONAL. Units of the SKU the leg moves.
                   minimum: 0
 
+    ProductClassifiedEvent:
+      title: ProductClassified CloudEvent (consumed)
+      description: >-
+        CloudEvent envelope of product-master's ProductClassified, mirrored
+        read-only from the producer's own contract. This service consumes it;
+        it never publishes it.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              description: Fixed event type (the producer's own).
+              const: "com.warehouse.wms.product-master.product.ProductClassified"
+            dataschema:
+              type: string
+              description: >-
+                The producer's payload schema id. Overrides CloudEventBase's
+                pattern (which only admits THIS repo's own urns): a consumed
+                event carries the PRODUCER's urn.
+              const: "urn:warehouse:product-master:events:ProductClassified:v1"
+            data:
+              type: object
+              description: >-
+                Full-state replacement of the SKU's classification. This
+                service requires `sku` and a `version` of at least 1 and skips
+                (WARN) anything else.
+              required:
+                - sku
+                - handling_tags
+                - classification_source
+                - version
+              properties:
+                sku:
+                  type: string
+                  description: The classified SKU (also the Kafka key and the CloudEvents subject).
+                handling_tags:
+                  type: array
+                  minItems: 1
+                  description: Handling tags in stable order.
+                  items:
+                    type: string
+                    enum:
+                      - Hazmat
+                      - Fragile
+                      - TemperatureSensitive
+                      - Oversized
+                      - HighValue
+                temperature_class:
+                  type: string
+                  description: OPTIONAL. Present only with TemperatureSensitive.
+                  enum:
+                    - Ambient
+                    - Chilled
+                    - Frozen
+                dot_hazard_class:
+                  type: integer
+                  description: OPTIONAL. Present only with Hazmat. Stored, not surfaced.
+                  minimum: 1
+                  maximum: 9
+                classification_source:
+                  type: string
+                  description: Migration artefact of the producer; ignored here.
+                  enum:
+                    - native
+                    - legacy-import
+                version:
+                  type: integer
+                  description: >-
+                    The producer's aggregate version after the change. The
+                    local copy applies a message only when this is greater
+                    than the stored version.
+                  minimum: 1
+
     WorkReleasedEvent:
       title: WorkReleased CloudEvent
       description: >-
@@ -1121,8 +1307,8 @@ components:
                 reference, the caller-stated gift-wrap request when one was
                 made (see ADR-0010), and — when the released unit carries a
                 known SKU — with derived hazmat-capability/fragile hints
-                read once, synchronously, from inventory-storage's product
-                classification at publish time (see ADR-0009).
+                read once, at publish time, from the local copy of
+                product-master's classification (see ADR-0009, ADR-0035).
               required:
                 - path_id
                 - work_unit_id
@@ -1137,6 +1323,24 @@ components:
                 work_unit_id:
                   type: string
                   description: Identifier of the released work unit.
+                line_no:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  maximum: 2147483647
+                  description: >-
+                    OPTIONAL (ADR-0036). The 1-based order line this released
+                    unit was made for (1..2147483647, the 32-bit column
+                    limit), stored on the `WorkUnit` from the
+                    `OrderAllocated` line that created it (the same number
+                    embedded in a work-unit id of the form
+                    `<order>-line-<n>`) and read straight off it at publish
+                    time, like `ref`. Present only when known: absent — never
+                    `0` or `null` — for a unit created before this field
+                    existed, a REST-enqueued unit that gave no `lineNo`, and
+                    every transfer-referenced unit. Consumers must treat an
+                    absent field as "line unknown" and keep working.
+                  example: 3
                 cpt:
                   type: string
                   description: >-
@@ -1156,23 +1360,23 @@ components:
                     type: string
                   description: >-
                     OPTIONAL. Present only when the released unit's SKU is
-                    classified Hazmat in inventory-storage, in which case it
+                    classified Hazmat by product-master, in which case it
                     contains exactly `["hazmat"]`. Absent — not an empty
-                    array — when the SKU is unclassified, unknown, or the
-                    inventory-storage lookup is unavailable
+                    array — when the SKU is unclassified, not yet in the
+                    local copy, or the copy is unreadable
                     (PRODUCT_CLASSIFICATION_MODE=permissive, the default, or
                     a lookup error). Consumers must treat an absent field
-                    identically to an empty array. See ADR-0009.
+                    identically to an empty array. See ADR-0009, ADR-0035.
                   example: ["hazmat"]
                 fragile:
                   type: boolean
                   description: >-
                     OPTIONAL. Present and `true` only when the released
-                    unit's SKU is classified Fragile in inventory-storage.
+                    unit's SKU is classified Fragile by product-master.
                     Absent — not `false` — when the SKU is unclassified,
                     unknown, or the lookup is unavailable. Consumers must
                     treat an absent field identically to `false`. See
-                    ADR-0009.
+                    ADR-0009, ADR-0035.
                   example: true
                 gift_wrap:
                   type: boolean
@@ -1555,6 +1759,18 @@ components:
                   type: string
                 work_unit_id:
                   type: string
+                line_no:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  maximum: 2147483647
+                  description: >-
+                    OPTIONAL (ADR-0036). The 1-based order line the released
+                    unit was made for (1..2147483647); the same value, with the same
+                    omit-when-unknown rule, as `line_no` on the integration
+                    `WorkReleased`. Absent — never `0` or `null` — when the
+                    line is unknown.
+                  example: 3
 
     WorkUnitCompletedAnalyticsEvent:
       title: WorkUnitCompleted analytics CloudEvent

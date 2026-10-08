@@ -29,20 +29,21 @@ paths:
   release or flag labor reassignment. Drum-Buffer-Rope with CPT as the drum.
 - **WorkUnit.SKU** — optional SKU carried by a WorkUnit (threaded from
   `EnqueueWorkUnitRequest.SKU`), used ONLY to look up the SKU's
-  `ProductClassification` from `inventory-storage` once, at release time.
+  product classification once, at release time.
 - **Product classification propagation** — `ReleaseNextWork`'s outbound
   `WorkReleased` publisher reads a released WorkUnit's SKU classification (via
-  `ports.ProductClassificationLookup`, a synchronous HTTP read mirroring
-  inventory-storage's own facilitylayout adapter pattern;
-  permissive-by-default, `PRODUCT_CLASSIFICATION_MODE=http|permissive`) and
+  `ports.ProductClassificationLookup`, backed since ADR-0035 by a local
+  Postgres copy of product-master's `ProductClassified` events, fed by a
+  Kafka consumer; `PRODUCT_CLASSIFICATION_MODE=kafka|permissive`,
+  permissive-by-default, `http` rejected at boot) and
   stamps derived `required_capabilities: ["hazmat"]` / `fragile: true` onto
   the outbound `WorkReleased` event's `data` payload when applicable. Both
   fields are OPTIONAL and OMITTED (not defaulted false/empty) when the SKU
-  is unclassified or the lookup is unavailable — fail-open, deliberately
-  asymmetric with inventory-storage's fail-closed `StowStock` check
-  (ADR-0009). `fulfillment-execution`'s Task carries these onward without
-  ever calling inventory-storage directly — the same "Task carries what a
-  station needs to know" design already used for CPT and
+  is unclassified, not yet in the copy, or the copy is unreadable —
+  fail-open, deliberately asymmetric with inventory-storage's fail-closed
+  `StowStock` check (ADR-0009). `fulfillment-execution`'s Task carries these
+  onward without ever calling a classification owner — the same "Task
+  carries what a station needs to know" design already used for CPT and
   requiredCapabilities.
 - **Known gap**: classification drift after release is not retroactively
   applied — a WorkUnit stamps classification once, at release time.
@@ -116,7 +117,12 @@ observability/future subscribers.
 2. `CommitShiftPlan(path, heads, rate, hours)` → ShiftPlan (validates
    invariant); optional travel-distance hint (ADR-0017) and drift
    reconciliation against `LaborPlanObserved` (ADR-0019)
-3. `EnqueueWorkUnit(path, cpt, ref)` → WorkUnit added to pool
+3. `EnqueueWorkUnit(path, cpt, ref, lineNo?)` → WorkUnit added to pool. The
+   optional `lineNo` (>= 1, else 400 `invalid-line-no`) is stored on the unit
+   (nullable `line_no`, ADR-0036); `ApplyOrderAllocated` passes the line it
+   already receives, and the `<order>-line-<n>` id is unchanged. `WorkReleased`
+   v1 carries it as the optional `line_no` on both topics (omitted when unknown;
+   never for transfer units)
 4. `ReleaseNextWork(path)` → applies release policy, returns released
    unit(s); also stamps product-classification hints (see above)
 5. `RecordCompletion(workUnitId)` → WorkUnitCompleted, updates telemetry

@@ -70,6 +70,7 @@ process-path catalogue (process-path-management).
 | fulfillment-execution | `TaskCompleted` | Event | Kafka `warehouse.fulfillment.events`, `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | Customer/Supplier (feedback edge), ACL |
 | order-management | `OrderAllocated`, `OrderPartiallyAllocated` | Event | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` / `...OrderPartiallyAllocated` | Customer/Supplier, ACL ([ADR-0031](../adr/0031-order-allocated-choreography.md)) |
 | process-path-management | `ProcessPathCreated`, `ProcessPathUpdated`, `ProcessPathDeactivated` | Event | Kafka `warehouse.process-path-management.events`, `com.warehouse.wes.process-path-management.processpath.*` (only with `PATH_CATALOGUE_SOURCE=kafka`) | Conformist ([ADR-0030](../adr/0030-kafka-sourced-path-catalogue.md)) |
+| product-master | `ProductClassified` | Event | Kafka `warehouse.product-master.events`, `com.warehouse.wms.product-master.product.ProductClassified` (only with `PRODUCT_CLASSIFICATION_MODE=kafka`; own group `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`) | Published Language into a local, version-guarded copy read at release ([ADR-0035](../adr/0035-product-classification-local-copy.md)) |
 
 ## Outbound Communication
 
@@ -80,7 +81,6 @@ process-path catalogue (process-path-management).
 | network-fulfillment | `PathCapacityChanged` | Event | same topic and type | OHS + PL; network-fulfillment is Conformist |
 | *(no consumer today)* | `ChargeForecastReceived`, `ShiftPlanCommitted`, `WorkUnitCreated`, `WorkUnitCompleted`, `BacklogThresholdBreached`, `RateDeviationDetected` (reserved, not emitted; decided 2026-10-06), `PathThrottled`, `LaborReassignmentFlagged`, `PathPlanDriftDetected` | Event | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.<entity>.<Event>` | Published for observability |
 | own analytics projector (`cmd/wes-projector`) | all 11 domain events | Event | Kafka `warehouse.wes.analytics`, same CloudEvents types, dataschema `urn:warehouse:wes-work-planning:analytics:<Event>:v1` | Internal data product ([ADR-0011](../adr/0011-analytical-data-product.md)) |
-| inventory-storage | product classification | Query | REST `GET /products/{sku}/classification`, once per `WorkReleased` | Conformist to its OHS ([ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md)) |
 | facility-layout | travel distance | Query | REST `GET /distance?from=&to=`, once per `CommitShiftPlan` with both codes | Conformist to its OHS ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) |
 
 ## Ubiquitous Language

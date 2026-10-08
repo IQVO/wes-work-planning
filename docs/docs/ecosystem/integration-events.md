@@ -59,7 +59,7 @@ envelope toggle.
 
 | `type` | `data` | Published when | Consumed by |
 |---|---|---|---|
-| `com.warehouse.wes.work-planning.workunit.WorkReleased` | `{"path_id","work_unit_id","cpt","ref"}` (+ optional `required_capabilities`, `fragile`, `gift_wrap`) | `ReleaseNextWork` releases a unit | **`fulfillment-execution`** → creates a `Task` |
+| `com.warehouse.wes.work-planning.workunit.WorkReleased` | `{"path_id","work_unit_id","cpt","ref"}` (+ optional `required_capabilities`, `fragile`, `gift_wrap`, `line_no`) | `ReleaseNextWork` releases a unit | **`fulfillment-execution`** → creates a `Task` |
 | `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` | `{"path_id","cutoff_at","remaining_units","known"}` | `SampleBacklog` is called with `cutoffAt` set (ADR-0018) | **`order-management`** — its `kafkapathcapacity` adapter (own per-process consumer group, filters for this one event type) feeds its `ports.PathCapacity` cache, keyed by path and cutoff instant; **`network-fulfillment`** — its `pathcapacitycache` adapter replays the topic from the earliest offset under a process-unique group into an exact `(path_id, cutoff_at)` cache |
 
 ```json
@@ -227,6 +227,13 @@ always maps to the same work unit, which is a second line of defense against
 duplicate enqueues on top of the `processed_events` idempotency guard (see
 below): a line already in the pool (`ErrDuplicateEntry`) is skipped as a
 benign no-op ([ADR-0031](../adr/0031-order-allocated-choreography.md)).
+Each line's `line_no` is also **stored** on the work unit (nullable
+`work_units.line_no`) and published as the optional `line_no` on
+`WorkReleased`, so a downstream consumer is told the line instead of parsing
+the id ([ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)). A valid
+line number is 1 to 2147483647 (the column is a 32-bit `INTEGER`); a larger or
+non-positive value on the inbound event is stored as unknown rather than
+failing the event.
 
 This integration is deliberately **fire-and-forget**: there is no reply event
 back to order-management. The existing `WorkUnitCreated`/`WorkReleased`

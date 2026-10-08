@@ -111,7 +111,7 @@ Topic `warehouse.work-planning.events`. Eleven event types are catalogued; the
 | `charge.ChargeForecastReceived` | `path_id` | a charge forecast is recorded for a path |
 | `plan.ShiftPlanCommitted` | `path_id` | **this** context commits its own rate × heads × hours plan |
 | `workunit.WorkUnitCreated` | `path_id`, `work_unit_id` | a work unit is enqueued into a pool |
-| **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` (+ optional `required_capabilities`, `fragile`, `gift_wrap`) | the release policy admits the earliest-CPT unit |
+| **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` (+ optional `required_capabilities`, `fragile`, `gift_wrap`, `line_no`) | the release policy admits the earliest-CPT unit |
 | `workunit.WorkUnitCompleted` | `path_id`, `work_unit_id` | a released unit completes |
 | `workpool.BacklogThresholdBreached` | `path_id` | backlog depth crosses the pool's alarm threshold |
 | `workpool.RateDeviationDetected` | `path_id` | *reserved: declared in the catalogue for a future detection rule ([ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md) defers it); **not emitted today** (decided 2026-10-06)* |
@@ -130,12 +130,26 @@ only the two identifiers.
 
 `WorkReleased.data` also carries three OPTIONAL fields, present only when
 there is something to say: `required_capabilities` (array, containing
-`"hazmat"` when the released unit's SKU is classified `Hazmat` in
-inventory-storage), `fragile` (bool, `true` when the SKU is classified
+`"hazmat"` when the released unit's SKU is classified `Hazmat` by
+product-master), `fragile` (bool, `true` when the SKU is classified
 `Fragile`) — see "Product classification propagation" below — and
 `gift_wrap` (bool, `true` when the caller requested gift wrap at enqueue
 time; read straight off the `WorkUnit`,
 [ADR-0010](../adr/0010-gift-wrap-as-a-work-released-characteristic.md)).
+
+`WorkReleased.data` has one more OPTIONAL field, `line_no` (integer, 1 to
+2147483647 — a 32-bit int): the
+order line the unit was made for, stored on the `WorkUnit` from the
+`OrderAllocated` line that created it and read off it at publish time like
+`ref`. It is **omitted when unknown** — a unit created before
+[ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md), a REST-enqueued
+unit that gave no `lineNo`, every transfer unit — and consumers must treat
+absent as "line unknown". The analytics-topic `WorkReleased`
+(`warehouse.wes.analytics`) carries the same `line_no` under the same rule.
+The work-unit id is unchanged (`{order_id}-line-{line_no}`). An inbound
+`OrderAllocated` line whose `line_no` is above 2147483647 (or non-positive) is
+not rejected: the unit is still enqueued under the id built from the number as
+sent, with its stored line left unknown, so `WorkReleased` omits `line_no`.
 
 Publication is opt-in at runtime: with the default `EVENT_PUBLISHER=log` these
 events are written to the log publisher instead of Kafka. Set
@@ -201,62 +215,56 @@ With `PATH_CATALOGUE_SOURCE=kafka`, the catalogue cache replays
 `...ProcessPathUpdated` and `...ProcessPathDeactivated`. Invalid CloudEvents
 on this topic are logged at WARN and skipped.
 
-## Product classification propagation (Task 9, synchronous HTTP)
+## Product classification propagation (local copy of product-master, ADR-0035)
 
-`inventory-storage` owns SKU-level `ProductClassification` master data
-(`Hazmat`/`Fragile`/`TemperatureSensitive`/`Oversized`/`HighValue` tags),
-exposed synchronously at `GET /products/{sku}/classification`. Downstream,
+`product-master` owns SKU-level classification master data
+(`Hazmat`/`Fragile`/`TemperatureSensitive`/`Oversized`/`HighValue` tags,
+temperature class, DOT hazard class) and publishes every change as
+`com.warehouse.wms.product-master.product.ProductClassified` on
+`warehouse.product-master.events` (key and `subject` = the SKU; `data` is a
+full-state replacement carrying the aggregate `version`). Downstream,
 `fulfillment-execution`'s `Task` benefits from knowing hazmat-capability and
-fragile handling **at claim time**, without a live per-task callback into
-inventory-storage.
+fragile handling **at claim time**, without a live per-task callback.
 
-**Integration mechanism: synchronous outbound HTTP read, not a Kafka
-projection.** This was a deliberate finding, not a default: inventory-storage
-publishes `ProductClassified` in its domain-event catalogue, but its own
-outbound Kafka publisher (`internal/adapters/outbound/kafka/publisher.go`
-there) explicitly forwards only `StockReserved` and `ReservationRevoked` to
-the broker — see that file's package doc comment and
-`apis/asyncapi.yaml`'s "Full catalog vs. actually published" note.
-`ProductClassified` is not part of the published integration contract, so
-there is nothing to consume; building a Kafka projector against it would be
-building a consumer for an event that never reaches the broker. See
-[ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md)
-for the full reasoning.
+**Integration mechanism: a Kafka-fed local copy, read once at release.**
+Until ADR-0035 this was a synchronous HTTP read from inventory-storage's
+`GET /products/{sku}/classification`
+([ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md));
+classification moved to product-master (its ADR 0001/0003, inventory-storage
+ADR 0034) and that endpoint is being retired.
 
-- New outbound adapter package `internal/adapters/outbound/productclassification/`
-  implementing a new port `ports.ProductClassificationLookup`
-  (`GetClassification(ctx, sku) (productclassificationview.ProductClassificationView, error)`):
-  a plain `net/http` client (`Client`, mirrors inventory-storage's own
-  `facilitylayout.Client` HTTP-adapter pattern) calling
-  `GET {INVENTORY_STORAGE_BASE_URL}/products/{sku}/classification`, and a
-  `PermissiveLookup` no-op that always reports `Known=false`. Selected via
-  `PRODUCT_CLASSIFICATION_MODE=http|permissive` (default `permissive`, so
-  existing tests/CI/deployments are unaffected).
-- New read model `internal/domain/productclassificationview/` —
-  `ProductClassificationView{SKU, HandlingTags, TemperatureClass, Known}` — a
-  plain value, not persisted, not an aggregate.
-- `WorkUnit` gains an optional `SKU` field (`SetSKU`/`SKU()`), threaded
-  through from `EnqueueWorkUnitRequest.SKU` (new optional field, empty by
-  default so no existing caller breaks).
+| `type` | `data` | Effect here |
+|---|---|---|
+| `com.warehouse.wms.product-master.product.ProductClassified` | `sku`, `handling_tags`, `temperature_class`?, `dot_hazard_class`?, `classification_source`, `version` | Upserts `product_classification_copy` for the SKU **only when `version` is newer** than the stored row; other product-master types are ignored |
+
+- `PRODUCT_CLASSIFICATION_MODE=kafka|permissive` (default `permissive`, a
+  no-op that always reports `Known=false`). `http` is rejected at boot.
+- With `kafka`, `cmd/wes` runs a dedicated consumer
+  (`internal/adapters/inbound/kafka/product_classification_consumer.go`)
+  under the stable group `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`. It claims
+  the CloudEvents `id` and upserts in one transaction
+  (`ObserveProductClassification`, ADR-0028); invalid CloudEvents/payloads
+  are WARN-skipped; transient errors retry the same message; the offset is
+  committed after success. `cmd/mcp` reads the same table read-only.
+- The lookup (`internal/adapters/outbound/productclassificationcopy/`,
+  port `ports.ProductClassificationLookup`) returns
+  `ProductClassificationView{SKU, HandlingTags, TemperatureClass, Known}`:
+  exactly what the HTTP client used to return.
 - `ReleaseNextWork`'s outbound Kafka publisher
-  (`internal/adapters/outbound/kafka/publisher.go`) looks up the released
-  unit's SKU classification **once**, at publish time, and stamps two new
+  (`internal/adapters/outbound/kafka/publisher.go`) reads the released
+  unit's SKU classification **once**, at publish time, and stamps two
   OPTIONAL `WorkReleased.data` fields: `required_capabilities` (array,
   appends `"hazmat"` when the SKU carries the `Hazmat` tag) and `fragile`
   (bool, `true` when the SKU carries the `Fragile` tag). Both fields are
   **omitted** — not defaulted to an explicit empty array / `false` — when
-  the SKU is unclassified, has no SKU at all, or the lookup is unavailable
-  (permissive mode or a lookup error): this is strictly additive and
-  backward compatible with `fulfillment-execution`'s existing `WorkReleased`
-  consumer, which the sibling repo's parallel PR extends to read these same
-  optional fields, defaulting to `false`/empty when absent.
+  the SKU is unclassified, not yet in the copy, has no SKU at all, or the
+  copy is unreadable (permissive mode or a read error).
 - **Fail-open, not fail-closed.** Unlike inventory-storage's own
-  `StowStock` placement check (which blocks a stow when a Hazmat/
-  TemperatureSensitive SKU's lookup is unavailable), a classification-lookup
-  problem here must never block or delay releasing work — it can only omit
-  an optional enrichment. Documented as a known gap in ADR-0009's
-  Consequences, in the same spirit as inventory-storage's ADR-0003 "no
-  expiry sweeper" gap.
+  `StowStock` placement check, a classification problem here must never
+  block or delay releasing work — it can only omit an optional enrichment.
+  The read runs in a savepoint inside the release transaction so a failed
+  read cannot abort it. The copy is eventually consistent: a SKU classified
+  moments before its first release can be released without hints.
 
 ## Remaining path capacity (ADR-0018)
 

@@ -105,6 +105,8 @@ com.warehouse.wes.order-management.order.OrderPartiallyAllocated
 com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
 com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated
 com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
+com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased   (ADR-0033)
+com.warehouse.wms.product-master.product.ProductClassified                   (ADR-0035, own group PRODUCT_CLASSIFICATION_CONSUMER_GROUP)
 ```
 
 The analytics projector (`cmd/wes-projector`) also consumes this service's
@@ -118,8 +120,10 @@ own `WorkReleased`, `WorkUnitCompleted`, `BacklogThresholdBreached`,
    missing required attribute — is a deterministic poison message: the main
    inbound consumer publishes it raw to `<topic>.dlq`
    ([ADR-0023](./0023-resilience-circuit-breakers-retry-dlq-shutdown.md))
-   without retries and commits; the process-path catalogue consumer and the
-   analytics projector log WARN with topic/partition/offset and move past it.
+   without retries and commits; the process-path catalogue consumer, the
+   analytics projector and the ProductClassified consumer
+   ([ADR-0035](./0035-product-classification-local-copy.md)) log WARN with
+   topic/partition/offset and move past it.
    Nothing ever falls back to parsing a legacy shape.
 2. Dispatch on the full `type`; unknown types are ignored.
 3. Dedupe on the CloudEvents `id` (`processed_events.event_id` and

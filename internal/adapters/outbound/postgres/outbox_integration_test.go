@@ -59,7 +59,7 @@ func (noopWriter) Close() error                                            { ret
 func encoders(pool *pgxpool.Pool) (*outboundkafka.Publisher, *outboundkafka.AnalyticsPublisher) {
 	ids := sequentialIDs()
 	return outboundkafka.NewPublisherWithWriter(noopWriter{}, postgres.NewWorkUnitRepo(pool), nil, ids),
-		outboundkafka.NewAnalyticsPublisherWithWriter(noopWriter{}, ids)
+		outboundkafka.NewAnalyticsPublisherWithWriter(noopWriter{}, ids).WithWorkUnits(postgres.NewWorkUnitRepo(pool))
 }
 
 func sequentialIDs() outboundkafka.IDGenerator {

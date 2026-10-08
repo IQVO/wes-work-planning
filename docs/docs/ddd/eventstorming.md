@@ -90,7 +90,7 @@ validation failures (`ErrHeadsExceedStations`, `ErrNoBuckets`).
 flowchart LR
     OM["order-management"]:::external
     Sup["Supervisor or ops agent"]:::actor
-    INV["inventory-storage"]:::external
+    PM["product-master"]:::external
     FE["fulfillment-execution"]:::external
     Caller["Upstream caller"]:::actor
 
@@ -121,7 +121,7 @@ flowchart LR
     Sup --> C2 --> P2 --> A1
     C2 --> A2
     A2 --> E2
-    INV --> R1 --> E2
+    PM --> R1 --> E2
     E2 --> FE
     FE --> ET --> P3 --> C3
     Sup --> C3
@@ -236,7 +236,7 @@ alarm threshold. `Configure pool` raises no event
 | LaborPlanObserved, UsableInventoryObserved | Read model | `internal/domain/laborview`, `internal/domain/inventoryview` |
 | Backlog telemetry, Rebalance recommendation | Read model | `usecases.BacklogSnapshot`, `usecases.RebalanceRecommendation` |
 | Product classification view, Travel distance view | Read model | `internal/domain/productclassificationview`, `internal/domain/traveldistanceview` |
-| workforce-management, order-management, inventory-storage, fulfillment-execution, facility-layout, network-fulfillment | External system | topics and REST clients listed on the [Bounded context canvas](./bounded-context-canvas.md) |
+| workforce-management, order-management, inventory-storage, product-master, fulfillment-execution, facility-layout, network-fulfillment | External system | topics and REST clients listed on the [Bounded context canvas](./bounded-context-canvas.md) |
 
 ## Hotspots
 

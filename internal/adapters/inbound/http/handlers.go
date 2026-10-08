@@ -122,6 +122,7 @@ func toWorkUnitResponseDTO(unit *workunit.WorkUnit) workUnitResponseDTO {
 		State:       unit.State().String(),
 		GiftWrap:    unit.GiftWrap(),
 		SKU:         unit.SKU(),
+		LineNo:      unit.LineNo(),
 		ReleasedAt:  unit.ReleasedAt(),
 		CompletedAt: unit.CompletedAt(),
 	}
@@ -276,6 +277,17 @@ func (h *Handlers) postWorkUnit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, fmt.Errorf("%w: cpt is required", errMalformedBody))
 		return
 	}
+	// lineNo is optional (nil = unknown) but, when given, must be in
+	// 1..2147483647 (the 32-bit column limit): an explicit 0, negative or
+	// too-large value is rejected, never coerced to "unknown".
+	lineNo := 0
+	if body.LineNo != nil {
+		if *body.LineNo < 1 || *body.LineNo > workunit.MaxLineNo {
+			writeError(w, r, fmt.Errorf("%w: got %d", workunit.ErrInvalidLineNo, *body.LineNo))
+			return
+		}
+		lineNo = *body.LineNo
+	}
 
 	unit, err := h.EnqueueWorkUnit.Execute(r.Context(), usecases.EnqueueWorkUnitRequest{
 		WorkUnitId: body.WorkUnitId,
@@ -284,6 +296,7 @@ func (h *Handlers) postWorkUnit(w http.ResponseWriter, r *http.Request) {
 		Reference:  body.Reference,
 		SKU:        body.SKU,
 		GiftWrap:   body.GiftWrap,
+		LineNo:     lineNo,
 	})
 	if err != nil {
 		writeError(w, r, err)

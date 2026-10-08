@@ -32,10 +32,24 @@ const AnalyticsTopic = cloudevents.TopicAnalytics
 // aggregate key), so no repo lookup is needed to populate the report's path
 // dimension — the publisher stays thin (contrast the fulfillment pilot, whose
 // task-scoped events needed a TaskRepo lookup to recover task_type; see
-// ADR-0011).
+// ADR-0011). The single exception is the OPTIONAL line_no on WorkReleased
+// (ADR-0036), which needs a WorkUnit read when a repo is wired through
+// WithWorkUnits; without one the field is simply omitted.
 type AnalyticsPublisher struct {
-	writer Writer
-	newID  IDGenerator
+	writer    Writer
+	newID     IDGenerator
+	workUnits ports.WorkUnitRepo
+}
+
+// WithWorkUnits wires the WorkUnit repo the publisher reads WorkReleased's
+// optional line_no from (ADR-0036). A builder rather than a constructor
+// parameter so every existing caller keeps compiling; nil (the default)
+// omits line_no. Under the transactional outbox Encode runs inside the use
+// case's transaction, so the repo must be the same one the use case saves
+// to — it then sees the just-saved row, like the integration publisher.
+func (p *AnalyticsPublisher) WithWorkUnits(workUnits ports.WorkUnitRepo) *AnalyticsPublisher {
+	p.workUnits = workUnits
+	return p
 }
 
 // NewAnalyticsPublisher constructs an AnalyticsPublisher writing to
@@ -116,7 +130,7 @@ func (p *AnalyticsPublisher) Publish(ctx context.Context, events ...shared.Domai
 func (p *AnalyticsPublisher) Encode(ctx context.Context, events ...shared.DomainEvent) ([]Encoded, error) {
 	out := make([]Encoded, 0, len(events))
 	for _, e := range events {
-		key, data, ok := marshalAnalyticsData(e)
+		key, data, ok := p.marshalAnalyticsData(ctx, e)
 		if !ok {
 			continue
 		}
@@ -136,13 +150,10 @@ func (p *AnalyticsPublisher) Encode(ctx context.Context, events ...shared.Domain
 // it. The message key is the aggregate id: PathId for path-scoped events and
 // the WorkUnit id for work-unit events, so a partition holds an aggregate's
 // events in order.
-func marshalAnalyticsData(e shared.DomainEvent) (key string, data json.RawMessage, ok bool) {
+func (p *AnalyticsPublisher) marshalAnalyticsData(ctx context.Context, e shared.DomainEvent) (key string, data json.RawMessage, ok bool) {
 	switch ev := e.(type) {
 	case shared.WorkReleased:
-		return ev.WorkUnitId, mustMarshal(map[string]any{
-			"path_id":      ev.PathId.String(),
-			"work_unit_id": ev.WorkUnitId,
-		}), true
+		return ev.WorkUnitId, p.workReleasedData(ctx, ev), true
 	case shared.WorkUnitCompleted:
 		return ev.WorkUnitId, mustMarshal(map[string]any{
 			"path_id":      ev.PathId.String(),
@@ -189,6 +200,24 @@ func marshalAnalyticsData(e shared.DomainEvent) (key string, data json.RawMessag
 	default:
 		return "", nil, false
 	}
+}
+
+// workReleasedData is the analytics WorkReleased payload: the path/work-unit
+// identity plus the OPTIONAL line_no (ADR-0036). line_no is the one field
+// that is not on the event itself, so it is read off the WorkUnit exactly
+// like the integration publisher reads ref/cpt. Optional and fail-open: no
+// repo wired, a lookup error, or an unknown line all just omit it.
+func (p *AnalyticsPublisher) workReleasedData(ctx context.Context, ev shared.WorkReleased) json.RawMessage {
+	payload := map[string]any{
+		"path_id":      ev.PathId.String(),
+		"work_unit_id": ev.WorkUnitId,
+	}
+	if p.workUnits != nil {
+		if unit, err := p.workUnits.FindById(ctx, ev.WorkUnitId); err == nil && unit.LineNo() > 0 {
+			payload["line_no"] = unit.LineNo()
+		}
+	}
+	return mustMarshal(payload)
 }
 
 // mustMarshal marshals a map whose shape is fully controlled by

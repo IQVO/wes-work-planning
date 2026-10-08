@@ -109,6 +109,7 @@ classDiagram
         -string reference
         -string sku
         -bool giftWrap
+        -int lineNo
         -State state
         -Time releasedAt
         -Time completedAt
@@ -117,6 +118,7 @@ classDiagram
         +Complete(at) error
         +SetSKU(sku)
         +SetGiftWrap(giftWrap)
+        +SetLineNo(lineNo)
     }
     class State {
         <<Enumeration>>
@@ -413,7 +415,7 @@ classDiagram
     class PgUnitOfWork["postgres.UnitOfWork"]
     class FileCatalogue["filecatalog"]
     class KafkaCatalogue["kafkacatalog.Consumer"]
-    class ClassificationClient["productclassification.BreakerClient"]
+    class ClassificationCopy["productclassificationcopy.Store"]
     class TravelClient["traveldistance.BreakerClient"]
     class OtelReleaseMetrics["telemetry release metrics"]
 
@@ -432,7 +434,7 @@ classDiagram
     PgUnitOfWork ..|> UnitOfWork
     FileCatalogue ..|> PathCatalogue
     KafkaCatalogue ..|> PathCatalogue
-    ClassificationClient ..|> ProductClassificationLookup
+    ClassificationCopy ..|> ProductClassificationLookup
     TravelClient ..|> TravelDistanceLookup
     OtelReleaseMetrics ..|> ReleaseMetrics
 ```
@@ -456,7 +458,7 @@ flowchart LR
         MEM["memory repos"]
         KOUT["kafka Publisher and AnalyticsPublisher"]
         CAT["filecatalog or kafkacatalog"]
-        PC["productclassification client"]
+        PC["productclassificationcopy<br/>(local copy of product-master)"]
         TD["traveldistance client"]
         AS["analyticsstore"]
     end

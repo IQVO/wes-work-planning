@@ -43,7 +43,7 @@ no scheduler).
 | [0006](./0006-labor-plan-view-not-shift-plan.md) | Project Workforce's `ShiftPlanCommitted` into a separate read model, not our `ShiftPlan` aggregate | Accepted |
 | [0007](./0007-arch-go-fitness-tests.md) | Executable architecture fitness tests with arch-go | Accepted |
 | [0008](./0008-mcp-inbound-adapter.md) | Model Context Protocol as an inbound adapter, not a new service | Accepted — auth section superseded by 0016 |
-| [0009](./0009-product-classification-propagation-to-work-released.md) | Propagate inventory-storage's `ProductClassification` onto `WorkReleased` via a synchronous read at release time | Accepted |
+| [0009](./0009-product-classification-propagation-to-work-released.md) | Propagate inventory-storage's `ProductClassification` onto `WorkReleased` via a synchronous read at release time | Accepted — live lookup superseded by 0035 |
 | [0010](./0010-gift-wrap-as-a-work-released-characteristic.md) | Gift wrap as a caller-stated `WorkReleased` characteristic, not a product attribute | Accepted |
 | [0011](./0011-analytical-data-product.md) | Per-service analytical data product (report) via a separate analytics topic | Accepted |
 | [0012](./0012-process-path-catalogue-validation.md) | Process-path catalogue validation, mirroring fulfillment-execution's ADR-0017 | Accepted — amended by 0030 |
@@ -57,7 +57,7 @@ no scheduler).
 | [0020](./0020-flowfed-path-observed-throughput-signal.md) | FlowFed paths stay `Known=false` permanently; an observed-throughput signal is proposed alongside, not instead | Accepted |
 | [0021](./0021-cloudevents-envelope-migration.md) | Migrate `warehouse.work-planning.events` to a CloudEvents 1.0 structured envelope via a dual-read/dual-write bake period; companion to fulfillment-execution's own envelope-migration ADR | Superseded by 0027 |
 | [0022](./0022-idempotency-key-middleware.md) | Transactional Idempotency-Key middleware for `POST /paths/{pathId}/work-units`, ported from order-management's reference implementation | Accepted |
-| [0023](./0023-resilience-circuit-breakers-retry-dlq-shutdown.md) | Per-dependency circuit breakers, read-only retry, Kafka DLQ, and graceful shutdown hardening | Accepted |
+| [0023](./0023-resilience-circuit-breakers-retry-dlq-shutdown.md) | Per-dependency circuit breakers, read-only retry, Kafka DLQ, and graceful shutdown hardening | Accepted — product-classification breaker and retry retired by 0035 |
 | [0024](./0024-kafka-hash-balancer-partition-affinity.md) | Switch every outbound Kafka writer's `Balancer` from `LeastBytes` to `Hash`, so the existing per-aggregate `Message.Key` actually drives partition placement | Accepted |
 | [0025](./0025-horizontal-autoscaling-and-pgxpool-tuning.md) | Per-workload `HorizontalPodAutoscaler` (api/projector/reports/frontend, mcp excluded) and `pgxpool.MaxConns`/`statement_timeout` tuning, ported from order-management's reference PR #110 | Accepted |
 | [0026](./0026-migrations-direct-postgres-connection.md) | Run golang-migrate against a direct Postgres connection (`MIGRATIONS_DATABASE_URL`), not PgBouncer | Accepted |
@@ -69,6 +69,8 @@ no scheduler).
 | [0032](./0032-housekeeping-retention-sweeper.md) | Retention sweeper for `idempotency_keys` (24h) and published `outbox_events` (7d) | Accepted |
 | [0033](./0033-transfer-work-demand-choreography.md) | Consume NIP `WorkDemandReleased` into transfer-referenced work units; `WorkReleased` gains optional transfer fields on the same v1 payload | Accepted |
 | [0034](./0034-configure-pool-command.md) | `ConfigurePool` command (`PUT /paths/{pathId}/pool`) sets a pool's mode and WIP limit; lowering below WIP never evicts | Accepted |
+| [0035](./0035-product-classification-local-copy.md) | Product classification from a local copy of product-master's `ProductClassified` events; `PRODUCT_CLASSIFICATION_MODE=kafka\|permissive`, `http` rejected at boot | Accepted |
+| [0036](./0036-work-unit-line-no-on-work-released.md) | `WorkUnit` stores an optional `line_no` (nullable column, optional `lineNo` on the REST enqueue); `WorkReleased` v1 carries it on both topics (per-line confirm-pick, fleet decision 18) | Accepted |
 
 ## The template
 

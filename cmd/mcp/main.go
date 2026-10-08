@@ -27,12 +27,11 @@ import (
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
-	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/productclassification"
+	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/productclassificationcopy"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 	"github.com/claudioed/wes-work-planning/internal/bootretry"
-	"github.com/claudioed/wes-work-planning/internal/resilience"
 )
 
 // serviceName is this server's identity in OTel resource attributes and
@@ -77,7 +76,12 @@ func run() error {
 	}
 	defer repos.close()
 
-	publisher, stopPublisher, err := wireEventPublisher(logger, getenv("EVENT_PUBLISHER", "log"), os.Getenv("KAFKA_BROKERS"), repos, classificationLookup(logger))
+	classifications, err := buildClassificationLookup(getenv("PRODUCT_CLASSIFICATION_MODE", "permissive"), repos.pool, logger)
+	if err != nil {
+		return err
+	}
+
+	publisher, stopPublisher, err := wireEventPublisher(logger, getenv("EVENT_PUBLISHER", "log"), os.Getenv("KAFKA_BROKERS"), repos, classifications)
 	if err != nil {
 		return err
 	}
@@ -146,26 +150,33 @@ func wireRepositories(logger *slog.Logger, databaseURL string) (repositories, er
 	}, nil
 }
 
-// classificationLookup wires the product-classification ACL exactly as
-// cmd/wes does (PRODUCT_CLASSIFICATION_MODE / INVENTORY_STORAGE_BASE_URL),
-// so a WorkReleased raised through MCP carries the same ADR-0009
-// hazmat/fragile hints as one raised through REST.
-func classificationLookup(logger *slog.Logger) ports.ProductClassificationLookup {
-	breakerMetrics, err := telemetry.NewCircuitBreakerMetrics()
+// buildClassificationLookup resolves PRODUCT_CLASSIFICATION_MODE for the MCP
+// server (ADR-0035), so a WorkReleased raised through MCP carries the same
+// ADR-0009 hazmat/fragile hints as one raised through REST. This binary
+// NEVER starts the ProductClassified consumer (cmd/wes owns it, the copy's
+// migration and every write):
+//
+//   - kafka with Postgres: read-only over the same product_classification_copy
+//     table cmd/wes maintains.
+//   - kafka without Postgres: no copy to read, so the permissive lookup.
+//   - permissive (or unset): the no-op lookup.
+//   - anything else, including the retired http: a boot error.
+func buildClassificationLookup(rawMode string, pool *pgxpool.Pool, logger *slog.Logger) (ports.ProductClassificationLookup, error) {
+	mode, err := productclassificationcopy.ParseMode(rawMode)
 	if err != nil {
-		logger.Warn("circuit breaker metrics not registered; continuing without them", "error", err)
+		return nil, err
 	}
-	return buildClassificationLookup(getenv("PRODUCT_CLASSIFICATION_MODE", "permissive"), os.Getenv("INVENTORY_STORAGE_BASE_URL"), breakerMetrics, logger)
-}
-
-// buildClassificationLookup mirrors cmd/wes's function of the same name
-// (http|permissive, default permissive; ADR-0009, ADR-0023).
-func buildClassificationLookup(mode, inventoryStorageBaseURL string, recorder resilience.StateRecorder, logger *slog.Logger) ports.ProductClassificationLookup {
-	if !strings.EqualFold(mode, "http") {
-		return productclassification.NewPermissiveLookup()
+	switch {
+	case mode == productclassificationcopy.ModeKafka && pool != nil:
+		logger.Info("product classification lookup configured", "mode", string(mode), "source", "product_classification_copy (read-only; cmd/wes consumes)")
+		return productclassificationcopy.NewStore(pool, logger), nil
+	case mode == productclassificationcopy.ModeKafka:
+		logger.Info("PRODUCT_CLASSIFICATION_MODE=kafka without DATABASE_URL: the MCP server has no local copy to read; using the permissive lookup")
+		return productclassificationcopy.NewPermissiveLookup(), nil
+	default:
+		logger.Info("product classification lookup configured", "mode", string(mode))
+		return productclassificationcopy.NewPermissiveLookup(), nil
 	}
-	logger.Info("product classification lookup configured", "mode", "http", "inventory_storage_base_url", inventoryStorageBaseURL)
-	return productclassification.NewBreakerClient(productclassification.NewClient(inventoryStorageBaseURL, nil), recorder)
 }
 
 // wireEventPublisher selects the MCP server's event publisher with the SAME
@@ -191,7 +202,7 @@ func wireEventPublisher(logger *slog.Logger, kind, kafkaBrokers string, repos re
 	}
 	brokers := brokerList(kafkaBrokers)
 	integrationPublisher := outboundkafka.NewPublisher(brokers, repos.workUnits, classifications, newEventID)
-	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID)
+	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID).WithWorkUnits(repos.workUnits)
 	stop := func() {
 		_ = integrationPublisher.Close()
 		_ = analyticsPublisher.Close()

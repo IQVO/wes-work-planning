@@ -1243,6 +1243,22 @@ components:
             service (see ADR-0010). Omit — or send null, which is treated
             as not requested — when gift wrap was not asked for.
           example: true
+        lineNo:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 2147483647
+          nullable: true
+          description: >-
+            OPTIONAL. The 1-based order line this work unit is for, stored on
+            the work unit and carried as `line_no` on its `WorkReleased`
+            event (ADR-0036). It never changes `workUnitId` — the
+            order-allocation consumer's `<order>-line-<n>` ids stay as they
+            are. Omit — or send null, which is treated exactly like omitted —
+            when the line is not known; `0`, negative values and values above
+            `2147483647` (the 32-bit column limit) are rejected with `400`
+            (`invalid-line-no`).
+          example: 3
       required: [workUnitId, cpt, reference]
 
     WorkUnitState:
@@ -1286,6 +1302,16 @@ components:
             to. Omitted when not known — not every caller supplies one (see
             EnqueueWorkUnitRequest.sku).
           example: sku-482910
+        lineNo:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 2147483647
+          description: >-
+            OPTIONAL order line number this work unit is for (ADR-0036).
+            Omitted when not known — a unit created before this field
+            existed, or one enqueued without `lineNo`.
+          example: 3
         releasedAt:
           type: string
           format: date-time

@@ -47,7 +47,7 @@ it decides *when* work enters the floor and *in what order*.
 | [Ecosystem](../ecosystem/index.md) | The context map, Kafka topics and REST lookups actually wired today, and the sibling services |
 | [AI Ecosystem (MCP)](../mcp/governance-charter.md) | The MCP governance charter this service's `cmd/mcp` server follows |
 | [Analytics (Data Product)](../analytics/release-throughput-report.md) | The Release Throughput & Backlog Health report contract |
-| [ADRs](../adr/index.md) | Thirty-two architecture decision records |
+| [ADRs](../adr/index.md) | Thirty-five architecture decision records |
 
 ## At a glance
 
@@ -59,8 +59,8 @@ it decides *when* work enters the floor and *in what order*.
 - **Inbound adapters**: REST (chi), Kafka consumer, MCP (Streamable HTTP)
 - **Outbound adapters**: Postgres (pgx/v5, transactional outbox), in-memory,
   log and Kafka event publishers, process-path catalogue (file or Kafka),
-  inventory-storage classification lookup, facility-layout travel-distance
-  lookup
+  product-master classification local copy (Kafka-fed), facility-layout
+  travel-distance lookup
 - **Aggregates**: `ChargeForecast`, `ShiftPlan`/`PathPlan`, `WorkPool`, `WorkUnit`
 - **Read models (projections, not aggregates)**: `LaborPlanObserved` (with
   the ADR-0019 drift outcome), `UsableInventoryObserved`, backlog telemetry,

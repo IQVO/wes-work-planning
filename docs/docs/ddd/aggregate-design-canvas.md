@@ -321,7 +321,10 @@ caller-supplied `id` (or `{order_id}-line-{line_no}` when created from
 ### 2. Description
 
 A releasable unit of work with a deadline: `pathId`, `cpt`, `reference`
-(the external source, e.g. an order id), optional `sku` and `giftWrap`, and
+(the external source, e.g. an order id), optional `sku`, `giftWrap` and
+`lineNo` (the order line it was made for, 1 to 2147483647, `NULL` when unknown, carried as
+`line_no` on `WorkReleased` — [ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md);
+it never alters the id; range checked by `workunit.ValidateLineNo`), and
 its lifecycle timestamps `releasedAt` / `completedAt`. Not the downstream
 `Task` of `fulfillment-execution`.
 
@@ -339,7 +342,7 @@ stateDiagram-v2
 ```
 
 Source: `internal/domain/workunit/work_unit.go`,
-`internal/domain/workunit/errors.go`. Omits: `SetSKU` / `SetGiftWrap`, which
+`internal/domain/workunit/errors.go`. Omits: `SetSKU` / `SetGiftWrap` / `SetLineNo`, which
 set optional characteristics at enqueue time and do not change state.
 
 ### 4. Enforced invariants
@@ -351,6 +354,7 @@ set optional characteristics at enqueue time and do not change state.
 | U3 | Must be released before completing | `Complete` → `workunit.ErrNotReleased` |
 | U4 | Id must be non-empty | `NewWorkUnit` → `workunit.ErrEmptyId` |
 | U5 | Reference must be non-empty | `NewWorkUnit` → `workunit.ErrEmptyReference` |
+| U6 | Line number is unknown (0) or 1 to 2147483647 (the 32-bit `line_no` column) | `workunit.ValidateLineNo` → `workunit.ErrInvalidLineNo` (REST enqueue `400 invalid-line-no`; an inbound `OrderAllocated` line out of range is stored as unknown, never rejected) |
 
 U2 matters beyond tidiness: completion arrives over Kafka as `TaskCompleted`,
 which is at-least-once. `ApplyTaskCompleted` deduplicates on the CloudEvents
@@ -426,7 +430,7 @@ facts belong to someone else or are computed on read. See
 |---|---|---|
 | `LaborPlanObserved` (+ `Drift`) | `internal/domain/laborview` | Kafka projection of Workforce's `ShiftPlanCommitted`, persisted in `labor_plan_view` |
 | `UsableInventoryObserved` | `internal/domain/inventoryview` | Kafka projection of `StockReserved` / `ReservationRevoked`, persisted in `usable_inventory_view`. Decided 2026-10-06: read-only context by design ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)); gating release on it would be a new business rule |
-| `ProductClassificationView` | `internal/domain/productclassificationview` | synchronous REST read from inventory-storage at release, never persisted |
+| `ProductClassificationView` | `internal/domain/productclassificationview` | read at release from `product_classification_copy`, a version-guarded local copy of product-master's `ProductClassified` ([ADR-0035](../adr/0035-product-classification-local-copy.md)) |
 | `TravelDistanceView` | `internal/domain/traveldistanceview` | synchronous REST read from facility-layout at plan commit, never persisted |
 | `PathDefinition` / `Catalogue` | `internal/domain/pathcatalog` | in-memory copy of process-path-management's catalogue |
 | `BacklogSnapshot`, `RebalanceRecommendation` | `internal/application/usecases` | computed on read from a `WorkPool` |

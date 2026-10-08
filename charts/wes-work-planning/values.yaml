@@ -95,6 +95,11 @@ autoscaling:
   # (defaultConsumerGroup = "wes-work-planning", KAFKA_CONSUMER_GROUP
   # override) — the fleet's normal horizontally-scalable pattern, N
   # replicas share partitions via ordinary Kafka group rebalancing.
+  # With PRODUCT_CLASSIFICATION_MODE=kafka (ADR-0035; not set by this
+  # chart, so the default stays permissive) a second STABLE shared group,
+  # PRODUCT_CLASSIFICATION_CONSUMER_GROUP, feeds the Postgres
+  # product_classification_copy table — shared state, so every replica
+  # MUST use the same value; the version-guarded upsert makes N>1 safe.
   # Nothing here breaks at N>1. max 4 / target 70% CPU, matching
   # order-management's identical api treatment.
   api:

@@ -24,7 +24,8 @@ import (
 )
 
 // hazmatTag and fragileTag are the ProductClassification.HandlingTags
-// values inventory-storage uses that this service maps onto the
+// values product-master publishes (ADR-0035; formerly inventory-storage's)
+// that this service maps onto the
 // WorkReleased integration event's derived hints (see ADR-0009). Named as
 // constants here — not shared as a Go type across the repository boundary —
 // because this is exactly the same translate-at-the-ACL discipline this
@@ -60,7 +61,7 @@ type Publisher struct {
 // used to enrich WorkReleased with derived hazmat-capability/fragile hints
 // by looking up the released unit's SKU once at publish time (see
 // ADR-0009); a nil classifications is treated exactly like
-// productclassification.PermissiveLookup — those two optional fields are
+// productclassificationcopy.PermissiveLookup — those two optional fields are
 // simply omitted/false, so every existing caller of NewPublisher keeps
 // compiling and behaving unchanged.
 //
@@ -326,7 +327,7 @@ func (p *Publisher) dataFor(ctx context.Context, e shared.DomainEvent) (json.Raw
 // like cpt/ref — never looked up from another service.
 func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased) (json.RawMessage, error) {
 	cpt, ref, sku, giftWrap := "", "", "", false
-	transferRef, siteId, quantity := "", "", 0
+	transferRef, siteId, quantity, lineNo := "", "", 0, 0
 	var workKind workunit.WorkKind
 	if unit, err := p.workUnits.FindById(ctx, ev.WorkUnitId); err == nil {
 		cpt = unit.CPT().Time().Format(time.RFC3339)
@@ -337,6 +338,7 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 		workKind = unit.WorkKind()
 		siteId = unit.SiteId()
 		quantity = unit.Quantity()
+		lineNo = unit.LineNo()
 	}
 
 	requiredCapabilities, fragile := p.classificationHints(ctx, sku)
@@ -366,6 +368,13 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 	// Same omit-when-false discipline as fragile.
 	if giftWrap {
 		data["gift_wrap"] = giftWrap
+	}
+	// line_no (ADR-0036): the order line this unit was made for, read off
+	// the WorkUnit like cpt/ref and omitted when unknown (a unit created
+	// before the column existed, a REST unit that gave none). Transfer
+	// units never carry one. Consumers must treat absent as "unknown".
+	if lineNo > 0 {
+		data["line_no"] = lineNo
 	}
 	// Transfer context (ADR-0033): same strictly-additive discipline —
 	// the four OPTIONAL fields appear only on a transfer-referenced unit
@@ -430,7 +439,9 @@ func pathPlanDriftDetectedData(ev shared.PathPlanDriftDetected) json.RawMessage 
 // Hazmat, and fragile=true when it is classified Fragile. This is the
 // concrete implementation of ADR-0009's "read-once-at-release, stamp onto
 // WorkReleased" decision — fulfillment-execution's Task then carries these
-// hints without ever calling back to inventory-storage.
+// hints without ever calling back to a classification owner. Since ADR-0035
+// the read is against this context's own local copy of product-master's
+// ProductClassified events.
 //
 // A missing sku, a nil classifications port, an unclassified SKU (Known
 // but no relevant tag, or altogether unknown), or a lookup error are all

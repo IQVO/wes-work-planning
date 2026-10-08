@@ -56,7 +56,7 @@ DATABASE_URL="postgres://wes:wes@localhost:5432/wes?sslmode=disable" go run ./cm
 | `PATH_CATALOGUE_SOURCE` | `file` | `file` reads `PATH_CATALOGUE_FILE` at boot; `kafka` replays `warehouse.process-path-management.events` (own per-process consumer group) and blocks startup until the replay completes |
 | `PATH_CATALOGUE_FILE` | `/etc/wes-work-planning/process-paths.yaml` | Catalogue YAML for `PATH_CATALOGUE_SOURCE=file` |
 | `MIGRATIONS_PATH` | `migrations` | OLTP migrations applied on start when `DATABASE_URL` is set |
-| `PRODUCT_CLASSIFICATION_MODE` / `INVENTORY_STORAGE_BASE_URL` | `permissive` / *(unset)* | `http` enables the inventory-storage classification lookup ([ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md)) |
+| `PRODUCT_CLASSIFICATION_MODE` / `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | `permissive` / *(unset)* | `kafka` keeps a local copy of product-master's `ProductClassified` events (consumer group required) and reads the hazmat/fragile hints from it; `http` is rejected at boot ([ADR-0035](../adr/0035-product-classification-local-copy.md)) |
 | `TRAVEL_DISTANCE_MODE` / `FACILITY_LAYOUT_BASE_URL` | `permissive` / *(unset)* | `http` enables the facility-layout travel-distance lookup ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) |
 
 The full list, including observability and analytics variables, is in the

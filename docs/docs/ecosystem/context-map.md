@@ -31,17 +31,18 @@ flowchart LR
     WP["<b>wes-work-planning</b><br/>WES tier, Core<br/><i>the conductor</i>"]
     FE["<b>fulfillment-execution</b><br/>Core"]
     NF["<b>network-fulfillment</b><br/>Supporting"]
+    PM["<b>product-master</b><br/>WMS tier, Supporting"]
     AG["<b>warehouse-ops-agent</b>"]
 
     WM -- "U to D, C/S, OHS+PL to ACL<br/>Kafka ShiftPlanCommitted" --> WP
     INV -- "U to D, C/S, OHS+PL to ACL<br/>Kafka StockReserved, ReservationRevoked" --> WP
     OM -- "U to D, C/S, OHS+PL to ACL<br/>Kafka OrderAllocated, OrderPartiallyAllocated" --> WP
     PPM -- "U to D, OHS+PL to CF<br/>Kafka ProcessPath events or YAML file" --> WP
+    PM -- "U to D, PL to local copy<br/>Kafka ProductClassified" --> WP
     FE -- "U to D, C/S feedback edge, OHS+PL to ACL<br/>Kafka TaskCompleted" --> WP
     WP -- "U to D, C/S, OHS+PL<br/>Kafka WorkReleased" --> FE
     WP -- "U to D, C/S, OHS+PL<br/>Kafka PathCapacityChanged" --> OM
     WP -- "U to D, OHS+PL to CF<br/>Kafka PathCapacityChanged" --> NF
-    INV -. "U to D, OHS to CF<br/>REST GET /products/sku/classification" .-> WP
     FL -. "U to D, OHS to CF<br/>REST GET /distance" .-> WP
     WP -. "U to D, OHS<br/>REST and MCP" .-> AG
 
@@ -49,14 +50,15 @@ flowchart LR
 ```
 
 Solid edges are Kafka (CloudEvents 1.0); dashed edges are synchronous calls.
-Arrows point **from upstream to downstream** — so the two REST lookups point
-*into* this context even though it is the caller, because inventory-storage
-and facility-layout own the facts.
+Arrows point **from upstream to downstream** — so the REST lookup points
+*into* this context even though it is the caller, because facility-layout
+owns the facts.
 
 Source: `internal/adapters/inbound/kafka/consumer.go`,
+`internal/adapters/inbound/kafka/product_classification_consumer.go`,
 `internal/adapters/outbound/kafka/publisher.go`,
 `internal/adapters/outbound/kafkacatalog/consumer.go`,
-`internal/adapters/outbound/productclassification/client.go`,
+`internal/adapters/outbound/productclassificationcopy/`,
 `internal/adapters/outbound/traveldistance/client.go`, and each sibling's
 consumer file listed below. Omits: the `warehouse-console` shell, which mounts
 this repo's `web/` micro-frontend and calls the same REST API, and this
@@ -68,7 +70,7 @@ service's own analytics topic `warehouse.wes.analytics`.
 |---|---|---|---|---|---|
 | workforce-management | they U, we D | C/S; their OHS+PL, our ACL | Kafka `warehouse.workforce.events`, `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | **Live** | ours: `internal/adapters/inbound/kafka/consumer.go` (`shiftPlanCommittedData`) |
 | inventory-storage (events) | they U, we D | C/S; their OHS+PL, our ACL | Kafka `warehouse.inventory.events`, `com.warehouse.wms.inventory-storage.reservation.StockReserved` / `ReservationRevoked` | **Live** (projection feeds no decision yet) | ours: `consumer.go` (`inventoryEventData`) |
-| inventory-storage (REST) | they U, we D | their OHS, we CF | REST `GET /products/{sku}/classification` at release | **Wired**, default `PRODUCT_CLASSIFICATION_MODE=permissive` never calls out | `internal/adapters/outbound/productclassification/` ([ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md)) |
+| product-master | they U, we D | their PL, our local copy | Kafka `warehouse.product-master.events`, `com.warehouse.wms.product-master.product.ProductClassified` (version-guarded copy, read at release) | **Wired**, `PRODUCT_CLASSIFICATION_MODE=kafka`; default `permissive` reads nothing | `internal/adapters/inbound/kafka/product_classification_consumer.go`, `internal/adapters/outbound/productclassificationcopy/` ([ADR-0035](../adr/0035-product-classification-local-copy.md); replaces the retired inventory-storage REST lookup of [ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md)) |
 | order-management (demand) | they U, we D | C/S; their OHS+PL, our ACL | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` / `OrderPartiallyAllocated` | **Live** | ours: `consumer.go` (`orderAllocatedData`), `usecases.ApplyOrderAllocated` ([ADR-0031](../adr/0031-order-allocated-choreography.md)) |
 | order-management (capacity) | we U, they D | C/S; our OHS+PL | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` | **Live** | theirs: `internal/adapters/outbound/kafkapathcapacity/consumer.go` ([ADR-0018](../adr/0018-path-capacity-changed.md)) |
 | process-path-management | they U, we D | their OHS+PL, we CF | Kafka `warehouse.process-path-management.events`, `com.warehouse.wes.process-path-management.processpath.*`; or a YAML file | **Live** with `PATH_CATALOGUE_SOURCE=kafka`; file source is the default | `internal/adapters/outbound/kafkacatalog/`, `internal/adapters/outbound/filecatalog/` ([ADR-0012](../adr/0012-process-path-catalogue-validation.md), [ADR-0030](../adr/0030-kafka-sourced-path-catalogue.md)) |
@@ -158,7 +160,7 @@ the catalogue stay there.
 
 | Tier | Horizon | Question | Services here |
 |---|---|---|---|
-| **WMS** | minutes → days | what needs to happen, and why | `inventory-storage`, `order-management` |
+| **WMS** | minutes → days | what needs to happen, and why | `inventory-storage`, `product-master`, `order-management` |
 | **WES** | seconds → minutes | who does it, right now, in what order | **`wes-work-planning`**, `fulfillment-execution` |
 | **WCS** | ms → seconds | how the machine performs the next step | *not built* — no equipment-control service exists in this platform |
 

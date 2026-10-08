@@ -25,16 +25,18 @@ sequenceDiagram
     participant K as Kafka
     participant WP as wes-work-planning
     actor Sup as Supervisor or agent
-    participant INV as inventory-storage
+    participant PM as product-master
     participant FE as fulfillment-execution
 
+    PM->>K: evt: com.warehouse.wms.product-master.product.ProductClassified
+    K->>WP: evt: ProductClassified
+    Note over WP: ObserveProductClassification updates the local copy (version-guarded)
     OM->>K: evt: com.warehouse.wes.order-management.order.OrderAllocated
     K->>WP: evt: OrderAllocated
     Note over WP: ApplyOrderAllocated enqueues one WorkUnit per line
     WP->>K: evt: com.warehouse.wes.work-planning.workunit.WorkUnitCreated
     Sup->>WP: cmd: POST /paths/{pathId}/release or MCP release_next_work
-    WP->>INV: qry: GET /products/{sku}/classification
-    INV-->>WP: Hazmat and Fragile hints
+    Note over WP: reads Hazmat and Fragile hints from the local copy
     WP->>K: evt: com.warehouse.wes.work-planning.workunit.WorkReleased
     K->>FE: evt: WorkReleased
     Note over FE: creates its own Task, claimNext, lease, pick

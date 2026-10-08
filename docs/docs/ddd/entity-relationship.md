@@ -60,6 +60,7 @@ erDiagram
         timestamptz completed_at
         text sku "0003"
         boolean gift_wrap "0008"
+        integer line_no "nullable, 0013"
     }
     labor_plan_view {
         text path_id PK

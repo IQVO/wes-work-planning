@@ -92,6 +92,14 @@ func (uc *ApplyOrderAllocated) enqueueRequests(req ApplyOrderAllocatedRequest) (
 		if _, err := uc.catalogue.Lookup(pathId.String()); err != nil {
 			return nil, err
 		}
+		// The line number is stored explicitly (ADR-0036) as well as
+		// staying in the id. A non-positive value from upstream is "unknown"
+		// (0): the id is still built exactly as before, so a malformed line
+		// is never newly rejected.
+		lineNo := line.LineNo
+		if lineNo < 0 {
+			lineNo = 0
+		}
 		out = append(out, EnqueueWorkUnitRequest{
 			WorkUnitId: fmt.Sprintf("%s-line-%d", req.OrderId, line.LineNo),
 			PathId:     pathId,
@@ -99,6 +107,7 @@ func (uc *ApplyOrderAllocated) enqueueRequests(req ApplyOrderAllocatedRequest) (
 			Reference:  req.OrderId,
 			SKU:        line.SKU,
 			GiftWrap:   line.GiftWrap,
+			LineNo:     lineNo,
 		})
 	}
 	return out, nil

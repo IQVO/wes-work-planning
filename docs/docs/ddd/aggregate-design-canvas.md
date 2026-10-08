@@ -321,7 +321,10 @@ caller-supplied `id` (or `{order_id}-line-{line_no}` when created from
 ### 2. Description
 
 A releasable unit of work with a deadline: `pathId`, `cpt`, `reference`
-(the external source, e.g. an order id), optional `sku` and `giftWrap`, and
+(the external source, e.g. an order id), optional `sku`, `giftWrap` and
+`lineNo` (the order line it was made for, `NULL` when unknown, carried as
+`line_no` on `WorkReleased` — [ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md);
+it never alters the id), and
 its lifecycle timestamps `releasedAt` / `completedAt`. Not the downstream
 `Task` of `fulfillment-execution`.
 
@@ -339,7 +342,7 @@ stateDiagram-v2
 ```
 
 Source: `internal/domain/workunit/work_unit.go`,
-`internal/domain/workunit/errors.go`. Omits: `SetSKU` / `SetGiftWrap`, which
+`internal/domain/workunit/errors.go`. Omits: `SetSKU` / `SetGiftWrap` / `SetLineNo`, which
 set optional characteristics at enqueue time and do not change state.
 
 ### 4. Enforced invariants

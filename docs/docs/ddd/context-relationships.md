@@ -20,7 +20,8 @@ Open-Host Service (OHS), Published Language (PL), Partnership (P).
 
 | Counterpart | Direction | Pattern | Notes |
 |---|---|---|---|
-| `inventory-storage` (WMS tier) | upstream of us | **Customer/Supplier + OHS/PL**, with an **ACL on our side** | WMS is the authoritative supplier of stock reality. We consume its published events only; we never read or write its aggregates. |
+| `inventory-storage` (WMS tier) | upstream of us | **Customer/Supplier + OHS/PL**, with an **ACL on our side** | WMS is the authoritative supplier of stock reality. We consume its published events only; we never read or write its aggregates. It is no longer asked for product classification (its ADR 0034; our [ADR-0035](../adr/0035-product-classification-local-copy.md)). |
+| `product-master` (WMS tier) | upstream of us | **Published Language**, consumed into a local copy (**ACL on our side**) | Owns SKU classification. With `PRODUCT_CLASSIFICATION_MODE=kafka` we keep a version-guarded copy of its `ProductClassified` events and read it once per `WorkReleased`; we never call it ([ADR-0035](../adr/0035-product-classification-local-copy.md)). |
 | `workforce-management` | upstream of us | **Customer/Supplier**, with an **ACL on our side** | Supplies committed labour plans as `ShiftPlanCommitted`. Translated at the boundary into a different type. |
 | `fulfillment-execution` | downstream of us | **Customer/Supplier**, we are the supplier; **OHS + Published Language** | We publish `WorkReleased`; Execution builds its own `Task` from it. It does not get access to our `WorkPool`. |
 | `fulfillment-execution` (feedback edge) | upstream of us | **Customer/Supplier**, roles reversed | `TaskCompleted` flows back and closes the loop. Two directed relationships between the same pair, not one bidirectional one. |

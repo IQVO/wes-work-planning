@@ -14,7 +14,7 @@ counterpart to the platform's existing 5-stage quality gate and its ADR
 discipline. `fulfillment-execution` is the reference implementation
 (see [ADR-0008](../adr/0008-mcp-inbound-adapter.md)); the other contexts —
 including `inventory-storage`, `wes-work-planning`, `workforce-management`,
-`facility-layout` — copy it.
+`facility-layout` and the read-only `cmd/mcp` of `product-master` — copy it.
 
 Keywords **MUST**, **SHOULD**, **MAY** are used per RFC 2119.
 

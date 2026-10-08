@@ -160,7 +160,7 @@ the catalogue stay there.
 
 | Tier | Horizon | Question | Services here |
 |---|---|---|---|
-| **WMS** | minutes → days | what needs to happen, and why | `inventory-storage`, `order-management` |
+| **WMS** | minutes → days | what needs to happen, and why | `inventory-storage`, `product-master`, `order-management` |
 | **WES** | seconds → minutes | who does it, right now, in what order | **`wes-work-planning`**, `fulfillment-execution` |
 | **WCS** | ms → seconds | how the machine performs the next step | *not built* — no equipment-control service exists in this platform |
 

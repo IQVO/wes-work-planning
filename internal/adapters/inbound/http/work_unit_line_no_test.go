@@ -3,6 +3,7 @@ package http_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -68,6 +69,45 @@ func TestPostWorkUnit_LineNo_OmittedOrNullMeansUnknown(t *testing.T) {
 			}
 			if _, ok := resp["lineNo"]; ok {
 				t.Fatalf("lineNo must be omitted when unknown, got %v", resp["lineNo"])
+			}
+		})
+	}
+}
+
+func TestPostWorkUnit_LineNo_BoundaryTable(t *testing.T) {
+	cases := []struct {
+		name   string
+		lineNo any
+		want   int
+	}{
+		{"one", 1, http.StatusCreated},
+		{"max int32", 2147483647, http.StatusCreated},
+		{"max int32 + 1", 2147483648, http.StatusBadRequest},
+		{"max int64", int64(9223372036854775807), http.StatusBadRequest},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router := newTestRouter()
+			id := "wu-bound-" + string(rune('a'+i))
+			code, resp := postLineNoUnit(t, router, id, map[string]any{"lineNo": tc.lineNo})
+			if code != tc.want {
+				t.Fatalf("got status %d, want %d, body=%v", code, tc.want, resp)
+			}
+			if tc.want == http.StatusCreated {
+				if resp["lineNo"] != float64(tc.lineNo.(int)) {
+					t.Fatalf("got lineNo %v, want %v", resp["lineNo"], tc.lineNo)
+				}
+				return
+			}
+			if resp["type"] != "https://errors.wes-work-planning.warehouse-systems.dev/invalid-line-no" {
+				t.Fatalf("got problem type %v, want .../invalid-line-no", resp["type"])
+			}
+			if detail, _ := resp["detail"].(string); !strings.Contains(detail, "2147483647") {
+				t.Fatalf("detail %q must state the 2147483647 upper bound", detail)
+			}
+			// A rejected request must not leave a unit behind.
+			if rec := doJSON(t, router, http.MethodGet, "/work-units/"+id, nil); rec.Code != http.StatusNotFound {
+				t.Fatalf("rejected work unit was persisted: GET status %d", rec.Code)
 			}
 		})
 	}

@@ -63,7 +63,7 @@ All type URIs are prefixed
 | `planned-throughput-not-finite` | Planned throughput is not finite | `rate × heads × hours` overflows `float64` |
 | `work-unit-id-required` | Work unit id is required | empty id |
 | `work-unit-reference-required` | Work unit reference is required | empty reference |
-| `invalid-line-no` | Invalid line number | `POST /paths/{pathId}/work-units` with a `lineNo` below 1 ([ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)) |
+| `invalid-line-no` | Invalid line number | `POST /paths/{pathId}/work-units` with a `lineNo` below 1 or above 2147483647 (the 32-bit column limit; [ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)) |
 | `work-pool-entry-not-found` | Work unit not found in this pool | releasing an unknown entry |
 | `invalid-wip-limit` | Invalid WIP limit | `PUT /paths/{pathId}/pool` with a `wipLimit` ≤ 0 ([ADR-0034](../adr/0034-configure-pool-command.md)) |
 | `unknown-feed-mode` | Unknown work pool feed mode | `PUT /paths/{pathId}/pool` with a `mode` other than `ReleaseFed`/`FlowFed` |

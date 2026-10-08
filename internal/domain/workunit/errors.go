@@ -17,7 +17,9 @@ var (
 	ErrEmptyId               = errors.New("work unit id must not be empty")
 	ErrEmptyReference        = errors.New("work unit reference must not be empty")
 	ErrUnknownWorkKind       = errors.New("unknown transfer work kind")
-	// ErrInvalidLineNo marks a line number below 1. 0 is not an error: it
-	// is the "unknown" value of the optional line_no hint (ADR-0036).
-	ErrInvalidLineNo = errors.New("work unit line number must be at least 1 when given")
+	// ErrInvalidLineNo marks a line number outside 1..MaxLineNo
+	// (2147483647, math.MaxInt32: every line_no column is a 32-bit
+	// INTEGER). 0 is not an error: it is the "unknown" value of the
+	// optional line_no hint (ADR-0036).
+	ErrInvalidLineNo = errors.New("work unit line number must be between 1 and 2147483647 when given")
 )

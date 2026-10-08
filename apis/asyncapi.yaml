@@ -1325,10 +1325,13 @@ components:
                   description: Identifier of the released work unit.
                 line_no:
                   type: integer
+                  format: int32
                   minimum: 1
+                  maximum: 2147483647
                   description: >-
                     OPTIONAL (ADR-0036). The 1-based order line this released
-                    unit was made for, stored on the `WorkUnit` from the
+                    unit was made for (1..2147483647, the 32-bit column
+                    limit), stored on the `WorkUnit` from the
                     `OrderAllocated` line that created it (the same number
                     embedded in a work-unit id of the form
                     `<order>-line-<n>`) and read straight off it at publish
@@ -1758,10 +1761,12 @@ components:
                   type: string
                 line_no:
                   type: integer
+                  format: int32
                   minimum: 1
+                  maximum: 2147483647
                   description: >-
                     OPTIONAL (ADR-0036). The 1-based order line the released
-                    unit was made for; the same value, with the same
+                    unit was made for (1..2147483647); the same value, with the same
                     omit-when-unknown rule, as `line_no` on the integration
                     `WorkReleased`. Absent — never `0` or `null` — when the
                     line is unknown.

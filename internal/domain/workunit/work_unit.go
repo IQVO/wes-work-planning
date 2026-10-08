@@ -165,8 +165,21 @@ func (w *WorkUnit) LineNo() int { return w.lineNo }
 
 // SetLineNo records the optional order line number after construction,
 // mirroring SetSKU's additive-setter discipline. Callers validate the
-// value (>= 1 when given); the setter itself does not re-validate.
+// value with ValidateLineNo; the setter itself does not re-validate.
 func (w *WorkUnit) SetLineNo(lineNo int) { w.lineNo = lineNo }
+
+// MaxLineNo is the largest valid line number: every line_no column in the
+// fleet is a 32-bit INTEGER, so it is math.MaxInt32.
+const MaxLineNo = 1<<31 - 1
+
+// ValidateLineNo reports whether lineNo may be stored on a WorkUnit: 0
+// (unknown) or 1..MaxLineNo. Anything else is ErrInvalidLineNo.
+func ValidateLineNo(lineNo int) error {
+	if lineNo < 0 || lineNo > MaxLineNo {
+		return ErrInvalidLineNo
+	}
+	return nil
+}
 
 // Release admits the unit into active work. A unit may be assigned/released
 // at most once — releasing an already-released or completed unit fails.

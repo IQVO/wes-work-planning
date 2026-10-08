@@ -29,7 +29,7 @@ func stateToString(s workunit.State) string {
 // lineNoToColumn maps the aggregate's "0 = unknown" onto the nullable
 // line_no column: an unknown line is stored as NULL, never as 0 (ADR-0036).
 func lineNoToColumn(lineNo int) *int {
-	if lineNo <= 0 {
+	if lineNo <= 0 || lineNo > workunit.MaxLineNo {
 		return nil
 	}
 	return &lineNo

@@ -277,11 +277,12 @@ func (h *Handlers) postWorkUnit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, fmt.Errorf("%w: cpt is required", errMalformedBody))
 		return
 	}
-	// lineNo is optional (nil = unknown) but, when given, must be >= 1: an
-	// explicit 0 or negative value is rejected, never coerced to "unknown".
+	// lineNo is optional (nil = unknown) but, when given, must be in
+	// 1..2147483647 (the 32-bit column limit): an explicit 0, negative or
+	// too-large value is rejected, never coerced to "unknown".
 	lineNo := 0
 	if body.LineNo != nil {
-		if *body.LineNo < 1 {
+		if *body.LineNo < 1 || *body.LineNo > workunit.MaxLineNo {
 			writeError(w, r, fmt.Errorf("%w: got %d", workunit.ErrInvalidLineNo, *body.LineNo))
 			return
 		}

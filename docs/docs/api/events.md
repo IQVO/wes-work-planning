@@ -137,7 +137,8 @@ product-master), `fragile` (bool, `true` when the SKU is classified
 time; read straight off the `WorkUnit`,
 [ADR-0010](../adr/0010-gift-wrap-as-a-work-released-characteristic.md)).
 
-`WorkReleased.data` has one more OPTIONAL field, `line_no` (integer ≥ 1): the
+`WorkReleased.data` has one more OPTIONAL field, `line_no` (integer, 1 to
+2147483647 — a 32-bit int): the
 order line the unit was made for, stored on the `WorkUnit` from the
 `OrderAllocated` line that created it and read off it at publish time like
 `ref`. It is **omitted when unknown** — a unit created before
@@ -145,7 +146,10 @@ order line the unit was made for, stored on the `WorkUnit` from the
 unit that gave no `lineNo`, every transfer unit — and consumers must treat
 absent as "line unknown". The analytics-topic `WorkReleased`
 (`warehouse.wes.analytics`) carries the same `line_no` under the same rule.
-The work-unit id is unchanged (`{order_id}-line-{line_no}`).
+The work-unit id is unchanged (`{order_id}-line-{line_no}`). An inbound
+`OrderAllocated` line whose `line_no` is above 2147483647 (or non-positive) is
+not rejected: the unit is still enqueued under the id built from the number as
+sent, with its stored line left unknown, so `WorkReleased` omits `line_no`.
 
 Publication is opt-in at runtime: with the default `EVENT_PUBLISHER=log` these
 events are written to the log publisher instead of Kafka. Set

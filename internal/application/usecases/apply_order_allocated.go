@@ -9,6 +9,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
+	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
 // ApplyOrderAllocated is the inbound-event use case behind
@@ -93,11 +94,12 @@ func (uc *ApplyOrderAllocated) enqueueRequests(req ApplyOrderAllocatedRequest) (
 			return nil, err
 		}
 		// The line number is stored explicitly (ADR-0036) as well as
-		// staying in the id. A non-positive value from upstream is "unknown"
+		// staying in the id. A non-positive or out-of-range (> 2147483647,
+		// the 32-bit column limit) value from upstream is "unknown"
 		// (0): the id is still built exactly as before, so a malformed line
-		// is never newly rejected.
+		// is never newly rejected (and never dead-lettered).
 		lineNo := line.LineNo
-		if lineNo < 0 {
+		if workunit.ValidateLineNo(lineNo) != nil {
 			lineNo = 0
 		}
 		out = append(out, EnqueueWorkUnitRequest{

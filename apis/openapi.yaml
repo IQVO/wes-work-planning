@@ -1245,7 +1245,9 @@ components:
           example: true
         lineNo:
           type: integer
+          format: int32
           minimum: 1
+          maximum: 2147483647
           nullable: true
           description: >-
             OPTIONAL. The 1-based order line this work unit is for, stored on
@@ -1253,8 +1255,9 @@ components:
             event (ADR-0036). It never changes `workUnitId` — the
             order-allocation consumer's `<order>-line-<n>` ids stay as they
             are. Omit — or send null, which is treated exactly like omitted —
-            when the line is not known; `0` and negative values are rejected
-            with `400` (`invalid-line-no`).
+            when the line is not known; `0`, negative values and values above
+            `2147483647` (the 32-bit column limit) are rejected with `400`
+            (`invalid-line-no`).
           example: 3
       required: [workUnitId, cpt, reference]
 
@@ -1301,7 +1304,9 @@ components:
           example: sku-482910
         lineNo:
           type: integer
+          format: int32
           minimum: 1
+          maximum: 2147483647
           description: >-
             OPTIONAL order line number this work unit is for (ADR-0036).
             Omitted when not known — a unit created before this field

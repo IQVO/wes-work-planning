@@ -36,7 +36,7 @@ func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers st
 	}
 	brokers := brokerList(kafkaBrokers)
 	integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID)
-	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID)
+	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID).WithWorkUnits(workUnits)
 	closers := []func(){func() { _ = integrationPublisher.Close() }, func() { _ = analyticsPublisher.Close() }}
 
 	var relay *postgres.OutboxRelay

@@ -66,6 +66,7 @@ func statusFor(err error) int {
 		errors.Is(err, plan.ErrThroughputNotFinite),
 		errors.Is(err, workunit.ErrEmptyId),
 		errors.Is(err, workunit.ErrEmptyReference),
+		errors.Is(err, workunit.ErrInvalidLineNo),
 		errors.Is(err, release.ErrInvalidWIPLimit),
 		errors.Is(err, release.ErrUnknownFeedMode),
 		errors.Is(err, release.ErrUnknownEntry):
@@ -121,6 +122,7 @@ var problemCatalog = []problemCategory{
 	{plan.ErrThroughputNotFinite, "planned-throughput-not-finite", "Planned throughput is not finite"},
 	{workunit.ErrEmptyId, "work-unit-id-required", "Work unit id is required"},
 	{workunit.ErrEmptyReference, "work-unit-reference-required", "Work unit reference is required"},
+	{workunit.ErrInvalidLineNo, "invalid-line-no", "Invalid line number"},
 	{release.ErrUnknownEntry, "work-pool-entry-not-found", "Work unit not found in this pool"},
 	{release.ErrInvalidWIPLimit, "invalid-wip-limit", "Invalid WIP limit"},
 	{release.ErrUnknownFeedMode, "unknown-feed-mode", "Unknown work pool feed mode"},

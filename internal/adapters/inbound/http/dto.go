@@ -90,6 +90,11 @@ type enqueueWorkUnitRequestDTO struct {
 	// event carries it directly (see ADR-0010) — unlike SKU, this is
 	// never looked up from another service. Absent defaults to false.
 	GiftWrap bool `json:"giftWrap,omitempty"`
+	// LineNo is optional: the 1-based order line this work unit is for
+	// (ADR-0036). A pointer so an explicit 0 or negative value is a 400
+	// (invalid-line-no) rather than silently becoming "unknown"; absent or
+	// null means unknown.
+	LineNo *int `json:"lineNo,omitempty"`
 }
 
 type workUnitResponseDTO struct {
@@ -102,6 +107,9 @@ type workUnitResponseDTO struct {
 	// SKU is the optional inventory SKU this work unit's order line
 	// corresponds to, omitted when not known (see EnqueueWorkUnitRequest.SKU).
 	SKU string `json:"sku,omitempty"`
+	// LineNo is the optional order line number this work unit is for,
+	// omitted when unknown (ADR-0036).
+	LineNo int `json:"lineNo,omitempty"`
 	// ReleasedAt/CompletedAt are omitted (not null) until the work unit
 	// reaches the corresponding lifecycle state.
 	ReleasedAt  *time.Time `json:"releasedAt,omitempty"`

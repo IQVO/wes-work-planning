@@ -59,6 +59,7 @@ type WorkUnit struct {
 	workKind    WorkKind
 	siteId      string
 	quantity    int
+	lineNo      int
 	state       State
 	releasedAt  *time.Time
 	completedAt *time.Time
@@ -151,6 +152,21 @@ func (w *WorkUnit) Quantity() int { return w.quantity }
 
 // SetQuantity records the optional transfer quantity after construction.
 func (w *WorkUnit) SetQuantity(quantity int) { w.quantity = quantity }
+
+// LineNo is the optional order line number (1-based) this work unit was
+// created for — the value OrderAllocated carries per line and that is also
+// embedded in the deterministic id "<order>-line-<n>". 0 means "unknown"
+// (a transfer unit, a REST-enqueued unit that gave none, or a row that
+// predates ADR-0036) and must be read as "no line", not as an error. It
+// exists so the outbound WorkReleased publisher can state the line
+// explicitly instead of making consumers parse it out of the id; nothing in
+// this aggregate's own invariants depends on it.
+func (w *WorkUnit) LineNo() int { return w.lineNo }
+
+// SetLineNo records the optional order line number after construction,
+// mirroring SetSKU's additive-setter discipline. Callers validate the
+// value (>= 1 when given); the setter itself does not re-validate.
+func (w *WorkUnit) SetLineNo(lineNo int) { w.lineNo = lineNo }
 
 // Release admits the unit into active work. A unit may be assigned/released
 // at most once — releasing an already-released or completed unit fails.

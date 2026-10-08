@@ -202,7 +202,7 @@ func wireEventPublisher(logger *slog.Logger, kind, kafkaBrokers string, repos re
 	}
 	brokers := brokerList(kafkaBrokers)
 	integrationPublisher := outboundkafka.NewPublisher(brokers, repos.workUnits, classifications, newEventID)
-	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID)
+	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID).WithWorkUnits(repos.workUnits)
 	stop := func() {
 		_ = integrationPublisher.Close()
 		_ = analyticsPublisher.Close()

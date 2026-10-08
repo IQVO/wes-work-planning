@@ -47,7 +47,7 @@ it decides *when* work enters the floor and *in what order*.
 | [Ecosystem](../ecosystem/index.md) | The context map, Kafka topics and REST lookups actually wired today, and the sibling services |
 | [AI Ecosystem (MCP)](../mcp/governance-charter.md) | The MCP governance charter this service's `cmd/mcp` server follows |
 | [Analytics (Data Product)](../analytics/release-throughput-report.md) | The Release Throughput & Backlog Health report contract |
-| [ADRs](../adr/index.md) | Thirty-two architecture decision records |
+| [ADRs](../adr/index.md) | Thirty-five architecture decision records |
 
 ## At a glance
 

@@ -12,7 +12,7 @@ paths:
 - `GET  /healthz`                          → healthCheck
 - `POST /paths/{pathId}/charge`            → receiveChargeForecast
 - `POST /paths/{pathId}/plan`              → commitShiftPlan
-- `POST /paths/{pathId}/work-units`        → enqueueWorkUnit
+- `POST /paths/{pathId}/work-units`        → enqueueWorkUnit (optional `lineNo`, ADR-0036)
 - `POST /paths/{pathId}/release`           → releaseNextWork
 - `PUT  /paths/{pathId}/pool`              → configurePool (ADR-0034)
 - `GET  /paths/{pathId}/telemetry`         → sampleBacklog

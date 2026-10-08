@@ -3,7 +3,7 @@ paths:
   - "docs/docs/adr/**"
 ---
 
-# ADR index (0001–0035)
+# ADR index (0001–0036)
 
 Full records live in `docs/docs/adr/` (index: `docs/docs/adr/index.md`).
 Read the relevant ADR before reversing a documented decision.
@@ -43,3 +43,4 @@ Read the relevant ADR before reversing a documented decision.
 - 0033 consume network-inventory-planning's `WorkDemandReleased` into transfer-referenced work units (choreography; `WorkReleased` carries optional transfer context)
 - 0034 `ConfigurePool` command (`PUT /paths/{pathId}/pool`): sets a pool's feed mode and WIP limit; lowering below current WIP never evicts, releases pause until WIP < limit
 - 0035 product classification from a local Postgres copy of product-master's `ProductClassified` (`warehouse.product-master.events`, group `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`); `PRODUCT_CLASSIFICATION_MODE=kafka|permissive`, `http` rejected at boot; supersedes 0009's live lookup
+- 0036 `WorkUnit` stores the order `line_no` it already receives on `OrderAllocated`; `WorkReleased` v1 carries it as an optional `line_no` on the integration and analytics topics (per-line pick confirmation downstream)

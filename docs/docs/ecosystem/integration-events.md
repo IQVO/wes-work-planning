@@ -230,7 +230,10 @@ benign no-op ([ADR-0031](../adr/0031-order-allocated-choreography.md)).
 Each line's `line_no` is also **stored** on the work unit (nullable
 `work_units.line_no`) and published as the optional `line_no` on
 `WorkReleased`, so a downstream consumer is told the line instead of parsing
-the id ([ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)).
+the id ([ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)). A valid
+line number is 1 to 2147483647 (the column is a 32-bit `INTEGER`); a larger or
+non-positive value on the inbound event is stored as unknown rather than
+failing the event.
 
 This integration is deliberately **fire-and-forget**: there is no reply event
 back to order-management. The existing `WorkUnitCreated`/`WorkReleased`

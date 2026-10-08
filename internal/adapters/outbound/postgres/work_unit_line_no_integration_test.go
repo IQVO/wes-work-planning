@@ -61,6 +61,38 @@ func TestWorkUnitRepo_LineNoRoundTripsThroughEveryFinder(t *testing.T) {
 	}
 }
 
+// The column is a 32-bit INTEGER: MaxInt32 round-trips, and a larger value
+// (which would fail with "integer out of range") never reaches it.
+func TestWorkUnitRepo_LineNoUpperBoundAgainstTheInt32Column(t *testing.T) {
+	pool := outboxDB(t)
+	ctx := context.Background()
+	repo := postgres.NewWorkUnitRepo(pool)
+
+	if err := repo.Save(ctx, newLineNoUnit(t, "wu-line-max", 2147483647)); err != nil {
+		t.Fatalf("save MaxInt32: %v", err)
+	}
+	got, err := repo.FindById(ctx, "wu-line-max")
+	if err != nil {
+		t.Fatalf("FindById: %v", err)
+	}
+	if got.LineNo() != 2147483647 {
+		t.Fatalf("LineNo = %d, want 2147483647", got.LineNo())
+	}
+
+	for id, lineNo := range map[string]int{"wu-line-over": 2147483648, "wu-line-int64": 9223372036854775807} {
+		if err := repo.Save(ctx, newLineNoUnit(t, id, lineNo)); err != nil {
+			t.Fatalf("save %d must not hit \"integer out of range\": %v", lineNo, err)
+		}
+		over, err := repo.FindById(ctx, id)
+		if err != nil {
+			t.Fatalf("FindById %s: %v", id, err)
+		}
+		if over.LineNo() != 0 {
+			t.Fatalf("%s: LineNo = %d, want 0 (unknown)", id, over.LineNo())
+		}
+	}
+}
+
 func TestWorkUnitRepo_UnknownLineNoIsStoredAsNull(t *testing.T) {
 	pool := outboxDB(t)
 	ctx := context.Background()

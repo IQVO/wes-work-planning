@@ -3,6 +3,7 @@ package usecases_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -126,5 +127,90 @@ func TestEnqueueWorkUnit_NegativeLineNoIsRejected(t *testing.T) {
 	}
 	if _, err := workUnits.FindById(ctx, "wu-neg-line"); err == nil {
 		t.Fatal("a rejected enqueue must not persist the work unit")
+	}
+}
+
+// A line number is valid iff 1 <= n <= math.MaxInt32 (0 = unknown): the
+// column is a 32-bit INTEGER, so a larger value must never reach it.
+func TestEnqueueWorkUnit_LineNoBoundaries(t *testing.T) {
+	for _, lineNo := range []int{0, 1, 2147483647} {
+		t.Run(fmt.Sprintf("accepts %d", lineNo), func(t *testing.T) {
+			uc, workUnits := newEnqueueForLineNo()
+			ctx := context.Background()
+			id := fmt.Sprintf("wu-ok-%d", lineNo)
+
+			if _, err := uc.Execute(ctx, enqueueRequestForLineNo(t, id, lineNo)); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			stored, err := workUnits.FindById(ctx, id)
+			if err != nil {
+				t.Fatalf("FindById: %v", err)
+			}
+			if stored.LineNo() != lineNo {
+				t.Fatalf("stored LineNo = %d, want %d", stored.LineNo(), lineNo)
+			}
+		})
+	}
+	for _, lineNo := range []int{2147483648, 9223372036854775807} {
+		t.Run(fmt.Sprintf("rejects %d", lineNo), func(t *testing.T) {
+			uc, workUnits := newEnqueueForLineNo()
+			ctx := context.Background()
+			id := fmt.Sprintf("wu-bad-%d", lineNo)
+
+			_, err := uc.Execute(ctx, enqueueRequestForLineNo(t, id, lineNo))
+			if !errors.Is(err, workunit.ErrInvalidLineNo) {
+				t.Fatalf("got %v, want workunit.ErrInvalidLineNo", err)
+			}
+			if _, err := workUnits.FindById(ctx, id); err == nil {
+				t.Fatal("a rejected enqueue must not persist the work unit")
+			}
+		})
+	}
+}
+
+// Mirrors the non-positive case above: an out-of-range inbound line is
+// "unknown" (0), the id is still built from the number as sent, and the
+// event is NOT rejected (a rejected event would retry and be dead-lettered).
+func TestApplyOrderAllocated_OutOfRangeLineNoIsStoredAsUnknown(t *testing.T) {
+	cases := []struct {
+		name   string
+		lineNo int
+		id     string
+	}{
+		{"max int32 + 1", 2147483648, "order-1-line-2147483648"},
+		{"max int64", 9223372036854775807, "order-1-line-9223372036854775807"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newOrderFixture(processedVariant{processed: memory.NewProcessedEventRepo()}, 0)
+			ctx := context.Background()
+			req := orderRequest("evt-big", usecases.OrderAllocatedLine{LineNo: tc.lineNo, SKU: "SKU-X", PathId: "pick-a"})
+			if _, err := f.uc.Execute(ctx, req); err != nil {
+				t.Fatalf("Execute: %v (an out-of-range line must not fail the event)", err)
+			}
+			unit, err := f.workUnits.FindById(ctx, tc.id)
+			if err != nil {
+				t.Fatalf("FindById(%q): %v", tc.id, err)
+			}
+			if unit.LineNo() != 0 {
+				t.Fatalf("LineNo = %d, want 0 (unknown)", unit.LineNo())
+			}
+		})
+	}
+}
+
+func TestApplyOrderAllocated_MaxInt32LineNoIsStored(t *testing.T) {
+	f := newOrderFixture(processedVariant{processed: memory.NewProcessedEventRepo()}, 0)
+	ctx := context.Background()
+	req := orderRequest("evt-max", usecases.OrderAllocatedLine{LineNo: 2147483647, SKU: "SKU-M", PathId: "pick-a"})
+	if _, err := f.uc.Execute(ctx, req); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	unit, err := f.workUnits.FindById(ctx, "order-1-line-2147483647")
+	if err != nil {
+		t.Fatalf("FindById: %v", err)
+	}
+	if unit.LineNo() != 2147483647 {
+		t.Fatalf("LineNo = %d, want 2147483647", unit.LineNo())
 	}
 }

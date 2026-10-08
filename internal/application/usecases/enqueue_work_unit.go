@@ -68,7 +68,8 @@ type EnqueueWorkUnitRequest struct {
 	SiteId      string
 	Quantity    int
 	// LineNo is optional: the 1-based order line this work unit is for
-	// (ADR-0036). 0 means "unknown"; a negative value is rejected with
+	// (ADR-0036). 0 means "unknown"; a negative value or one above
+	// workunit.MaxLineNo (2147483647) is rejected with
 	// workunit.ErrInvalidLineNo. Threaded through to the WorkUnit so the
 	// outbound WorkReleased publisher can stamp line_no at release time. It
 	// never alters WorkUnitId.
@@ -97,8 +98,8 @@ func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitR
 	if err != nil {
 		return nil, err
 	}
-	if req.LineNo < 0 {
-		return nil, workunit.ErrInvalidLineNo
+	if err := workunit.ValidateLineNo(req.LineNo); err != nil {
+		return nil, err
 	}
 	unit.SetLineNo(req.LineNo)
 	unit.SetSKU(req.SKU)

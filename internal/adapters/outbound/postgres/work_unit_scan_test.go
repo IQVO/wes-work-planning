@@ -84,3 +84,18 @@ func TestScanWorkUnit_LineNoColumn(t *testing.T) {
 		t.Fatalf("lineNoToColumn(7) = %v, want 7", got)
 	}
 }
+
+// Defence in depth: the column is a 32-bit INTEGER, so a value above
+// MaxInt32 must never be bound (it would fail with "integer out of range");
+// it is written as NULL (unknown) instead.
+func TestLineNoToColumn_NeverBindsAnOutOfRangeValue(t *testing.T) {
+	if got := lineNoToColumn(2147483647); got == nil || *got != 2147483647 {
+		t.Fatalf("lineNoToColumn(MaxInt32) = %v, want 2147483647", got)
+	}
+	if lineNoToColumn(2147483648) != nil {
+		t.Fatal("lineNoToColumn(MaxInt32+1) must be NULL")
+	}
+	if lineNoToColumn(9223372036854775807) != nil {
+		t.Fatal("lineNoToColumn(MaxInt64) must be NULL")
+	}
+}

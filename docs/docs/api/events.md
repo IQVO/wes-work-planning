@@ -111,7 +111,7 @@ Topic `warehouse.work-planning.events`. Eleven event types are catalogued; the
 | `charge.ChargeForecastReceived` | `path_id` | a charge forecast is recorded for a path |
 | `plan.ShiftPlanCommitted` | `path_id` | **this** context commits its own rate × heads × hours plan |
 | `workunit.WorkUnitCreated` | `path_id`, `work_unit_id` | a work unit is enqueued into a pool |
-| **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` (+ optional `required_capabilities`, `fragile`, `gift_wrap`) | the release policy admits the earliest-CPT unit |
+| **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` (+ optional `required_capabilities`, `fragile`, `gift_wrap`, `line_no`) | the release policy admits the earliest-CPT unit |
 | `workunit.WorkUnitCompleted` | `path_id`, `work_unit_id` | a released unit completes |
 | `workpool.BacklogThresholdBreached` | `path_id` | backlog depth crosses the pool's alarm threshold |
 | `workpool.RateDeviationDetected` | `path_id` | *reserved: declared in the catalogue for a future detection rule ([ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md) defers it); **not emitted today** (decided 2026-10-06)* |
@@ -136,6 +136,16 @@ product-master), `fragile` (bool, `true` when the SKU is classified
 `gift_wrap` (bool, `true` when the caller requested gift wrap at enqueue
 time; read straight off the `WorkUnit`,
 [ADR-0010](../adr/0010-gift-wrap-as-a-work-released-characteristic.md)).
+
+`WorkReleased.data` has one more OPTIONAL field, `line_no` (integer ≥ 1): the
+order line the unit was made for, stored on the `WorkUnit` from the
+`OrderAllocated` line that created it and read off it at publish time like
+`ref`. It is **omitted when unknown** — a unit created before
+[ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md), a REST-enqueued
+unit that gave no `lineNo`, every transfer unit — and consumers must treat
+absent as "line unknown". The analytics-topic `WorkReleased`
+(`warehouse.wes.analytics`) carries the same `line_no` under the same rule.
+The work-unit id is unchanged (`{order_id}-line-{line_no}`).
 
 Publication is opt-in at runtime: with the default `EVENT_PUBLISHER=log` these
 events are written to the log publisher instead of Kafka. Set

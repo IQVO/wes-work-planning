@@ -338,7 +338,7 @@ sequenceDiagram
             end
         end
         loop every line
-            AOA->>EWU: Execute id order_id-line-line_no, CPT promise_date
+            AOA->>EWU: Execute id order_id-line-line_no, CPT promise_date, LineNo line_no
             alt line already enqueued
                 EWU-->>AOA: ErrDuplicateEntry, skip line
             end
@@ -409,8 +409,11 @@ sequenceDiagram
     UC->>OP: Publish domain events, inside the transaction
     OP->>ENC: Encode CloudEvents, key is subject
     opt WorkReleased
-        ENC->>ENC: read cpt, ref, sku, gift_wrap from WorkUnitRepo
+        ENC->>ENC: read cpt, ref, sku, gift_wrap, line_no from WorkUnitRepo
         ENC->>ENC: read Hazmat or Fragile hints from product_classification_copy in a savepoint, failure omits them
+    end
+    opt WorkReleased on the analytics topic
+        ENC->>ENC: analytics encoder reads line_no from WorkUnitRepo, omitted when unknown
     end
     OP->>Outbox: INSERT one row per topic
     Note over Outbox: commits with the aggregate change

@@ -37,7 +37,7 @@ CloudEvents `subject`: the **work unit id** for `workunit` events, the
 | `com.warehouse.wes.work-planning.charge.ChargeForecastReceived` | path id | `path_id` | `ReceiveChargeForecast` | — |
 | `com.warehouse.wes.work-planning.plan.ShiftPlanCommitted` | path id | `path_id` | `CommitShiftPlan` | — |
 | `com.warehouse.wes.work-planning.workunit.WorkUnitCreated` | work unit id | `path_id`, `work_unit_id` | `EnqueueWorkUnit` (REST or `ApplyOrderAllocated`) | — |
-| **`com.warehouse.wes.work-planning.workunit.WorkReleased`** | work unit id | `path_id`, `work_unit_id`, `cpt`, `ref`, optional `required_capabilities`, `fragile`, `gift_wrap` | `ReleaseNextWork` (REST or MCP) | **fulfillment-execution** — `internal/adapters/inbound/kafka/consumer.go` turns it into a `Task` |
+| **`com.warehouse.wes.work-planning.workunit.WorkReleased`** | work unit id | `path_id`, `work_unit_id`, `cpt`, `ref`, optional `required_capabilities`, `fragile`, `gift_wrap`, `line_no` ([ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)) | `ReleaseNextWork` (REST or MCP) | **fulfillment-execution** — `internal/adapters/inbound/kafka/consumer.go` turns it into a `Task` |
 | `com.warehouse.wes.work-planning.workunit.WorkUnitCompleted` | work unit id | `path_id`, `work_unit_id` | `RecordCompletion` (REST or `ApplyTaskCompleted`) | — |
 | `com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached` | path id | `path_id` | `SampleBacklog` when backlog depth exceeds the alarm threshold | — |
 | `com.warehouse.wes.work-planning.workpool.RateDeviationDetected` | path id | `path_id` | **nothing** — reserved for a future detection rule, not emitted (decided 2026-10-06: kept) | — |
@@ -132,7 +132,7 @@ happened*, and the smallest payload that identifies the subject keeps
 consumers from treating the stream as data replication.
 
 The exceptions are deliberate. `WorkReleased` is enriched **in the adapter**
-with `cpt`, `ref`, `gift_wrap` and classification hints so fulfillment-execution
+with `cpt`, `ref`, `gift_wrap`, `line_no` and classification hints so fulfillment-execution
 can build a `Task` without calling back. `PathCapacityChanged` and
 `PathPlanDriftDetected` are *reports*, so they carry the figures they report.
 

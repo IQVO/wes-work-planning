@@ -40,6 +40,10 @@ type harness struct {
 	observeLaborPlan *usecases.ObserveLaborPlan
 	observeInventory *usecases.ObserveInventoryChange
 	published        *recordingPublisher
+	// inbound holds the consumer-side use cases and the router extras
+	// (ConfigurePool, path catalogue, readiness gate) wired in
+	// features_wave2_test.go.
+	inbound *inboundExtras
 }
 
 // newServer builds the production router over fresh in-memory adapters and
@@ -73,24 +77,29 @@ func newServer() (*httptest.Server, *harness) {
 		GetWorkUnit:             usecases.NewGetWorkUnit(workUnits),
 	}
 
+	extras := wireInboundExtras(h, workUnits, pools, processedEvents, publisher, clock)
+
 	return httptest.NewServer(inboundhttp.NewRouter(h, "wes-work-planning", nil)), &harness{
 		pools:            pools,
 		observeLaborPlan: usecases.NewObserveLaborPlan(laborPlanViews, processedEvents).WithDriftReconciliation(plans, publisher, clock),
 		observeInventory: usecases.NewObserveInventoryChange(inventoryViews, processedEvents),
 		published:        publisher,
+		inbound:          extras,
 	}
 }
 
 // recordingPublisher forwards to the production-shaped in-memory publisher and
 // remembers the name of every event it was asked to publish.
 type recordingPublisher struct {
-	inner ports.EventPublisher
-	names []string
+	inner  ports.EventPublisher
+	names  []string
+	events []shared.DomainEvent
 }
 
 func (p *recordingPublisher) Publish(ctx context.Context, evs ...shared.DomainEvent) error {
 	for _, ev := range evs {
 		p.names = append(p.names, ev.EventName())
+		p.events = append(p.events, ev)
 	}
 	return p.inner.Publish(ctx, evs...)
 }
@@ -117,6 +126,7 @@ type world struct {
 
 	lastStatus int
 	lastBody   []byte
+	lastHeader http.Header
 }
 
 func (w *world) reset() {
@@ -167,6 +177,7 @@ func (w *world) do(method, path string, body any) error {
 
 	w.lastStatus = resp.StatusCode
 	w.lastBody = raw
+	w.lastHeader = resp.Header
 	return nil
 }
 
@@ -862,6 +873,8 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^every returned work unit carries reference "([^"]*)"$`, w.workUnitLookupReferences)
 	sc.Step(`^the telemetry reports remaining admission capacity of (\d+) units$`, w.telemetryRemainingCapacity)
 	sc.Step(`^the Work Pool telemetry for process path "([^"]*)" does not report remaining capacity$`, w.telemetryNoRemainingCapacity)
+
+	registerWave2Steps(sc, w)
 }
 
 // TestFeatures runs the Gherkin acceptance suite under features/.

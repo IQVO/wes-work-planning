@@ -104,23 +104,30 @@ wired.
 ## Consumed
 
 Setting `KAFKA_BROKERS` starts the consumer automatically, **independent of
-`EVENT_PUBLISHER`**. It reads four topics concurrently, one goroutine each,
+`EVENT_PUBLISHER`**. It reads five topics concurrently, one goroutine each,
 under the consumer group `KAFKA_CONSUMER_GROUP` (default `wes-work-planning`,
 shared by every deployed replica). A second process against the shared broker
 — a developer's `go run`, the e2e harness — must set a unique value, or the
 rebalance hands the single partition to one member and the other consumes
-nothing while reporting healthy.
+nothing while reporting healthy. A brand-new group starts at the **earliest**
+offset (kafka-go's default), so a fresh group replays each topic's retained
+history; `processed_events` makes that replay harmless.
 
 Every consumer decodes with `cloudevents.Decode` and dispatches on the
 **full** CloudEvents `type` (exact strings below); unknown types are ignored.
 A message that fails CloudEvents validation — including the retired flat
 envelope — is published raw to `<topic>.dlq` and committed past without
-retries (the catalogue consumer logs WARN and skips instead). Nothing ever
-parses a legacy shape.
+retries (the catalogue and product-classification consumers log WARN and skip
+instead). Nothing ever parses a legacy shape.
 
-With `PATH_CATALOGUE_SOURCE=kafka` a fifth, separate consumer replays
-process-path-management's topic — see
-[below](#warehouseprocess-path-managementevents--the-process-path-catalogue).
+Two more consumers run in the same process, each with its own group: the
+`ProductClassified` consumer when `PRODUCT_CLASSIFICATION_MODE=kafka` (see
+[below](#warehouseproduct-masterevents--productclassified)) and, with
+`PATH_CATALOGUE_SOURCE=kafka`, the catalogue replay of process-path-management's
+topic (see
+[below](#warehouseprocess-path-managementevents--the-process-path-catalogue)).
+The analytics projector (`cmd/wes-projector`) consumes this service's own
+`warehouse.wes.analytics` under the group `wes-analytics`.
 
 ### `warehouse.workforce.events` — `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted`
 
@@ -275,6 +282,43 @@ rides the work unit and reappears as OPTIONAL fields on the published
 `WorkReleased` payload. Like the order integration, this is
 fire-and-forget: `WorkReleased` is the only signal back.
 
+### `warehouse.product-master.events` — `ProductClassified`
+
+Type `com.warehouse.wms.product-master.product.ProductClassified`, consumed
+only when `PRODUCT_CLASSIFICATION_MODE=kafka`, under the stable group
+`PRODUCT_CLASSIFICATION_CONSUMER_GROUP` shared by every replica (a new group
+starts at the earliest offset, so the copy fills from history)
+([ADR-0035](../adr/0035-product-classification-local-copy.md)).
+
+```json
+{
+  "specversion": "1.0", "id": "...", "type": "com.warehouse.wms.product-master.product.ProductClassified",
+  "source": "/warehouse/product-master", "subject": "SKU-8891", "time": "...",
+  "datacontenttype": "application/json", "dataschema": "...",
+  "data": {"sku": "SKU-8891", "handling_tags": ["Hazmat", "Fragile"], "dot_hazard_class": 3, "version": 4}
+}
+```
+
+Each event is a full-state replacement of one SKU's classification at
+`version` (`temperature_class` and `dot_hazard_class` optional).
+`ObserveProductClassification` claims the CloudEvents `id` and runs a
+**version-guarded** upsert into `product_classification_copy` in one
+transaction, so an older version never overwrites a newer one. At release
+time the `WorkReleased` encoder reads that copy: a `Hazmat` tag adds
+`"hazmat"` to `required_capabilities`, a `Fragile` tag sets `fragile: true`;
+a SKU absent from the copy adds neither.
+
+Failure behaviour differs from the integration consumer: a non-CloudEvent or
+an invalid payload (empty `sku`, `version < 1`, `dot_hazard_class` outside
+1..9) is logged at WARN and committed past (no DLQ); any error from the use
+case is treated as transient and the **same** message is retried with
+backoff (200 ms doubling to 5 s) until it succeeds or the process stops — the
+offset is committed only after success.
+
+`cmd/mcp` with `PRODUCT_CLASSIFICATION_MODE=kafka` and a database **reads**
+the same table (it never runs this consumer), so `WorkReleased` raised
+through MCP carries the same hints.
+
 ### `warehouse.process-path-management.events` — the process-path catalogue
 
 Consumed only when `PATH_CATALOGUE_SOURCE=kafka` (the default `file` source
@@ -304,6 +348,9 @@ flowchart LR
     APPLY -->|"ok"| COMMIT["COMMIT mark + effect"] --> ACK["ack"]
     APPLY -->|"error"| RB["ROLLBACK mark + effect"] --> RETRY["retry, 3 attempts in total,<br/>then the topic .dlq"]
 ```
+
+Source: `internal/application/usecases/apply_integration_event.go`,
+`internal/adapters/inbound/kafka/consumer.go`.
 
 The mark and the effect are **one transaction**
 ([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)). Before
@@ -345,6 +392,52 @@ sometimes meaningless is an error nobody reads. Deduplicating first keeps
 | `KAFKA_CONSUMER_GROUP` | `wes-work-planning` | Consumer group of the integration-event consumer; set a unique value for any second process on the shared broker. |
 | `EVENT_PUBLISHER` | `log` | `kafka` switches the outbound publisher; requires `KAFKA_BROKERS`. |
 | `PATH_CATALOGUE_SOURCE` | `file` | `kafka` replays `warehouse.process-path-management.events` into the catalogue; requires `KAFKA_BROKERS`. |
+| `PRODUCT_CLASSIFICATION_MODE` / `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | `permissive` / *(unset)* | `kafka` starts the `ProductClassified` consumer under that (required) group; requires `KAFKA_BROKERS`. |
+| `OUTBOX_RELAY_INTERVAL` | `1s` | Idle sleep of the outbox relay (Kafka + Postgres only). |
+
+Every variable of every binary is on [Configuration](../operations/configuration.md).
+
+## Synchronous and MCP edges
+
+Kafka carries every business integration, but not every edge:
+
+| Direction | Peer | Protocol | Contract | Failure behaviour |
+|---|---|---|---|---|
+| outbound | `facility-layout` | REST | `GET <FACILITY_LAYOUT_BASE_URL>/distance?from=&to=`, only on `POST /paths/{pathId}/plan` with both location codes and `TRAVEL_DISTANCE_MODE=http` ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) | 5 s per call, 3 attempts with jitter, per-dependency circuit breaker; any failure is **fail-open** — the plan commits without a travel-distance hint ([ADR-0023](../adr/0023-resilience-circuit-breakers-retry-dlq-shutdown.md)) |
+| inbound | `warehouse-console` (this repo's `web/` remote, `planning_mfe`) | REST via Kong (`/api/wes-work-planning/*`) | `apis/openapi.yaml` | RFC 7807 problems ([Errors](../api/errors.md)) |
+| inbound | `warehouse-ops-agent` | MCP (`WES_WORK_PLANNING_MCP_ENDPOINT`) and REST (`WES_WORK_PLANNING_REST_URL`, `WES_WORK_PLANNING_REPORTS_REST_URL`) in that repo's config | [MCP tools](../mcp/tools.md), `apis/openapi.yaml`, `/reports/throughput` | tool errors / problem responses; this service keeps no state about the caller |
+| inbound | `e2e-tests` harness | REST and Kafka | same | must use its own `KAFKA_CONSUMER_GROUP` when it runs a local binary |
+
+Absent edges, on purpose:
+
+- **order-management → REST**: it no longer calls
+  `POST /paths/{pathId}/work-units`; `OrderAllocated` choreography replaced it
+  ([ADR-0031](../adr/0031-order-allocated-choreography.md)). There is no reply
+  event.
+- **inventory-storage → REST**: the synchronous classification lookup was
+  retired; `PRODUCT_CLASSIFICATION_MODE=http` fails the boot
+  ([ADR-0035](../adr/0035-product-classification-local-copy.md)).
+- **workforce-management**: only its `ShiftPlanCommitted` is consumed; this
+  service never calls it, and its plan never feeds our `ShiftPlan`
+  ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)).
+- **Nine of the eleven published events** have no consumer today (only
+  `WorkReleased` and `PathCapacityChanged` do, besides this service's own
+  analytics projector).
+- No REST or MCP surface requires authentication
+  ([ADR-0016](../adr/0016-remove-rest-mcp-static-bearer-auth.md)).
+
+## Failure behaviour per consumed edge
+
+| Topic | On a non-CloudEvent | On a handler error | Redelivery |
+|---|---|---|---|
+| workforce, inventory, fulfillment, order-management, network-inventory-planning | straight to `<topic>.dlq`, committed | 3 attempts (100 ms → 2 s, jittered), then `<topic>.dlq` with `x-dlq-*` headers, committed | no-op via `processed_events` |
+| `warehouse.product-master.events` | WARN, committed | retried until success; never skipped | no-op via `processed_events`; stale versions ignored |
+| `warehouse.process-path-management.events` | WARN, skipped | ERROR, skipped | state rebuild, replays every boot |
+| `warehouse.wes.analytics` (projector) | WARN, skipped | ERROR, skipped (already committed) | no-op via the analytics processed-event tables |
+
+If a DLQ publish itself fails, the integration consumer stops (offset not
+committed, nothing lost) until the pod restarts — see
+[Troubleshooting](../operations/troubleshooting.md#kafka-consumption).
 
 ## Verifying it end to end
 

@@ -1,12 +1,12 @@
 ---
 id: hexagonal-layering
-title: Hexagonal layering
-sidebar_label: Hexagonal layering
+title: Architecture — hexagonal layering and runtime view
+sidebar_label: Architecture
 sidebar_position: 2
-description: How the ports-and-adapters layering is organised in this repository, and how the dependency rule is enforced.
+description: How the ports-and-adapters layering is organised and enforced, and how it is compiled into four binaries with their ports and data stores.
 ---
 
-# Hexagonal layering
+# Architecture — hexagonal layering and runtime view
 
 The repository is organised strictly as **ports & adapters**. The dependency
 rule is non-negotiable and *executable* — it is asserted by architecture
@@ -24,7 +24,7 @@ flowchart TB
     end
 
     subgraph app["Application layer"]
-        UC["application/usecases<br/>7 control-loop use cases,<br/>4 queries + 4 inbound-event use cases"]
+        UC["application/usecases<br/>8 command use cases,<br/>4 queries + 6 inbound-event use cases"]
         PORTS["application/ports<br/>driven-port interfaces"]
     end
 
@@ -61,6 +61,74 @@ flowchart TB
     PG --> domain
     MEM --> domain
 ```
+
+Source: `internal/architecture/architecture_test.go` (the enforced rule) and
+the package tree under `internal/`.
+
+## Runtime view: binaries, ports and data stores
+
+The layers above are compiled into **four binaries** (all in one image, see
+`Dockerfile`), each its own composition root under `cmd/`:
+
+| Binary | Role | Listens on | Inbound adapters | Outbound adapters / stores |
+|---|---|---|---|---|
+| `cmd/wes` | the OLTP service: every REST endpoint, all Kafka consumers, the outbox relay and the housekeeper | `HTTP_ADDR` `:8080` — REST, `/healthz`, `/readyz` | `inbound/http`, `inbound/kafka` (integration consumer on 5 topics, `ProductClassified` consumer), `outbound/kafkacatalog` (catalogue replay) | OLTP Postgres (or memory), Kafka publishers + relay, facility-layout REST, file catalogue |
+| `cmd/mcp` | MCP server over the same use cases ([ADR-0008](../adr/0008-mcp-inbound-adapter.md)) | `MCP_ADDR` `:8090` — MCP at `/` and `/mcp`, `/healthz` | `inbound/mcp` | the same OLTP Postgres (read/write, no migrations), Kafka publishers or outbox rows, reports REST client |
+| `cmd/wes-projector` | analytics **writer** ([ADR-0011](../adr/0011-analytical-data-product.md)) | `ADMIN_ADDR` `:8091` — `/healthz` only | analytics consumer on `warehouse.wes.analytics` | analytical Postgres (owns and migrates it) |
+| `cmd/wes-reports` | analytics **reader** | `HTTP_ADDR` `:8092` — `/reports/throughput`, `/reports/throughput/freshness`, `/healthz` | `inbound/http` reports router | analytical Postgres, read-only pool |
+
+```mermaid
+flowchart LR
+    console["warehouse-console<br/>(web/ remote via Kong)"]
+    agent["warehouse-ops-agent<br/>(MCP + REST client)"]
+    subgraph wwp["wes-work-planning"]
+        wes["cmd/wes<br/>:8080 REST, consumers,<br/>outbox relay, housekeeper"]
+        mcp["cmd/mcp<br/>:8090 MCP"]
+        proj["cmd/wes-projector<br/>:8091 admin"]
+        rep["cmd/wes-reports<br/>:8092 reports REST"]
+        oltp[("OLTP Postgres")]
+        ana[("Analytical Postgres")]
+    end
+    kafka[["Kafka (one fleet broker)"]]
+    fl["facility-layout"]
+    console --> wes
+    agent --> mcp
+    agent --> wes
+    agent --> rep
+    wes --> oltp
+    mcp --> oltp
+    wes -->|"relay: work-planning.events, wes.analytics"| kafka
+    kafka -->|"workforce, inventory, fulfillment,<br/>order-management, NIP, product-master,<br/>process-path-management"| wes
+    kafka -->|"wes.analytics"| proj
+    proj --> ana
+    rep --> ana
+    mcp -->|"REPORTS_BASE_URL"| rep
+    wes -->|"GET /distance"| fl
+```
+
+Source: `cmd/wes/serving.go`, `cmd/wes/publisher.go`, `cmd/mcp/main.go`,
+`cmd/wes-projector/main.go`, `cmd/wes-reports/main.go`,
+`charts/wes-work-planning/values.yaml`.
+
+**Data stores.**
+
+- **OLTP Postgres** (`DATABASE_URL`, migrated by `cmd/wes` from `migrations/`):
+  `charge_forecasts`, `shift_plans`, `work_pools` (+ `version`),
+  `work_pool_entries`, `work_units`, `processed_events`, `labor_plan_view`,
+  `usable_inventory_view`, `outbox_events`, `idempotency_keys`,
+  `product_classification_copy` (and an unused `events` table from
+  `0001_init`). Without `DATABASE_URL` both `cmd/wes` and `cmd/mcp` fall back
+  to **separate** in-memory stores.
+- **Analytical Postgres** (`ANALYTICS_DATABASE_URL`, a separate database
+  migrated by the projector from `migrations/analytics/`):
+  `analytics_processed_events`, `analytics_consumed_events`,
+  `throughput_rollup`, plus `schema_migrations_analytics`.
+- **Kafka**: publishes `warehouse.work-planning.events` and
+  `warehouse.wes.analytics`; consumes the topics listed on
+  [Integration events](../ecosystem/integration-events.md).
+
+Deployment, ports and probes: [Runbook](../operations/runbook.md);
+every variable: [Configuration](../operations/configuration.md).
 
 ## Package map
 

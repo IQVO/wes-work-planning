@@ -708,9 +708,27 @@ aggregate design canvas, domain message flow, EventStorming, UML class, ER
 and sequence diagrams — see `docs/docs/ddd/ddd-artifacts.md`), an API
 reference generated from `apis/openapi.yaml` plus an Events page from
 `apis/asyncapi.yaml`, the ecosystem context map, the MCP governance charter,
-the analytics report contract, and thirty-two architecture decision records. Source lives in [`docs/`](./docs) (Docusaurus);
+the analytics report contract, and thirty-six architecture decision records. Source lives in [`docs/`](./docs) (Docusaurus);
 it is built and deployed to GitHub Pages by
 [`.github/workflows/docs.yml`](./.github/workflows/docs.yml).
+
+Entry points (paths under [`docs/docs/`](./docs/docs)):
+
+| Topic | Page |
+|---|---|
+| Introduction | [`overview/index.md`](./docs/docs/overview/index.md) |
+| Architecture (layers, binaries, data stores) | [`overview/hexagonal-layering.md`](./docs/docs/overview/hexagonal-layering.md) |
+| Quickstart | [`overview/running-locally.md`](./docs/docs/overview/running-locally.md) |
+| Configuration (every env var of every binary) | [`operations/configuration.md`](./docs/docs/operations/configuration.md) |
+| Runbook (Helm, probes, migrations, Kafka, outbox, scaling, procedures) | [`operations/runbook.md`](./docs/docs/operations/runbook.md) |
+| Observability (metrics, traces, logs, dashboard, alerts) | [`operations/observability.md`](./docs/docs/operations/observability.md) |
+| Troubleshooting | [`operations/troubleshooting.md`](./docs/docs/operations/troubleshooting.md) |
+| Testing (suites, make targets, CI jobs) | [`development/testing.md`](./docs/docs/development/testing.md) |
+| Integration (every upstream and downstream) | [`ecosystem/integration-events.md`](./docs/docs/ecosystem/integration-events.md) |
+| Use cases | [`ddd/use-cases.md`](./docs/docs/ddd/use-cases.md) |
+| Subdomain classification | [`ddd/subdomain-classification.md`](./docs/docs/ddd/subdomain-classification.md) |
+| MCP tools, resources, prompts | [`mcp/tools.md`](./docs/docs/mcp/tools.md) |
+| ADR index | [`adr/index.md`](./docs/docs/adr/index.md) |
 
 ## Operator micro-frontend (`web/`)
 

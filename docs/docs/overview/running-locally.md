@@ -8,6 +8,31 @@ description: Run the service in-memory or against Postgres, exercise the API wit
 
 # Running locally
 
+## Prerequisites
+
+| Tool | Version | Needed for |
+|---|---|---|
+| Go | `1.26.9` (the `go` directive in `go.mod`) | every binary and test |
+| Docker | any recent | `docker compose` (Postgres 16 only) and the testcontainers integration tests |
+| `kubectl` + the `warehouse` kind cluster | — | only to reach the shared Kafka broker at `localhost:9092` |
+| `golangci-lint` | v2.13.1 (pinned in `Makefile`) | `make lint` and the lefthook pre-commit hook |
+| Node.js | `>=20.0` (`docs/package.json` engines) | only for `docs/` and `web/` |
+
+## Build and test with make
+
+`make help` lists every target. There is no `run` or database target: run
+the binaries with `go run` and Postgres with `docker compose up -d`
+(`postgres:16`, user and database `wes`, port `5432`).
+
+| Target | Does |
+|---|---|
+| `make build` | `go build ./...` (all four binaries) |
+| `make test` | unit + httptest + BDD + MCP evals, `-race` |
+| `make check` | `fmt-check vet build lint test` (what the pre-push hook runs) |
+| `make integration` | testcontainers suites (needs Docker only) |
+
+Every target, test suite and CI job is on [Testing](../development/testing.md).
+
 ## The process-path catalogue comes first
 
 Every `pathId` is validated against the declared process-path catalogue
@@ -59,8 +84,8 @@ DATABASE_URL="postgres://wes:wes@localhost:5432/wes?sslmode=disable" go run ./cm
 | `PRODUCT_CLASSIFICATION_MODE` / `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | `permissive` / *(unset)* | `kafka` keeps a local copy of product-master's `ProductClassified` events (consumer group required) and reads the hazmat/fragile hints from it; `http` is rejected at boot ([ADR-0035](../adr/0035-product-classification-local-copy.md)) |
 | `TRAVEL_DISTANCE_MODE` / `FACILITY_LAYOUT_BASE_URL` | `permissive` / *(unset)* | `http` enables the facility-layout travel-distance lookup ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) |
 
-The full list, including observability and analytics variables, is in the
-repository `README.md`.
+Every variable of all four binaries, with defaults and source files, is on
+[Configuration](../operations/configuration.md).
 
 Note that `KAFKA_BROKERS` and `EVENT_PUBLISHER` are independent: setting
 `KAFKA_BROKERS` alone starts *consuming* without switching the publisher away

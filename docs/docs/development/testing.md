@@ -145,8 +145,14 @@ service **in memory** on `127.0.0.1:18086` (`CONTRACT_PORT`), waits for
 (`CONTRACT_MAX_EXAMPLES` overrides 100). `commitShiftPlan` is excluded because
 its `plannedHeads <= installedStations` invariant cannot be expressed in
 OpenAPI 3.0.3; it is covered by BDD and unit tests instead. The
-`/reports/*` routes of `cmd/wes-reports` are not in `apis/openapi.yaml` and
-are therefore not contract-tested.
+`/reports/*` routes of `cmd/wes-reports` are specified separately in
+`apis/openapi-reports.yaml` ([ADR-0038](../adr/0038-reports-api-openapi-contract.md))
+and contract-tested in Go, without Schemathesis or a database:
+`TestReportsContract_RoutesMatchSpec` (the router's routes, walked with
+`chi.Walk`, equal the spec's paths) and `TestReportsContract_ResponsesMatchSpec`
+(every documented status of every operation, driven through the real router
+with a fake store; each body has every required property and no
+undocumented one) in `internal/adapters/inbound/http/reports_contract_test.go`.
 
 ## Mutation testing (gremlins)
 

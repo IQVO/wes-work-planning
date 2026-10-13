@@ -200,11 +200,15 @@ or `housekeeping sweep failed` (ERROR). Every statement is idempotent, so N
 replicas sweeping is harmless. `processed_events` is **not** swept and grows
 with every consumed event.
 
-## Analytics reader routes (not in `apis/openapi.yaml`)
+## Analytics reader routes (`apis/openapi-reports.yaml`)
 
-`cmd/wes-reports` serves three routes that the OLTP OpenAPI spec does not
-describe (the contract lives on
-[Release throughput report](../analytics/release-throughput-report.md)):
+`cmd/wes-reports` serves three routes. They are not in the OLTP spec
+`apis/openapi.yaml`: their contract is
+[`apis/openapi-reports.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi-reports.yaml)
+([ADR-0038](../adr/0038-reports-api-openapi-contract.md)), rendered as the
+[Reports API](../api/rest-reports/wes-work-planning-reports-api.info.mdx) reference;
+the data product itself is described on
+[Release throughput report](../analytics/release-throughput-report.md):
 
 | Route | Query | Response |
 |---|---|---|

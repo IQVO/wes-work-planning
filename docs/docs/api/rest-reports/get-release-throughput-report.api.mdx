@@ -1,0 +1,72 @@
+---
+id: get-release-throughput-report
+title: "Release throughput and backlog health per process path and UTC hour"
+description: "Returns one row per (pathId, hour bucket) in the half-open window [from, to), ordered by hour bucket then path. An empty window is a 200 with an empty `rows` array, not a 404."
+sidebar_label: "Release throughput and backlog health per process path and UTC hour"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api/rest-reports/wes-work-planning-reports-api
+custom_edit_url: null
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Release throughput and backlog health per process path and UTC hour"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/reports/throughput"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Returns one row per (pathId, hour bucket) in the half-open window [from, to), ordered by hour bucket then path. An empty window is a 200 with an empty `rows` array, not a 404.
+
+`rateDeviationDetected` is reserved: no use case raises RateDeviationDetected today (no ADR defines the rule), so the column is 0 in every row.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-release-throughput-report.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-release-throughput-report.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-release-throughput-report.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

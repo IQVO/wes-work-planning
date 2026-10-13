@@ -72,6 +72,7 @@ no scheduler).
 | [0035](./0035-product-classification-local-copy.md) | Product classification from a local copy of product-master's `ProductClassified` events; `PRODUCT_CLASSIFICATION_MODE=kafka\|permissive`, `http` rejected at boot | Accepted |
 | [0036](./0036-work-unit-line-no-on-work-released.md) | `WorkUnit` stores an optional `line_no` (nullable column, optional `lineNo` on the REST enqueue); `WorkReleased` v1 carries it on both topics (per-line confirm-pick, fleet decision 18) | Accepted |
 | [0037](./0037-mcp-annotations-for-event-raising-tools.md) | MCP tools that publish events (`get_backlog_telemetry`, `get_rebalance_recommendation`) are annotated `readOnlyHint: false`, `destructiveHint: true`, and name the event in their description | Accepted |
+| [0038](./0038-reports-api-openapi-contract.md) | The `cmd/wes-reports` routes get their own OpenAPI contract, `apis/openapi-reports.yaml`: Spectral-linted, rendered into the docs, contract-tested against the real router | Accepted |
 | [0039](./0039-outbox-relay-attempt-cap.md) | Outbox relay attempt cap: a row is no longer claimed after `OUTBOX_MAX_ATTEMPTS` failed sends (default 20, `0` = unlimited), logged at ERROR and kept for re-arming; later same-key rows overtake it | Accepted |
 
 ## The template

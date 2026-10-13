@@ -62,14 +62,18 @@ func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers st
 }
 
 // wireOutboxRelay builds the relay that drains outbox_events onto Kafka
-// through a single topic-less writer, plus the outbox-lag gauge. The
-// returned closers are in registration order (the caller runs them in
+// through a single topic-less writer, plus the outbox-lag gauge. The relay
+// is capped by OUTBOX_MAX_ATTEMPTS (default 20, 0 = unlimited; ADR-0039).
+// The returned closers are in registration order (the caller runs them in
 // reverse).
 func wireOutboxRelay(logger *slog.Logger, brokers []string, pgPool *pgxpool.Pool) (*postgres.OutboxRelay, []func()) {
 	sink := outboundkafka.NewRelaySink(brokers)
 	closers := []func(){func() { _ = sink.Close() }}
+	maxAttempts := nonNegativeIntEnv(outboxMaxAttemptsEnv, defaultOutboxMaxAttempts)
 	relay := postgres.NewOutboxRelay(pgPool, sink, logger,
-		postgres.WithInterval(durationEnv("OUTBOX_RELAY_INTERVAL", time.Second)))
+		postgres.WithInterval(durationEnv("OUTBOX_RELAY_INTERVAL", time.Second)),
+		postgres.WithMaxAttempts(maxAttempts))
+	logger.Info("outbox relay configured", "outbox_max_attempts", maxAttempts)
 	// Outbox lag (ADR-0014 follow-up): age of the oldest unpublished row.
 	// Unregistered before the pool is closed so the callback never
 	// touches a closed pool.

@@ -42,13 +42,13 @@ no scheduler).
 | [0005](./0005-rfc-7807-problem-details.md) | RFC 7807 `application/problem+json` for every error response | Accepted |
 | [0006](./0006-labor-plan-view-not-shift-plan.md) | Project Workforce's `ShiftPlanCommitted` into a separate read model, not our `ShiftPlan` aggregate | Accepted |
 | [0007](./0007-arch-go-fitness-tests.md) | Executable architecture fitness tests with arch-go | Accepted |
-| [0008](./0008-mcp-inbound-adapter.md) | Model Context Protocol as an inbound adapter, not a new service | Accepted — auth section superseded by 0016 |
+| [0008](./0008-mcp-inbound-adapter.md) | Model Context Protocol as an inbound adapter, not a new service | Accepted — auth section superseded by 0016; telemetry tools' annotations amended by 0037 |
 | [0009](./0009-product-classification-propagation-to-work-released.md) | Propagate inventory-storage's `ProductClassification` onto `WorkReleased` via a synchronous read at release time | Accepted — live lookup superseded by 0035 |
 | [0010](./0010-gift-wrap-as-a-work-released-characteristic.md) | Gift wrap as a caller-stated `WorkReleased` characteristic, not a product attribute | Accepted |
 | [0011](./0011-analytical-data-product.md) | Per-service analytical data product (report) via a separate analytics topic | Accepted |
 | [0012](./0012-process-path-catalogue-validation.md) | Process-path catalogue validation, mirroring fulfillment-execution's ADR-0017 | Accepted — amended by 0030 |
 | [0013](./0013-standard-metrics-convention.md) | Standard metrics convention across the fleet: Tier 1 OTel baseline + Tier 2 business-metric naming | Accepted |
-| [0014](./0014-transactional-outbox.md) | Transactional outbox feeding both the integration and the analytics topic, with an in-process relay | Accepted |
+| [0014](./0014-transactional-outbox.md) | Transactional outbox feeding both the integration and the analytics topic, with an in-process relay | Accepted — per-key ordering amended by 0039 |
 | [0015](./0015-rest-identity-static-bearer-scopes.md) | REST identity: adopt the fleet's static bearer keys with read/read-write scopes (warehouse-ops-agent ADR 0005) | Superseded by 0016 |
 | [0016](./0016-remove-rest-mcp-static-bearer-auth.md) | Remove the REST + MCP static-bearer auth layer (fleet decision reversed) | Accepted |
 | [0017](./0017-travel-distance-lookup-on-commit-shift-plan.md) | Read facility-layout's travel graph once, at shift-plan-commit time, to enrich `PathPlan` | Accepted |
@@ -71,6 +71,9 @@ no scheduler).
 | [0034](./0034-configure-pool-command.md) | `ConfigurePool` command (`PUT /paths/{pathId}/pool`) sets a pool's mode and WIP limit; lowering below WIP never evicts | Accepted |
 | [0035](./0035-product-classification-local-copy.md) | Product classification from a local copy of product-master's `ProductClassified` events; `PRODUCT_CLASSIFICATION_MODE=kafka\|permissive`, `http` rejected at boot | Accepted |
 | [0036](./0036-work-unit-line-no-on-work-released.md) | `WorkUnit` stores an optional `line_no` (nullable column, optional `lineNo` on the REST enqueue); `WorkReleased` v1 carries it on both topics (per-line confirm-pick, fleet decision 18) | Accepted |
+| [0037](./0037-mcp-annotations-for-event-raising-tools.md) | MCP tools that publish events (`get_backlog_telemetry`, `get_rebalance_recommendation`) are annotated `readOnlyHint: false`, `destructiveHint: true`, and name the event in their description | Accepted |
+| [0038](./0038-reports-api-openapi-contract.md) | The `cmd/wes-reports` routes get their own OpenAPI contract, `apis/openapi-reports.yaml`: Spectral-linted, rendered into the docs, contract-tested against the real router | Accepted |
+| [0039](./0039-outbox-relay-attempt-cap.md) | Outbox relay attempt cap: a row is no longer claimed after `OUTBOX_MAX_ATTEMPTS` failed sends (default 20, `0` = unlimited), logged at ERROR and kept for re-arming; later same-key rows overtake it | Accepted |
 
 ## The template
 

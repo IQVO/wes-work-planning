@@ -27,8 +27,9 @@ type Deps struct {
 	// — that behaviour is unchanged, exactly as the HTTP telemetry endpoint
 	// sees it.
 	SampleBacklog *usecases.SampleBacklog
-	// RebalanceDecision is the existing flow-balancing read use case, reused
-	// unchanged.
+	// RebalanceDecision is the existing flow-balancing use case, reused
+	// unchanged. It may publish PathThrottled or LaborReassignmentFlagged,
+	// which is why its tool is not annotated read-only (ADR-0037).
 	RebalanceDecision *usecases.RebalanceDecision
 	// ReleaseNextWork is the existing write use case, reused unchanged. Its
 	// release policy and the pool's WIP invariant make a model-invoked release
@@ -104,18 +105,27 @@ func (d Deps) releaseNextWork(ctx context.Context, in releaseNextWorkInput) (rel
 // registerTools adds every tool to the server, each wrapped so its handler
 // runs inside an OTel span named "mcp.tool <name>".
 func (d Deps) registerTools(server *mcp.Server) {
-	readOnly := true
+	destructive := true
+	notIdempotent := false
 
+	// get_backlog_telemetry and get_rebalance_recommendation answer with a
+	// read model, but their use cases PUBLISH domain events on the way
+	// (BacklogThresholdBreached; PathThrottled or LaborReassignmentFlagged)
+	// through the outbox onto both topics, where other contexts act on
+	// them. A published event cannot be recalled, so they are NOT
+	// read-only (ADR-0037, gap fix D17): non-read-only, destructive per
+	// governance charter §4.2, non-idempotent (every qualifying call
+	// publishes again). The descriptions name the side effect (§4.4).
 	addTool(server, &mcp.Tool{
 		Name:        "get_backlog_telemetry",
-		Description: "Return the live backlog read model for a process path: pending backlog depth, released WIP, feed mode (ReleaseFed or FlowFed), and whether it is over its alarm threshold.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly},
+		Description: "Return the live backlog read model for a process path: pending backlog depth, released WIP, feed mode (ReleaseFed or FlowFed), and whether it is over its alarm threshold. Side effect: when the pool is over its alarm threshold, every call publishes a BacklogThresholdBreached event to the work-planning and analytics topics.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive, IdempotentHint: notIdempotent},
 	}, d.getBacklogTelemetry)
 
 	addTool(server, &mcp.Tool{
 		Name:        "get_rebalance_recommendation",
-		Description: "Return the Drum-Buffer-Rope flow-balancing recommendation for a process path: NoActionNeeded, ThrottleUpstream (a flow-fed path over its alarm threshold), or ReassignLabor (a release-fed path saturated at its WIP limit with work still backlogged).",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly},
+		Description: "Return the Drum-Buffer-Rope flow-balancing recommendation for a process path: NoActionNeeded, ThrottleUpstream (a flow-fed path over its alarm threshold), or ReassignLabor (a release-fed path saturated at its WIP limit with work still backlogged). Side effect: every ThrottleUpstream answer publishes a PathThrottled event and every ReassignLabor answer publishes a LaborReassignmentFlagged event to the work-planning and analytics topics.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive, IdempotentHint: notIdempotent},
 	}, d.getRebalanceRecommendation)
 
 	// Write tool: releases the next priority-ordered unit into a pool.
@@ -123,8 +133,6 @@ func (d Deps) registerTools(server *mcp.Server) {
 	// admits a different unit) so a host can see it changes state before
 	// letting a model call it. The release policy and the pool's WIP
 	// invariant bound the risk of a mistaken call.
-	destructive := true
-	notIdempotent := false
 	addTool(server, &mcp.Tool{
 		Name:        "release_next_work",
 		Description: "Release the next highest-priority (earliest-CPT) pending work unit into a process path's pool, per the release policy. Rejected if the path has no pool, the pool is empty, or a release-fed pool is already at its WIP limit. Returns the released unit's id, CPT, and reference.",

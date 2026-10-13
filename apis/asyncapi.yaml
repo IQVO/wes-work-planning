@@ -617,7 +617,10 @@ components:
       description: >-
         **Reserved: declared for a future detection rule (ADR 0020 defers it);
         not emitted today.** Decided 2026-10-06: kept declared, neither
-        emitted nor removed.
+        emitted nor removed. Re-checked 2026-10-12 (gap fix D26): no ADR
+        defines when it is raised, so it stays reserved; the architecture
+        fitness test TestRateDeviationDetectedStaysReserved fails if
+        production code starts raising it without that ADR.
 
 
         Raised when a process path's observed throughput diverges materially
@@ -904,7 +907,11 @@ components:
       summary: Analytics-shaped RateDeviationDetected occurrence on warehouse.wes.analytics.
       description: >-
         Reserved: declared for a future detection rule (ADR 0020 defers it);
-        not emitted today.
+        not emitted today. No ADR defines when a rate deviation is raised, so
+        no use case raises it (an architecture fitness test,
+        TestRateDeviationDetectedStaysReserved, fails if production code
+        starts to). The projector still counts it, so the report's
+        rateDeviationDetected column is always 0 until a rule is decided.
       contentType: application/cloudevents+json
       tags:
         - name: workpool

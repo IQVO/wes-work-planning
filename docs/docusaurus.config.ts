@@ -73,8 +73,21 @@ const config: Config = {
               groupPathsBy: 'tag',
               categoryLinkSource: 'tag',
             },
-          } satisfies OpenApiPlugin.Options,
-        },
+          },
+          wesReports: {
+            // The read-only analytical surface served by cmd/wes-reports
+            // (ADR-0011, ADR-0038): a SEPARATE spec from the OLTP API above,
+            // generated into its own output dir so the two never collide.
+            specPath: '../apis/openapi-reports.yaml',
+            outputDir: 'docs/api/rest-reports',
+            downloadUrl:
+              'https://raw.githubusercontent.com/IQVO/wes-work-planning/main/apis/openapi-reports.yaml',
+            sidebarOptions: {
+              groupPathsBy: 'tag',
+              categoryLinkSource: 'tag',
+            },
+          },
+        } satisfies Record<string, OpenApiPlugin.Options>,
       },
     ],
   ],
@@ -129,10 +142,15 @@ const config: Config = {
           title: 'Contracts',
           items: [
             {label: 'REST API Reference', to: '/docs/api/rest/wes-work-planning-release'},
+            {label: 'Reports API Reference', to: '/docs/api/rest-reports/wes-work-planning-reports-api'},
             {label: 'Events (AsyncAPI)', to: '/docs/api/events'},
             {
               label: 'openapi.yaml',
               href: 'https://github.com/IQVO/wes-work-planning/blob/main/apis/openapi.yaml',
+            },
+            {
+              label: 'openapi-reports.yaml',
+              href: 'https://github.com/IQVO/wes-work-planning/blob/main/apis/openapi-reports.yaml',
             },
             {
               label: 'asyncapi.yaml',

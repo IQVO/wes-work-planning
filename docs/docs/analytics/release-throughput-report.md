@@ -10,7 +10,12 @@ description: The wes-work-planning analytical data product — a Release Through
 The analytical **data product** owned by Work Planning & Release. It is built
 entirely from this service's own domain events (never another service's
 database) and served read-only. See
-[ADR-0011](../adr/0011-analytical-data-product.md) for the decision.
+[ADR-0011](../adr/0011-analytical-data-product.md) for the decision. The REST
+contract of the reader, `cmd/wes-reports`, is
+[`apis/openapi-reports.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi-reports.yaml)
+([ADR-0038](../adr/0038-reports-api-openapi-contract.md)), rendered as the
+[Reports API](../api/rest-reports/wes-work-planning-reports-api.info.mdx)
+reference.
 
 ## Name & owner
 
@@ -29,7 +34,22 @@ hour the row aggregates. Metrics per row:
 | `workUnitCompleted` | Count of `WorkUnitCompleted` in the bucket — released work finished. |
 | `backlogThresholdBreached` | Count of `BacklogThresholdBreached` — backlog crossed its alarm threshold. |
 | `pathThrottled` | Count of `PathThrottled` — flow balancing throttled upstream release. |
-| `rateDeviationDetected` | Count of `RateDeviationDetected` — actual throughput diverged from plan. |
+| `rateDeviationDetected` | Count of `RateDeviationDetected` — actual throughput diverged from plan. **Reserved: always `0` today** (see below). |
+
+### `rateDeviationDetected` is reserved
+
+`RateDeviationDetected` is declared in the event catalogue and in
+`apis/asyncapi.yaml`, and the projector counts it, but **no use case raises
+it**: no ADR defines when a rate deviation is detected
+([ADR-0003](../adr/0003-flow-balancing-as-domain-service.md) calls the rule
+unbuilt, [ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md)
+defers it). The column is kept so the report's shape does not change when a
+rule is decided, and it reads `0` in every row until then. Do not build an
+alert or dashboard on it. The architecture fitness test
+`TestRateDeviationDetectedStaysReserved` fails if production code starts
+raising the event, so this page and the AsyncAPI "Reserved" markers are
+updated together with the ADR that introduces the rule (gap fix D26,
+2026-10-12).
 
 ## Inputs (analytics topic events)
 
@@ -43,7 +63,7 @@ separate from the integration topic — CloudEvents 1.0, see
 | `com.warehouse.wes.work-planning.workunit.WorkUnitCompleted` | `workUnitCompleted` |
 | `com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached` | `backlogThresholdBreached` |
 | `com.warehouse.wes.work-planning.workpool.PathThrottled` | `pathThrottled` |
-| `com.warehouse.wes.work-planning.workpool.RateDeviationDetected` | `rateDeviationDetected` |
+| `com.warehouse.wes.work-planning.workpool.RateDeviationDetected` | `rateDeviationDetected` (reserved: never published today) |
 
 Every event carries its own `path_id` (the report's key dimension) directly, so
 no repo-lookup enrichment is needed. `WorkUnitCreated`, `ChargeForecastReceived`,

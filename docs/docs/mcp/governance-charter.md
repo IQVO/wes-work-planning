@@ -198,13 +198,15 @@ Jaeger and Grafana alongside HTTP.
   unlike inventory-storage's `check_availability`, which answers zero for
   an unknown SKU. A path with no provisioned pool has no projection to
   report, so ambiguity is surfaced rather than masked as empty telemetry.
-- `get_backlog_telemetry` is annotated read-only, yet sampling a flow-fed
+- `get_backlog_telemetry` and `get_rebalance_recommendation` are annotated
+  **non-read-only and destructive** (§4.2) because sampling a flow-fed
   pool over its alarm threshold publishes `BacklogThresholdBreached`, and
-  `get_rebalance_recommendation` publishes `PathThrottled` /
-  `LaborReassignmentFlagged` alongside its recommendation — the same event
-  side effects the HTTP telemetry/rebalance endpoints have (the use cases
-  are reused unchanged). Pinned so the read-only annotation is read as
-  "no state mutation", not "no events".
+  the rebalance recommendation publishes `PathThrottled` /
+  `LaborReassignmentFlagged` alongside its answer — the same event side
+  effects the HTTP telemetry/rebalance endpoints have (the use cases are
+  reused unchanged). Their descriptions name the event (§4.4). Until
+  2026-10-12 they were annotated read-only; ADR-0037 corrected that so a
+  host never skips a confirmation for a call that publishes.
 - `release_next_work` is bounded by the pool's enforced WIP invariant: at
   the limit the release is rejected (`WIP limit reached`) rather than
   queued — a mistaken model call cannot flood a release-fed path.

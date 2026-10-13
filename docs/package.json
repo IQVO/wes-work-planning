@@ -15,7 +15,7 @@
     "typecheck": "tsc",
     "gen-api-docs": "docusaurus gen-api-docs",
     "clean-api-docs": "docusaurus clean-api-docs",
-    "prebuild": "docusaurus clean-api-docs wes && docusaurus gen-api-docs wes"
+    "prebuild": "docusaurus clean-api-docs all && docusaurus gen-api-docs all"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.2",

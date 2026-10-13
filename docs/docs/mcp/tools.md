@@ -22,12 +22,12 @@ also pinned by `internal/adapters/inbound/mcp/testdata/tool_registry.golden`.
 
 ## Tools
 
-| Tool | Annotations | Input (all listed as required by the schema) | Output | Use case |
+| Tool | Annotations | Input (required unless marked optional) | Output | Use case |
 |---|---|---|---|---|
-| `get_backlog_telemetry` | `readOnlyHint: true`, `idempotentHint: false` | `pathId` (string, non-empty) | `{pathId, backlogDepth, wip, mode, overAlarmThreshold}` | `SampleBacklog` |
-| `get_rebalance_recommendation` | `readOnlyHint: true`, `idempotentHint: false` | `pathId` | `{pathId, action, backlogDepth, wip}`; `action` is `NoActionNeeded`, `ThrottleUpstream` or `ReassignLabor` | `RebalanceDecision` |
+| `get_backlog_telemetry` | `readOnlyHint: false`, **`destructiveHint: true`**, `idempotentHint: false` (publishes `BacklogThresholdBreached`, [ADR-0037](../adr/0037-mcp-annotations-for-event-raising-tools.md)) | `pathId` (string, non-empty) | `{pathId, backlogDepth, wip, mode, overAlarmThreshold}` | `SampleBacklog` |
+| `get_rebalance_recommendation` | `readOnlyHint: false`, **`destructiveHint: true`**, `idempotentHint: false` (publishes `PathThrottled` / `LaborReassignmentFlagged`, ADR-0037) | `pathId` | `{pathId, action, backlogDepth, wip}`; `action` is `NoActionNeeded`, `ThrottleUpstream` or `ReassignLabor` | `RebalanceDecision` |
 | `release_next_work` | `readOnlyHint: false`, **`destructiveHint: true`**, `idempotentHint: false` | `pathId` | `{workUnitId, cpt, ref}` of the released unit | `ReleaseNextWork` |
-| `get_release_throughput_report` | `readOnlyHint: true`, `idempotentHint: false` | `from`, `to` (RFC3339, `[from, to)`), `pathId`, `granularity` | `{rows: [{pathId, hourBucket, workReleased, workUnitCompleted, backlogThresholdBreached, pathThrottled, rateDeviationDetected}]}` | calls `GET /reports/throughput` on `cmd/wes-reports` |
+| `get_release_throughput_report` | `readOnlyHint: true`, `idempotentHint: false` | `from`, `to` (RFC3339, `[from, to)`); optional `pathId`, `granularity` | `{rows: [{pathId, hourBucket, workReleased, workUnitCompleted, backlogThresholdBreached, pathThrottled, rateDeviationDetected}]}` (`rateDeviationDetected` is reserved, always 0) | calls `GET /reports/throughput` on `cmd/wes-reports` ([`apis/openapi-reports.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi-reports.yaml)) |
 
 Behaviour worth knowing:
 
@@ -35,18 +35,24 @@ Behaviour worth knowing:
   when `REPORTS_BASE_URL` is set; it never opens the analytical database
   ([ADR-0011](../adr/0011-analytical-data-product.md)). Its HTTP client has a
   10 s timeout; a non-2xx from the reports service becomes a tool error.
-- **All four input fields of the report tool are required by the generated
-  schema** (the SDK marks every struct field without `omitempty` as
-  required), although the handler treats `pathId` and `granularity` as
-  optional. A call without them is rejected with
-  `validating root: required: missing properties: ["pathId" "granularity"]`;
-  send `"pathId": ""` and `"granularity": ""` (or `"hour"`) to mean "all
-  paths, hourly". `from` and `to` must be non-empty.
-- **Read-only is not side-effect-free**: `get_backlog_telemetry` (and the
-  resource below) run `SampleBacklog`, which publishes
-  `BacklogThresholdBreached` when the pool is over its alarm threshold — the
-  same as `GET /paths/{pathId}/telemetry`. `get_rebalance_recommendation`
-  likewise publishes `PathThrottled` / `LaborReassignmentFlagged`.
+- **Only `from` and `to` are required by the report tool's schema**
+  (gap fix D16): `pathId` and `granularity` carry `omitempty`, so a call
+  without them validates and means "all paths, hourly".
+  `TestReportTool_OnlyTheWindowIsRequired` pins the schema, and the
+  architecture fitness test `TestMCPOptionalToolInputsCarryOmitempty` fails
+  on any tool input described as optional whose `json` tag lacks
+  `omitempty`. `from` and `to` must be non-empty.
+- **The two telemetry tools publish events, so they are not read-only**
+  ([ADR-0037](../adr/0037-mcp-annotations-for-event-raising-tools.md)):
+  `get_backlog_telemetry` (and the resource below) run `SampleBacklog`,
+  which publishes `BacklogThresholdBreached` when the pool is over its alarm
+  threshold — the same as `GET /paths/{pathId}/telemetry`.
+  `get_rebalance_recommendation` publishes `PathThrottled` /
+  `LaborReassignmentFlagged` on a `ThrottleUpstream` / `ReassignLabor`
+  answer. Both are annotated `readOnlyHint: false`, `destructiveHint: true`
+  (governance charter §4.2: a non-read-only tool is destructive) and
+  `idempotentHint: false`, and their descriptions name the event, so a host
+  that asks for confirmation before a non-read-only call asks here too.
 - **`release_next_work`** applies the release policy: earliest CPT first,
   rejected when the path has no pool, the pool is empty or a `ReleaseFed`
   pool is at its WIP limit. The domain error text is returned as the tool

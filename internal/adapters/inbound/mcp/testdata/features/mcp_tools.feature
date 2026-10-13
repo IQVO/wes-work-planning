@@ -39,8 +39,8 @@ Feature: MCP tool behavioral evals
   Scenario: A flow-fed path over its alarm threshold is flagged and breaches
     The telemetry read is not pure: sampling a flow-fed pool that is over
     its alarm threshold publishes BacklogThresholdBreached — the same
-    side effect the HTTP telemetry endpoint has (charter §4 documents
-    read tools by outcome, not by side-effect freedom).
+    side effect the HTTP telemetry endpoint has — which is why the tool
+    is annotated readOnlyHint false (ADR-0037, charter §4).
     When I call the tool "get_backlog_telemetry" with argument "pathId" = "pack-a"
     Then the tool call succeeds
     And the structured result field "mode" is "FlowFed"

@@ -167,6 +167,16 @@ one `outbox_events` row per event per topic inside its own transaction
 - on the first send failure records `attempts`/`last_error` on that row,
   commits what was sent and stops the pass (a later event for the same
   aggregate never overtakes a failed one); the row is retried next pass;
+- **attempt cap** (`OUTBOX_MAX_ATTEMPTS`, default 20, `0` = unlimited;
+  [ADR-0039](../adr/0039-outbox-relay-attempt-cap.md)): a row that has
+  failed that many sends is excluded from the claim query
+  (`attempts < OUTBOX_MAX_ATTEMPTS`), so one poison row cannot stop the
+  relay forever. The pass that records the last attempt logs
+  `outbox relay: row reached the attempt cap and is no longer claimed` at
+  ERROR with `outbox_id`, `topic`, `event_type`, `key`, `attempts` and the
+  error. The row stays in `outbox_events` (unpublished, so the housekeeper
+  never deletes it), and later rows with the **same key overtake it** — the
+  per-key ordering price of the cap;
 - a full batch loops immediately; otherwise it sleeps `OUTBOX_RELAY_INTERVAL`
   (default 1 s).
 
@@ -190,11 +200,15 @@ or `housekeeping sweep failed` (ERROR). Every statement is idempotent, so N
 replicas sweeping is harmless. `processed_events` is **not** swept and grows
 with every consumed event.
 
-## Analytics reader routes (not in `apis/openapi.yaml`)
+## Analytics reader routes (`apis/openapi-reports.yaml`)
 
-`cmd/wes-reports` serves three routes that the OLTP OpenAPI spec does not
-describe (the contract lives on
-[Release throughput report](../analytics/release-throughput-report.md)):
+`cmd/wes-reports` serves three routes. They are not in the OLTP spec
+`apis/openapi.yaml`: their contract is
+[`apis/openapi-reports.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi-reports.yaml)
+([ADR-0038](../adr/0038-reports-api-openapi-contract.md)), rendered as the
+[Reports API](../api/rest-reports/wes-work-planning-reports-api.info.mdx) reference;
+the data product itself is described on
+[Release throughput report](../analytics/release-throughput-report.md):
 
 | Route | Query | Response |
 |---|---|---|
@@ -242,6 +256,33 @@ again, set `published_at = NULL` on that `id` in `outbox_events`; the next
 relay pass resends it and consumers dedupe on the `id`. Rows already removed
 by the housekeeper (published more than `OUTBOX_RETENTION` ago) cannot be
 re-sent this way.
+
+### Re-arm an outbox row that hit the attempt cap
+
+A row that failed `OUTBOX_MAX_ATTEMPTS` sends (default 20) is no longer
+claimed ([ADR-0039](../adr/0039-outbox-relay-attempt-cap.md)). Find the
+excluded rows:
+
+```sql
+SELECT id, topic, event_type, convert_from(key, 'UTF8') AS key, attempts, last_error, created_at
+FROM outbox_events
+WHERE published_at IS NULL AND attempts >= 20   -- your OUTBOX_MAX_ATTEMPTS
+ORDER BY id;
+```
+
+Fix the cause named in `last_error` (a broker-side size limit, a missing
+topic, an ACL), then re-arm the row so the next relay pass claims it again:
+
+```sql
+UPDATE outbox_events SET attempts = 0 WHERE id = ...;
+```
+
+The row is sent with its original bytes and CloudEvents `id`. Later rows with
+the same key may already have been published, so a consumer can see this
+event **after** a newer one for the same aggregate; the fleet's consumers
+dedupe on the `id`, and ordering-sensitive consumers must tolerate it. To
+drop a row that must never be sent, mark it published instead:
+`UPDATE outbox_events SET published_at = now(), last_error = 'dropped by operator: <why>' WHERE id = ...`.
 
 ### Rebuild a read model from Kafka
 

@@ -1,0 +1,60 @@
+---
+id: get-release-throughput-report-freshness
+title: "How far the read model trails the event stream"
+description: "Returns the age of the most recently projected event, the data product's freshness signal. A growing lag means the projector is behind or stopped. A lag of 0 on an empty read model looks the same as a perfectly fresh one, so read it together with the report rows."
+sidebar_label: "How far the read model trails the event stream"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api/rest-reports/wes-work-planning-reports-api
+custom_edit_url: null
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"How far the read model trails the event stream"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/reports/throughput/freshness"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Returns the age of the most recently projected event, the data product's freshness signal. A growing lag means the projector is behind or stopped. A lag of 0 on an empty read model looks the same as a perfectly fresh one, so read it together with the report rows.
+
+
+<ParamsDetails>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-release-throughput-report-freshness.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-release-throughput-report-freshness.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

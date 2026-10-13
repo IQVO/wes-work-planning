@@ -10,7 +10,12 @@ description: The wes-work-planning analytical data product — a Release Through
 The analytical **data product** owned by Work Planning & Release. It is built
 entirely from this service's own domain events (never another service's
 database) and served read-only. See
-[ADR-0011](../adr/0011-analytical-data-product.md) for the decision.
+[ADR-0011](../adr/0011-analytical-data-product.md) for the decision. The REST
+contract of the reader, `cmd/wes-reports`, is
+[`apis/openapi-reports.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi-reports.yaml)
+([ADR-0038](../adr/0038-reports-api-openapi-contract.md)), rendered as the
+[Reports API](../api/rest-reports/wes-work-planning-reports-api.info.mdx)
+reference.
 
 ## Name & owner
 

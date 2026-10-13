@@ -10,7 +10,7 @@ description: ADR 0014 — why this service stopped publishing to Kafka from insi
 
 ## Status
 
-Accepted — implemented in the same change that introduced this record.
+Accepted — implemented in the same change that introduced this record. Per-key ordering amended by [ADR-0039](./0039-outbox-relay-attempt-cap.md) (relay attempt cap).
 
 ## Context
 

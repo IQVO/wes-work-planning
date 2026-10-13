@@ -9,13 +9,20 @@ description: The REST API generated from the real openapi.yaml, the Kafka event 
 
 # API Reference
 
-This service publishes two machine-readable contracts, both linted in CI by
+This service publishes three machine-readable contracts, all linted in CI by
 Spectral on every push and pull request:
 
 | Contract | File | Rendered here |
 |---|---|---|
-| **REST** — OpenAPI 3.0.3 | [`apis/openapi.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi.yaml) | [REST API](./rest-overview.md) — **generated from the spec**, not hand-transcribed |
+| **REST** (OLTP, `cmd/wes`) — OpenAPI 3.0.3 | [`apis/openapi.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi.yaml) | [REST API](./rest-overview.md) — **generated from the spec**, not hand-transcribed |
+| **Reports REST** (`cmd/wes-reports`) — OpenAPI 3.0.3 | [`apis/openapi-reports.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/openapi-reports.yaml) | [Reports API](./rest-reports/wes-work-planning-reports-api.info.mdx) — generated from the spec ([ADR-0038](../adr/0038-reports-api-openapi-contract.md)) |
 | **Events** — AsyncAPI 2.6.0 | [`apis/asyncapi.yaml`](https://github.com/IQVO/wes-work-planning/blob/develop/apis/asyncapi.yaml) | [Events](./events.md) |
+
+The reports binary is a separate process on a separate port (`:8092`) against
+the analytical database, so its three routes (`GET /reports/throughput`,
+`GET /reports/throughput/freshness`, `GET /healthz`) have their own spec.
+`internal/adapters/inbound/http/reports_contract_test.go` fails when the
+reports router and that spec disagree on a route or a response shape.
 
 ## Endpoint coverage: 14 operations
 

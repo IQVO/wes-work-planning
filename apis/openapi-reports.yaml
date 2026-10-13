@@ -1,0 +1,253 @@
+openapi: 3.0.3
+info:
+  title: WES Work Planning Reports API
+  version: "1.0.0"
+  description: >
+    The READ-ONLY analytical surface of wes-work-planning's "Release
+    Throughput & Backlog Health" data product (ADR-0011), served by the
+    separate `cmd/wes-reports` binary over a read-only Postgres pool against
+    the analytical database. It is NOT the OLTP `cmd/wes` API documented in
+    apis/openapi.yaml: a different binary, port and database (ADR-0038).
+
+
+    The report is a projection over this service's own domain events,
+    delivered as CloudEvents 1.0 on the `warehouse.wes.analytics` topic and
+    applied by `cmd/wes-projector`, the single writer. It is EVENTUALLY
+    CONSISTENT, to a freshness target of p95 event-to-report lag under 30
+    seconds: read GET /reports/throughput/freshness to see how far the read
+    model trails the event stream.
+
+
+    Rows are keyed by process path (`pathId`) and UTC hour bucket. Every
+    counter is a count of events in that bucket. No route requires
+    authentication (ADR-0016). Errors use RFC 7807 problem details
+    (`application/problem+json`, ADR-0005).
+  contact:
+    name: WES Work Planning & Release
+    url: https://github.com/IQVO/wes-work-planning
+servers:
+  - url: http://localhost:8092
+    description: Local development (cmd/wes-reports, HTTP_ADDR default :8092)
+tags:
+  - name: Reports
+    description: The Release Throughput & Backlog Health analytical read model.
+  - name: Health
+    description: Liveness of the reports process.
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      operationId: getReportsHealthz
+      summary: Liveness probe
+      description: >
+        Reports that the reports process is up. It does not touch the
+        analytical database: the database is pinged once at boot, with the
+        bootretry budget, and the process exits when that fails.
+      responses:
+        "200":
+          description: The process is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /reports/throughput:
+    get:
+      tags: [Reports]
+      operationId: getReleaseThroughputReport
+      summary: Release throughput and backlog health per process path and UTC hour
+      description: >
+        Returns one row per (pathId, hour bucket) in the half-open window
+        [from, to), ordered by hour bucket then path. An empty window is a
+        200 with an empty `rows` array, not a 404.
+
+
+        `rateDeviationDetected` is reserved: no use case raises
+        RateDeviationDetected today (no ADR defines the rule), so the column
+        is 0 in every row.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Inclusive window start, RFC 3339.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-06-01T00:00:00Z"
+        - name: to
+          in: query
+          required: true
+          description: Exclusive window end, RFC 3339.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-06-02T00:00:00Z"
+        - name: pathId
+          in: query
+          required: false
+          description: Optional exact-match process-path filter. Omit for every path.
+          schema:
+            type: string
+          example: pick-a
+        - name: granularity
+          in: query
+          required: false
+          description: Bucket resolution. Only hourly buckets exist.
+          schema:
+            type: string
+            enum: [hour]
+            default: hour
+      responses:
+        "200":
+          description: The report rows for the window.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThroughputReport"
+        "400":
+          description: >
+            `from` or `to` is missing or not RFC 3339, or `granularity` is
+            not `hour` (`invalid-report-query`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: The analytical database could not be read (`report-store-error`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /reports/throughput/freshness:
+    get:
+      tags: [Reports]
+      operationId: getReleaseThroughputReportFreshness
+      summary: How far the read model trails the event stream
+      description: >
+        Returns the age of the most recently projected event, the data
+        product's freshness signal. A growing lag means the projector is
+        behind or stopped. A lag of 0 on an empty read model looks the same
+        as a perfectly fresh one, so read it together with the report rows.
+      responses:
+        "200":
+          description: The current projection lag.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Freshness"
+        "500":
+          description: The freshness signal could not be read (`report-store-error`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+components:
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          description: Always `ok` when the process answers.
+          example: ok
+
+    ThroughputReport:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          description: One row per (pathId, hour bucket). Always present; empty for a window with no data.
+          items:
+            $ref: "#/components/schemas/ThroughputRow"
+
+    ThroughputRow:
+      type: object
+      required:
+        - pathId
+        - hourBucket
+        - workReleased
+        - workUnitCompleted
+        - backlogThresholdBreached
+        - pathThrottled
+        - rateDeviationDetected
+      properties:
+        pathId:
+          type: string
+          description: Process path of the row.
+          example: pick-a
+        hourBucket:
+          type: string
+          format: date-time
+          description: Start of the UTC hour this row aggregates.
+          example: "2026-06-01T14:00:00Z"
+        workReleased:
+          type: integer
+          format: int32
+          description: WorkReleased events. Work admitted into the path.
+          example: 42
+        workUnitCompleted:
+          type: integer
+          format: int32
+          description: WorkUnitCompleted events. Released work finished.
+          example: 39
+        backlogThresholdBreached:
+          type: integer
+          format: int32
+          description: BacklogThresholdBreached events. The backlog crossed its alarm threshold.
+          example: 1
+        pathThrottled:
+          type: integer
+          format: int32
+          description: PathThrottled events. Flow balancing throttled upstream release.
+          example: 0
+        rateDeviationDetected:
+          type: integer
+          format: int32
+          description: >
+            RateDeviationDetected events. Reserved: the event is declared
+            but never raised today, so this is always 0.
+          example: 0
+
+    Freshness:
+      type: object
+      required: [lagSeconds]
+      properties:
+        lagSeconds:
+          type: number
+          format: double
+          description: >
+            Seconds between now and the time of the most recently projected
+            event. 0 when the read model is empty.
+          example: 12.4
+
+    Problem:
+      type: object
+      description: RFC 7807 problem details, the same shape as the OLTP API's.
+      required: [type, title, status, detail]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: Identifier of the error category.
+          example: https://errors.wes-work-planning.warehouse-systems.dev/invalid-report-query
+        title:
+          type: string
+          description: Fixed summary of the error category.
+          example: The report query is malformed or missing a required parameter
+        status:
+          type: integer
+          format: int32
+          description: The HTTP status code, repeated in the body.
+          example: 400
+        detail:
+          type: string
+          description: What went wrong in this request.
+          example: "query parameter 'from' is required (RFC3339)"
+        instance:
+          type: string
+          description: The request path.
+          example: /reports/throughput

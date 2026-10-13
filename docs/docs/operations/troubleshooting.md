@@ -57,7 +57,8 @@ problem `type` it produces. Problem types are relative to
 | Symptom | Cause | Check | Fix |
 |---|---|---|---|
 | Nothing reaches Kafka; logs show `domain event published` | `EVENT_PUBLISHER` is `log` (the default) | env | set `EVENT_PUBLISHER=kafka` |
-| `wes.outbox.lag_seconds` keeps rising; `outbox relay pass failed` | Kafka unreachable, or one row failing every pass (later rows wait behind it by design) | `SELECT id, event_type, attempts, last_error FROM outbox_events WHERE published_at IS NULL ORDER BY id LIMIT 5` | fix the cause in `last_error`; the relay resumes on its own |
+| `wes.outbox.lag_seconds` keeps rising; `outbox relay pass failed` | Kafka unreachable, or one row failing every pass (later rows wait behind it until it reaches `OUTBOX_MAX_ATTEMPTS`) | `SELECT id, event_type, attempts, last_error FROM outbox_events WHERE published_at IS NULL ORDER BY id LIMIT 5` | fix the cause in `last_error`; the relay resumes on its own |
+| `outbox relay: row reached the attempt cap and is no longer claimed` (ERROR); an event never arrived | that row failed `OUTBOX_MAX_ATTEMPTS` (default 20) sends and is excluded; later rows overtook it ([ADR-0039](../adr/0039-outbox-relay-attempt-cap.md)) | `SELECT id, topic, event_type, attempts, last_error FROM outbox_events WHERE published_at IS NULL AND attempts >= 20` | fix the cause, then `UPDATE outbox_events SET attempts = 0 WHERE id = ...` ([Runbook](./runbook.md#re-arm-an-outbox-row-that-hit-the-attempt-cap)) |
 | Outbox rows written by MCP never published | the relay runs only in `cmd/wes`; the api Deployment is down or not using Kafka + Postgres | api pods and env | run the api with the same `EVENT_PUBLISHER`/`DATABASE_URL` |
 | `idempotency_keys` / `outbox_events` grow without bound | housekeeper disabled (`0`) or failing (`housekeeping sweep failed`) | env, logs | fix; note `processed_events` is never swept by design |
 

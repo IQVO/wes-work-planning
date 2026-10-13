@@ -128,11 +128,13 @@ var _ ReportsClient = (*ReportsRESTClient)(nil)
 // --- get_release_throughput_report tool ---------------------------------------
 
 // ThroughputToolInput is the tool's argument set (untrusted, from a model).
+// pathId and granularity are optional and carry `omitempty`, so the inferred
+// input schema requires only from and to (gap fix D16).
 type ThroughputToolInput struct {
 	From        string `json:"from" jsonschema:"start of the window, inclusive, RFC3339 (required)"`
 	To          string `json:"to" jsonschema:"end of the window, exclusive, RFC3339 (required)"`
-	PathId      string `json:"pathId" jsonschema:"optional process-path filter, e.g. pick-zone-a"`
-	Granularity string `json:"granularity" jsonschema:"time bucket granularity; only 'hour' is supported"`
+	PathId      string `json:"pathId,omitempty" jsonschema:"optional process-path filter, e.g. pick-zone-a; omit for every path"`
+	Granularity string `json:"granularity,omitempty" jsonschema:"optional time bucket granularity; only 'hour' is supported, and omitting it means hour"`
 }
 
 // getThroughputReport is the tool handler: it validates the required window,

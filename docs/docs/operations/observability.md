@@ -66,6 +66,14 @@ Trace context crosses Kafka in the message headers
 captured when the row is **encoded inside the request's transaction**, so a
 consumer's `kafka.consume` span continues the HTTP request (or consumer)
 span that produced the event; the relay's later send adds no span of its own.
+The headers live in `outbox_events.headers` (JSONB, `[{"key","value"}]`)
+until the relay copies them onto the Kafka message. Two integration tests pin
+this against real Postgres and Kafka (fleet gap fix D27):
+`TestOutboxTrace_TraceparentCrossesTheOutboxToKafka` (the request span's
+`traceparent` is stored on the row, arrives on the Kafka message, and a
+consumer extracting it parents on that span) and
+`TestOutboxTrace_RowWithoutTraceHeadersRelaysUnchanged` (a row stored without
+trace headers relays with none).
 
 The process-path catalogue consumer (`kafkacatalog`) creates no spans.
 
@@ -100,6 +108,8 @@ Messages worth alerting or searching on:
 | `skipping invalid CloudEvent on product-master topic` / `... on analytics topic` / `... on process-path catalogue topic` | WARN | poison message skipped |
 | `analytics message handling failed` | ERROR | the projector failed to apply an already-committed event (it is not retried) |
 | `outbox relay pass failed` | ERROR | relay could not claim or send; rows stay unpublished |
+| `outbox relay: row reached the attempt cap and is no longer claimed` | ERROR | one row failed `OUTBOX_MAX_ATTEMPTS` sends and is excluded from claims (ADR-0039); fields `outbox_id`, `topic`, `event_type`, `key`, `attempts`, `max_attempts`, `error`. Alert on it: an event was not delivered |
+| `outbox relay configured` | INFO | boot: the relay's `outbox_max_attempts` |
 | `housekeeping sweep failed` / `housekeeping sweep removed rows` | ERROR / INFO | retention sweeper outcome |
 | `retrying` / `succeeded after retry` | WARN / INFO | boot-time dial retry (`op` = `run migrations`, `ping postgres`, `connect to the process-path catalogue topic`, ...) |
 | `kafka consumer did not stop before the shutdown deadline` (and the same for `outbox relay`, `product classification consumer`) | WARN | drain exceeded the 5 s shutdown budget |
@@ -133,6 +143,7 @@ provisioned in this repository.
 | Alert | Condition (PromQL-style) | Why |
 |---|---|---|
 | Outbox stuck | `wes_outbox_lag_seconds > 60` for 5 m | relay down, Kafka unreachable, or one row failing repeatedly (check `outbox_events.last_error`) |
+| Outbox row dead | any log line `outbox relay: row reached the attempt cap and is no longer claimed` | an event was excluded after `OUTBOX_MAX_ATTEMPTS` failed sends and will not be delivered until re-armed ([Runbook](./runbook.md#re-arm-an-outbox-row-that-hit-the-attempt-cap)) |
 | Facility-layout breaker open | `circuit_breaker_state{dependency="facility-layout"} == 2` for 5 m | travel-distance hints are being skipped (fail-open) |
 | REST 5xx ratio | 5xx share of `http_server_request_duration_seconds_count` for `service_name="wes-work-planning"` > 1 % for 10 m | Postgres/pool problems surface as `internal-error` |
 | Release stalled | `rate(wes_work_units_released_total[15m]) == 0` while backlog exists (`GET /paths/{pathId}/telemetry` `backlogDepth > 0`) | WIP limit reached, pool wedged, or no release caller |

@@ -300,7 +300,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 // newLogger builds the process-wide structured logger: JSON to stdout, at the
-// level LOG_LEVEL names (debug|info|warn|error, case-insensitive, default
+// level LOG_LEVEL names (debug|info|warn|warning|error, case-insensitive, default
 // info). Records are routed through telemetry.NewTraceHandler so any log
 // emitted inside a span carries that span's trace_id and span_id.
 func newLogger(level string) *slog.Logger {
@@ -308,7 +308,7 @@ func newLogger(level string) *slog.Logger {
 	switch strings.ToLower(level) {
 	case "debug":
 		lvl = slog.LevelDebug
-	case "warn":
+	case "warn", "warning":
 		lvl = slog.LevelWarn
 	case "error":
 		lvl = slog.LevelError

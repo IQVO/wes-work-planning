@@ -69,10 +69,9 @@ func TestRateDeviationDetectedStaysReserved(t *testing.T) {
 		}
 		fset, f := parseFile(t, p)
 		for _, pos := range reservedEventConstructions(fset, f) {
-			t.Errorf("%s", archViolation("contents", "RateDeviationDetected stays reserved",
-				pos+": RateDeviationDetected is raised, but no ADR defines when (D26). FIX: write the ADR for the rate rule, "+
-					"then drop the \"Reserved\" markers in apis/asyncapi.yaml, docs/docs/analytics/release-throughput-report.md, "+
-					"docs/docs/ddd/domain-events.md and docs/docs/api/events.md, and remove this sensor"))
+			t.Errorf("%s: RateDeviationDetected is raised, but no ADR defines when (D26). FIX: write the ADR for the rate rule, "+
+				"then drop the \"Reserved\" markers in apis/asyncapi.yaml, docs/docs/analytics/release-throughput-report.md, "+
+				"docs/docs/ddd/domain-events.md and docs/docs/api/events.md, and remove this sensor", pos)
 		}
 	}
 }

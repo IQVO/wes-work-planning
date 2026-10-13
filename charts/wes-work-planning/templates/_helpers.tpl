@@ -113,3 +113,20 @@ select it.
 {{- define "wes-work-planning.frontendFullname" -}}
 {{- include "wes-work-planning.fullname" . }}-frontend
 {{- end }}
+
+
+{{/*
+Comma-joined names of this chart's enabled KongPlugins, for the
+konghq.com/plugins annotation on every HTTPRoute this chart renders.
+Empty string (annotation omitted) when none are enabled — standalone
+installs without Kong are unaffected.
+*/}}
+{{- define "wes-work-planning.kongPluginNames" -}}
+{{- $names := list -}}
+{{- range $name, $cfg := .Values.kongPlugins -}}
+{{- if $cfg.enabled -}}
+{{- $names = append $names (printf "%s-%s" (include "wes-work-planning.fullname" $) $name) -}}
+{{- end -}}
+{{- end -}}
+{{- join "," $names -}}
+{{- end -}}

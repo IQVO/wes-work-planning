@@ -152,6 +152,7 @@ const sidebars: SidebarsConfig = {
         'adr/0035-product-classification-local-copy',
         'adr/0036-work-unit-line-no-on-work-released',
         'adr/0037-mcp-annotations-for-event-raising-tools',
+        'adr/0039-outbox-relay-attempt-cap',
       ],
     },
   ],

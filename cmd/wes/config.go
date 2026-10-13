@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -155,4 +156,27 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// OUTBOX_MAX_ATTEMPTS caps how many failed sends an outbox row may
+// accumulate before the relay stops claiming it (ADR-0039). 0 = unlimited.
+const (
+	outboxMaxAttemptsEnv     = "OUTBOX_MAX_ATTEMPTS"
+	defaultOutboxMaxAttempts = 20
+)
+
+// nonNegativeIntEnv reads a non-negative integer from key, falling back to
+// fallback for an unset, unparseable or negative value (same never-fail-the-
+// boot rule as durationEnv). 0 is a valid value: OUTBOX_MAX_ATTEMPTS uses it
+// for "unlimited".
+func nonNegativeIntEnv(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return fallback
+	}
+	return n
 }

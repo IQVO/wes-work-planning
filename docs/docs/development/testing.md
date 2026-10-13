@@ -177,6 +177,7 @@ measurements in that file: `./internal/domain/release` 36/36 killed,
 | `TestKafkaIntegrationTestsUseTestcontainers` / `TestPostgresIntegrationTestsUseTestcontainers` (+ `TestPostgresIntegrationSensorFailsOnBadFixtures`) | integration tests start their own containers; no env-gated skips, no hard-coded `localhost:9092` |
 | `TestCloudEventsOnly` | CloudEvents is the only envelope; no envelope-mode toggle ([ADR-0027](../adr/0027-cloudevents-mandatory-event-envelope.md)) |
 | `TestReplayConsumersSetCommitInterval` | a process-unique replay consumer must set `CommitInterval` |
+| `TestKafkaWritersSetRequiredAcks`, `TestKafkaWriterAcksSensorBites` | every kafka-go `Writer{...}` literal in a non-test file under `internal/` or `cmd/` sets `RequiredAcks` (kafka-go defaults to `RequireNone`, acks=0, which silently drops messages on a broker blip); the sensor is proven to fail |
 | `TestEventCatalogueMatchesContract` (+ `TestEventCatalogueDetector`) | every own CloudEvents type in `apis/asyncapi.yaml` appears in a CloudEvents ADR |
 
 `violation_test.go` holds the fixtures that prove the detectors can fail.

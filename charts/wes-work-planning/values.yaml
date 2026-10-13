@@ -176,6 +176,11 @@ autoscaling:
 # when database.url / kafka.enabled are left empty, exactly like running the
 # binary locally with no env vars set. Set database.url (or database.existingSecret)
 # for a durable deployment.
+#
+# Every key below except logLevel is rendered into templates/configmap.yaml
+# and reaches cmd/wes through the api Deployment's `envFrom: configMapRef`
+# (gap fix D14); explicit env/extraEnv entries win for the same key. Only the
+# api Deployment mounts it (its HTTP_ADDR is the API's listen address).
 config:
   httpAddr: ":8080"
   eventPublisher: "log"   # "log" or "kafka"

@@ -148,6 +148,15 @@ read-only (see [Release throughput report](../analytics/release-throughput-repor
 `charts/wes-work-planning` renders only part of this list natively; the rest
 reaches a container through `extraEnv` (api) or `mcp.extraEnv` (MCP).
 
+The chart's env ConfigMap (`templates/configmap.yaml`: `HTTP_ADDR`,
+`EVENT_PUBLISHER`, `OUTBOX_MAX_ATTEMPTS`, and `KAFKA_BROKERS` when
+`kafka.enabled`) is mounted into the **api** Deployment with
+`envFrom: configMapRef` (gap fix D14; explicit `env` entries win for the same
+key). The MCP, projector and reports Deployments do not mount it: they set
+their own env explicitly, and the ConfigMap's `HTTP_ADDR` is the api's listen
+address. `charts/wes-work-planning/tests/render_test.sh` (CI job
+`chart-tests`, `make chart-test`) asserts both.
+
 | Chart value | Env var(s) | Container |
 |---|---|---|
 | `config.httpAddr`, `config.eventPublisher`, `config.logLevel` | `HTTP_ADDR`, `EVENT_PUBLISHER`, `LOG_LEVEL` | api (`EVENT_PUBLISHER`/`LOG_LEVEL` also MCP) |

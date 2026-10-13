@@ -23,7 +23,7 @@ MUTATION_ALL_PKG := ./internal/domain
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build vet fmt fmt-check lint test coverage integration bdd contract arch-test mutation mutation-all vuln check check-all
+.PHONY: help build vet fmt fmt-check lint test coverage integration bdd contract arch-test chart-test mutation mutation-all vuln check check-all
 
 help: ## Print the available targets
 	@echo "wes-work-planning — make targets:"
@@ -41,6 +41,7 @@ help: ## Print the available targets
 	@echo "               (boots the service in-memory; needs st: pip install"
 	@echo "                'schemathesis==4.28.0')"
 	@echo "  arch-test    go test ./internal/architecture/... -v (hexagonal fitness tests)"
+	@echo "  chart-test   Helm chart render + Service selector tests (helm + PyYAML)"
 	@echo "  mutation     gremlins on $(MUTATION_PKG) — the fast blocking subset CI runs"
 	@echo "  mutation-all gremlins on $(MUTATION_ALL_PKG) — the exhaustive scheduled run (slow)"
 	@echo "  vuln         govulncheck ./... (supply-chain / CVE sensor)"
@@ -101,6 +102,12 @@ contract: ## Schemathesis contract tests (boots the service in-memory)
 
 arch-test: ## Architecture fitness tests
 	go test ./internal/architecture/... -v
+
+# Helm chart render and Service selector tests — mirrors the `chart-tests` CI
+# job. Needs helm and Python 3 with PyYAML on PATH.
+chart-test: ## Helm chart render + selector tests
+	bash charts/wes-work-planning/tests/render_test.sh
+	python3 charts/wes-work-planning/tests/test_service_selectors.py
 
 mutation: ## Fast blocking mutation subset (same as the CI mutation-fast job)
 	@if ! command -v gremlins >/dev/null 2>&1; then \

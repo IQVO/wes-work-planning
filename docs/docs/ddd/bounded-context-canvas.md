@@ -15,6 +15,104 @@ A [ddd-crew Bounded Context Canvas](https://github.com/ddd-crew/bounded-context-
 in `internal/adapters/kafka/cloudevents/cloudevents.go` and
 `internal/adapters/outbound/kafka/publisher.go`.
 
+## Canvas at a glance
+
+One picture of the sections below, laid out like the ddd-crew canvas:
+inbound collaborators on the left, this context in the middle (purpose,
+domain roles and the business decisions it enforces), outbound
+collaborators on the right. Arrows follow the message type: **solid blue**
+commands (`cmd`), **dotted green** queries (`qry`), **thick orange** events
+(`evt`); each arrow names its channel and the messages it carries. Box shapes
+mark the collaborator kind: rounded = people, UI or any client; blue =
+sibling bounded context; double border = external system or platform;
+grey = this context's own projector, reports or dead-letter path; dashed =
+published today with no consumer. Channel names on the arrows are
+abbreviated (REST, MCP, Kafka, HTTP, port); the Inbound and Outbound
+Communication tables carry the exact route, tool, topic and CloudEvents
+type for every message.
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 18, "rankSpacing": 36, "padding": 8}}}%%
+flowchart LR
+    classDef bc fill:#fff3bf,stroke:#e67700,stroke-width:1.5px,color:#000
+    classDef card fill:#fff9db,stroke:#f08c00,color:#000,text-align:left
+    classDef ctx fill:#e7f5ff,stroke:#1c7ed6,color:#000
+    classDef actor fill:#fff4e6,stroke:#e8590c,color:#000
+    classDef ext fill:#ffe3e3,stroke:#c92a2a,color:#000
+    classDef self fill:#f1f3f5,stroke:#868e96,color:#000
+    classDef none fill:#f8f9fa,stroke:#adb5bd,stroke-dasharray:5 5,color:#495057
+    subgraph IN["Inbound - who commands, queries or feeds it"]
+        direction TB
+        in0(["Planner, supervisor, operator, station, UI (warehouse-console MFE or any client)"]):::actor
+        in1(["Supervisor / any MCP agent host"]):::actor
+        in2["warehouse-ops-agent"]:::ctx
+        in3["workforce-management"]:::ctx
+        in4["inventory-storage"]:::ctx
+        in5["fulfillment-execution"]:::ctx
+        in6["order-management"]:::ctx
+        in7["process-path-management (opt-in)"]:::ctx
+        in8["product-master (opt-in)"]:::ctx
+        in9["network-inventory-planning"]:::ctx
+    end
+    subgraph BC["wes-work-planning - Core subdomain - WES tier"]
+        direction TB
+        purpose["<b>Purpose</b><br/>Turn plans and stock reality into<br/>continuously released,<br/>priority-ordered work on each<br/>process path and keep every buffer<br/>healthy: plan, release (earliest CPT<br/>first, WIP-limited), observe,<br/>correct. It does not pick, own<br/>stock, staff people or own the path<br/>catalogue."]:::card
+        roles["<b>Domain roles</b><br/>- Execution (admits work one unit at a time)<br/>- Enforcer (WIP limit, plannedHeads ceiling)<br/>- Analysis (backlog telemetry, rebalance, capacity and drift signals)"]:::card
+        rules["<b>Business decisions it enforces</b><br/>- Earliest CPT first is the entire<br/>priority function<br/>- The WIP limit is enforced only on<br/>release-fed pools; flow-fed pools<br/>only alarm<br/>- A flow-fed path reports remaining<br/>capacity as Known=false<br/>- Plan-vs-labor drift is reported,<br/>never auto-corrected<br/>- Workforce ShiftPlanCommitted is a<br/>read model, never fed into the<br/>ShiftPlan aggregate<br/>- Every pathId is validated against<br/>the process-path catalogue"]:::card
+        purpose ~~~ roles ~~~ rules
+    end
+    subgraph OUT["Outbound - whom it calls or notifies"]
+        direction TB
+        out0["fulfillment-execution"]:::ctx
+        out1["order-management, network-fulfillment"]:::ctx
+        out2["facility-layout"]:::ctx
+        out3["no consumer today"]:::none
+        out4["own cmd/wes-projector"]:::self
+    end
+    in0 -->|"cmd - REST<br/>ReceiveChargeForecast,<br/>CommitShiftPlan,<br/>EnqueueWorkUnit,<br/>ReleaseNextWork, ConfigurePool,<br/>RecordCompletion"| BC
+    in0 -.->|"qry - REST<br/>SampleBacklog,<br/>RebalanceDecision,<br/>GetWorkUnitsByReference,<br/>GetWorkUnit, LaborPlanView,<br/>InventoryView"| BC
+    in1 -->|"cmd - MCP<br/>release_next_work"| BC
+    in2 -.->|"qry - MCP<br/>get_backlog_telemetry,<br/>get_rebalance_recommendation,<br/>get_release_throughput_report"| BC
+    in2 -.->|"qry - REST<br/>work units by reference,<br/>throughput report, freshness"| BC
+    in3 ==>|"evt - Kafka<br/>warehouse.workforce.events<br/>ShiftPlanCommitted"| BC
+    in4 ==>|"evt - Kafka<br/>warehouse.inventory.events<br/>StockReserved,<br/>ReservationRevoked"| BC
+    in5 ==>|"evt - Kafka<br/>warehouse.fulfillment.events<br/>TaskCompleted"| BC
+    in6 ==>|"evt - Kafka<br/>warehouse.order-management.events<br/>OrderAllocated,<br/>OrderPartiallyAllocated"| BC
+    in7 ==>|"evt - Kafka<br/>warehouse.process-path-management.events<br/>ProcessPathCreated,<br/>ProcessPathUpdated,<br/>ProcessPathDeactivated"| BC
+    in8 ==>|"evt - Kafka<br/>warehouse.product-master.events<br/>ProductClassified into a local<br/>copy"| BC
+    in9 -->|"cmd - Kafka<br/>warehouse.network-inventory-planning.events<br/>WorkDemandReleased (one transfer<br/>leg)"| BC
+    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>WorkReleased"| out0
+    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>PathCapacityChanged"| out1
+    BC -.->|"qry - REST<br/>travel distance, once per<br/>CommitShiftPlan"| out2
+    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>ChargeForecastReceived,<br/>ShiftPlanCommitted,<br/>WorkUnitCreated,<br/>WorkUnitCompleted,<br/>BacklogThresholdBreached,<br/>PathThrottled,<br/>LaborReassignmentFlagged,<br/>PathPlanDriftDetected"| out3
+    BC ==>|"evt - Kafka<br/>warehouse.wes.analytics<br/>all 11 domain events"| out4
+    linkStyle 0 stroke:#1971c2,stroke-width:1.5px
+    linkStyle 1 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 2 stroke:#1971c2,stroke-width:1.5px
+    linkStyle 3 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 4 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 5 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 6 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 7 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 8 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 9 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 10 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 11 stroke:#1971c2,stroke-width:1.5px
+    linkStyle 12 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 13 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 14 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 15 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 16 stroke:#e8590c,stroke-width:2.5px
+    class BC bc
+```
+
+Source: the Inbound Communication and Outbound Communication tables of this
+page, which map to `internal/adapters/inbound/{http,kafka,mcp}` and `internal/adapters/outbound/`. The diagram omits assumptions, verification metrics, open
+questions and the ubiquitous language (sections below), the relationship
+pattern per message (OHS, ACL, Conformist, Customer/Supplier - see the
+tables) and anything the tables mark as deprecated or platform-only
+(health probes).
+
 ## Name
 
 **Work Planning & Release** — repository `wes-work-planning`, Go module
@@ -71,6 +169,7 @@ process-path catalogue (process-path-management).
 | order-management | `OrderAllocated`, `OrderPartiallyAllocated` | Event | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` / `...OrderPartiallyAllocated` | Customer/Supplier, ACL ([ADR-0031](../adr/0031-order-allocated-choreography.md)) |
 | process-path-management | `ProcessPathCreated`, `ProcessPathUpdated`, `ProcessPathDeactivated` | Event | Kafka `warehouse.process-path-management.events`, `com.warehouse.wes.process-path-management.processpath.*` (only with `PATH_CATALOGUE_SOURCE=kafka`) | Conformist ([ADR-0030](../adr/0030-kafka-sourced-path-catalogue.md)) |
 | product-master | `ProductClassified` | Event | Kafka `warehouse.product-master.events`, `com.warehouse.wms.product-master.product.ProductClassified` (only with `PRODUCT_CLASSIFICATION_MODE=kafka`; own group `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`) | Published Language into a local, version-guarded copy read at release ([ADR-0035](../adr/0035-product-classification-local-copy.md)) |
+| network-inventory-planning | `WorkDemandReleased` (one transfer leg: pick, then dispatch) | Command | Kafka `warehouse.network-inventory-planning.events`, `com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased` → `ApplyWorkDemandReleased` enqueues one transfer-referenced work unit ([ADR-0033](../adr/0033-transfer-work-demand-choreography.md)) | Conformist to NIP's Published Language, ACL |
 
 ## Outbound Communication
 

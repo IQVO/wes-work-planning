@@ -17,10 +17,10 @@ in `internal/adapters/kafka/cloudevents/cloudevents.go` and
 
 ## Canvas at a glance
 
-One picture of the sections below, laid out like the ddd-crew canvas:
-inbound collaborators on the left, this context in the middle (purpose,
-domain roles and the business decisions it enforces), outbound
-collaborators on the right. Arrows follow the message type: **solid blue**
+Two pictures of the sections below, laid out like the ddd-crew canvas:
+first the inbound collaborators feeding this context (purpose, domain roles
+and the business decisions it enforces), then the outbound collaborators it
+calls or notifies. Arrows follow the message type: **solid blue**
 commands (`cmd`), **dotted green** queries (`qry`), **thick orange** events
 (`evt`); each arrow names its channel and the messages it carries. Box shapes
 mark the collaborator kind: rounded = people, UI or any client; blue =
@@ -31,8 +31,10 @@ abbreviated (REST, MCP, Kafka, HTTP, port); the Inbound and Outbound
 Communication tables carry the exact route, tool, topic and CloudEvents
 type for every message.
 
+### Inbound
+
 ```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 18, "rankSpacing": 36, "padding": 8}}}%%
+%%{init: {"flowchart": {"nodeSpacing": 14, "rankSpacing": 40, "padding": 6}}}%%
 flowchart LR
     classDef bc fill:#fff3bf,stroke:#e67700,stroke-width:1.5px,color:#000
     classDef card fill:#fff9db,stroke:#f08c00,color:#000,text-align:left
@@ -43,33 +45,25 @@ flowchart LR
     classDef none fill:#f8f9fa,stroke:#adb5bd,stroke-dasharray:5 5,color:#495057
     subgraph IN["Inbound - who commands, queries or feeds it"]
         direction TB
-        in0(["Planner, supervisor, operator, station, UI (warehouse-console MFE or any client)"]):::actor
-        in1(["Supervisor / any MCP agent host"]):::actor
+        in0(["Planner, supervisor,<br/>operator, station, UI<br/>(warehouse-console MFE or<br/>any client)"]):::actor
+        in1(["Supervisor / any MCP agent<br/>host"]):::actor
         in2["warehouse-ops-agent"]:::ctx
         in3["workforce-management"]:::ctx
         in4["inventory-storage"]:::ctx
         in5["fulfillment-execution"]:::ctx
         in6["order-management"]:::ctx
-        in7["process-path-management (opt-in)"]:::ctx
+        in7["process-path-management<br/>(opt-in)"]:::ctx
         in8["product-master (opt-in)"]:::ctx
         in9["network-inventory-planning"]:::ctx
     end
     subgraph BC["wes-work-planning - Core subdomain - WES tier"]
         direction TB
-        purpose["<b>Purpose</b><br/>Turn plans and stock reality into<br/>continuously released,<br/>priority-ordered work on each<br/>process path and keep every buffer<br/>healthy: plan, release (earliest CPT<br/>first, WIP-limited), observe,<br/>correct. It does not pick, own<br/>stock, staff people or own the path<br/>catalogue."]:::card
-        roles["<b>Domain roles</b><br/>- Execution (admits work one unit at a time)<br/>- Enforcer (WIP limit, plannedHeads ceiling)<br/>- Analysis (backlog telemetry, rebalance, capacity and drift signals)"]:::card
-        rules["<b>Business decisions it enforces</b><br/>- Earliest CPT first is the entire<br/>priority function<br/>- The WIP limit is enforced only on<br/>release-fed pools; flow-fed pools<br/>only alarm<br/>- A flow-fed path reports remaining<br/>capacity as Known=false<br/>- Plan-vs-labor drift is reported,<br/>never auto-corrected<br/>- Workforce ShiftPlanCommitted is a<br/>read model, never fed into the<br/>ShiftPlan aggregate<br/>- Every pathId is validated against<br/>the process-path catalogue"]:::card
+        purpose["<b>Purpose</b><br/>Turn plans and stock reality into continuously released,<br/>priority-ordered work on each process path and keep every<br/>buffer healthy: plan, release (earliest CPT first,<br/>WIP-limited), observe, correct. It does not pick, own<br/>stock, staff people or own the path catalogue."]:::card
+        roles["<b>Domain roles</b><br/>- Execution (admits work one unit at a time)<br/>- Enforcer (WIP limit, plannedHeads ceiling)<br/>- Analysis (backlog telemetry, rebalance, capacity and drift<br/>signals)"]:::card
+        rules["<b>Business decisions it enforces</b><br/>- Earliest CPT first is the entire priority function<br/>- The WIP limit is enforced only on release-fed pools;<br/>flow-fed pools only alarm<br/>- A flow-fed path reports remaining capacity as Known=false<br/>- Plan-vs-labor drift is reported, never auto-corrected<br/>- Workforce ShiftPlanCommitted is a read model, never fed<br/>into the ShiftPlan aggregate<br/>- Every pathId is validated against the process-path<br/>catalogue"]:::card
         purpose ~~~ roles ~~~ rules
     end
-    subgraph OUT["Outbound - whom it calls or notifies"]
-        direction TB
-        out0["fulfillment-execution"]:::ctx
-        out1["order-management, network-fulfillment"]:::ctx
-        out2["facility-layout"]:::ctx
-        out3["no consumer today"]:::none
-        out4["own cmd/wes-projector"]:::self
-    end
-    in0 -->|"cmd - REST<br/>ReceiveChargeForecast,<br/>CommitShiftPlan,<br/>EnqueueWorkUnit,<br/>ReleaseNextWork, ConfigurePool,<br/>RecordCompletion"| BC
+    in0 -->|"cmd - REST<br/>ReceiveChargeForecast,<br/>CommitShiftPlan,<br/>EnqueueWorkUnit,<br/>ReleaseNextWork,<br/>ConfigurePool,<br/>RecordCompletion"| BC
     in0 -.->|"qry - REST<br/>SampleBacklog,<br/>RebalanceDecision,<br/>GetWorkUnitsByReference,<br/>GetWorkUnit, LaborPlanView,<br/>InventoryView"| BC
     in1 -->|"cmd - MCP<br/>release_next_work"| BC
     in2 -.->|"qry - MCP<br/>get_backlog_telemetry,<br/>get_rebalance_recommendation,<br/>get_release_throughput_report"| BC
@@ -80,12 +74,7 @@ flowchart LR
     in6 ==>|"evt - Kafka<br/>warehouse.order-management.events<br/>OrderAllocated,<br/>OrderPartiallyAllocated"| BC
     in7 ==>|"evt - Kafka<br/>warehouse.process-path-management.events<br/>ProcessPathCreated,<br/>ProcessPathUpdated,<br/>ProcessPathDeactivated"| BC
     in8 ==>|"evt - Kafka<br/>warehouse.product-master.events<br/>ProductClassified into a local<br/>copy"| BC
-    in9 -->|"cmd - Kafka<br/>warehouse.network-inventory-planning.events<br/>WorkDemandReleased (one transfer<br/>leg)"| BC
-    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>WorkReleased"| out0
-    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>PathCapacityChanged"| out1
-    BC -.->|"qry - REST<br/>travel distance, once per<br/>CommitShiftPlan"| out2
-    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>ChargeForecastReceived,<br/>ShiftPlanCommitted,<br/>WorkUnitCreated,<br/>WorkUnitCompleted,<br/>BacklogThresholdBreached,<br/>PathThrottled,<br/>LaborReassignmentFlagged,<br/>PathPlanDriftDetected"| out3
-    BC ==>|"evt - Kafka<br/>warehouse.wes.analytics<br/>all 11 domain events"| out4
+    in9 -->|"cmd - Kafka<br/>warehouse.network-inventory-planning.events<br/>WorkDemandReleased (one<br/>transfer leg)"| BC
     linkStyle 0 stroke:#1971c2,stroke-width:1.5px
     linkStyle 1 stroke:#2f9e44,stroke-width:1.5px
     linkStyle 2 stroke:#1971c2,stroke-width:1.5px
@@ -98,12 +87,40 @@ flowchart LR
     linkStyle 9 stroke:#e8590c,stroke-width:2.5px
     linkStyle 10 stroke:#e8590c,stroke-width:2.5px
     linkStyle 11 stroke:#1971c2,stroke-width:1.5px
-    linkStyle 12 stroke:#e8590c,stroke-width:2.5px
-    linkStyle 13 stroke:#e8590c,stroke-width:2.5px
-    linkStyle 14 stroke:#2f9e44,stroke-width:1.5px
-    linkStyle 15 stroke:#e8590c,stroke-width:2.5px
-    linkStyle 16 stroke:#e8590c,stroke-width:2.5px
     class BC bc
+```
+
+### Outbound
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 14, "rankSpacing": 40, "padding": 6}}}%%
+flowchart LR
+    classDef bc fill:#fff3bf,stroke:#e67700,stroke-width:1.5px,color:#000
+    classDef card fill:#fff9db,stroke:#f08c00,color:#000,text-align:left
+    classDef ctx fill:#e7f5ff,stroke:#1c7ed6,color:#000
+    classDef actor fill:#fff4e6,stroke:#e8590c,color:#000
+    classDef ext fill:#ffe3e3,stroke:#c92a2a,color:#000
+    classDef self fill:#f1f3f5,stroke:#868e96,color:#000
+    classDef none fill:#f8f9fa,stroke:#adb5bd,stroke-dasharray:5 5,color:#495057
+    BC["<b>wes-work-planning - Core subdomain - WES tier</b>"]:::bc
+    subgraph OUT["Outbound - whom it calls or notifies"]
+        direction TB
+        out0["fulfillment-execution"]:::ctx
+        out1["order-management,<br/>network-fulfillment"]:::ctx
+        out2["facility-layout"]:::ctx
+        out3["no consumer today"]:::none
+        out4["own cmd/wes-projector"]:::self
+    end
+    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>WorkReleased"| out0
+    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>PathCapacityChanged"| out1
+    BC -.->|"qry - REST<br/>travel distance, once per<br/>CommitShiftPlan"| out2
+    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>ChargeForecastReceived,<br/>ShiftPlanCommitted,<br/>WorkUnitCreated,<br/>WorkUnitCompleted,<br/>BacklogThresholdBreached,<br/>PathThrottled,<br/>LaborReassignmentFlagged,<br/>PathPlanDriftDetected"| out3
+    BC ==>|"evt - Kafka<br/>warehouse.wes.analytics<br/>all 11 domain events"| out4
+    linkStyle 0 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 1 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 2 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 3 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 4 stroke:#e8590c,stroke-width:2.5px
 ```
 
 Source: the Inbound Communication and Outbound Communication tables of this

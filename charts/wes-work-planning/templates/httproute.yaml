@@ -5,6 +5,10 @@ metadata:
   name: {{ include "wes-work-planning.fullname" . }}
   labels:
     {{- include "wes-work-planning.labels" . | nindent 4 }}
+  {{- with include "wes-work-planning.kongPluginNames" . }}
+  annotations:
+    konghq.com/plugins: {{ . | quote }}
+  {{- end }}
 spec:
   parentRefs:
     {{- range .Values.gatewayApi.parentRefs }}

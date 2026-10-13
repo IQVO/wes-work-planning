@@ -66,6 +66,14 @@ Trace context crosses Kafka in the message headers
 captured when the row is **encoded inside the request's transaction**, so a
 consumer's `kafka.consume` span continues the HTTP request (or consumer)
 span that produced the event; the relay's later send adds no span of its own.
+The headers live in `outbox_events.headers` (JSONB, `[{"key","value"}]`)
+until the relay copies them onto the Kafka message. Two integration tests pin
+this against real Postgres and Kafka (fleet gap fix D27):
+`TestOutboxTrace_TraceparentCrossesTheOutboxToKafka` (the request span's
+`traceparent` is stored on the row, arrives on the Kafka message, and a
+consumer extracting it parents on that span) and
+`TestOutboxTrace_RowWithoutTraceHeadersRelaysUnchanged` (a row stored without
+trace headers relays with none).
 
 The process-path catalogue consumer (`kafkacatalog`) creates no spans.
 

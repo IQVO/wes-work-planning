@@ -254,6 +254,12 @@ func (c *Consumer) consumeLoop(ctx context.Context, reader *kafkago.Reader, hand
 		}
 
 		if err := c.handleMessage(ctx, reader, msg, handle); err != nil {
+			if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+				// Shutdown landed mid-handle: the offset was not committed,
+				// so the message is redelivered on the next start and the
+				// use case's processed-events claim absorbs the replay.
+				return nil
+			}
 			return err
 		}
 	}
@@ -300,8 +306,9 @@ func (c *Consumer) handleMessage(ctx context.Context, reader *kafkago.Reader, ms
 // dead-letter a non-CloudEvent immediately or run handle with bounded
 // retry and dead-letter it once every attempt has failed. It returns an
 // error only when the DLQ publish itself fails (the message must then NOT
-// be committed); a handled, skipped, or dead-lettered message returns nil
-// and the caller commits it.
+// be committed) or when ctx was cancelled mid-handle (ctx.Err(): a message
+// only cancellation interrupted is never dead-lettered); a handled,
+// skipped, or dead-lettered message returns nil and the caller commits it.
 func (c *Consumer) dispatch(ctx, msgCtx context.Context, span trace.Span, topic string, msg kafkago.Message, handle func(context.Context, ce.Event) error) error {
 	env, err := cloudevents.Decode(msg.Value)
 	if err != nil {
@@ -322,6 +329,9 @@ func (c *Consumer) dispatch(ctx, msgCtx context.Context, span trace.Span, topic 
 	)
 
 	if err := c.handleWithRetry(msgCtx, handle, env); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err() // shutting down: never dead-letter a message only cancellation interrupted
+		}
 		recordSpanError(span, err)
 		c.logError(msgCtx, "exhausted retries, sending to dead-letter topic",
 			"topic", topic, "dlq_topic", topic+dlqTopicSuffix,

@@ -10,7 +10,7 @@ description: "Expose this bounded context to the AI ecosystem via an MCP server 
 
 ## Status
 
-**Accepted — auth section superseded by [ADR-0016](./0016-remove-rest-mcp-static-bearer-auth.md)**
+**Accepted — auth section superseded by [ADR-0016](./0016-remove-rest-mcp-static-bearer-auth.md); the "(read)" classification of `get_backlog_telemetry` and `get_rebalance_recommendation` amended by [ADR-0037](./0037-mcp-annotations-for-event-raising-tools.md)**
 (the static-bearer layer was removed; MCP, like REST, is unauthenticated by
 decision). The reference implementation is
 [`fulfillment-execution`](https://github.com/claudioed/fulfillment-execution);

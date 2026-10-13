@@ -151,6 +151,7 @@ const sidebars: SidebarsConfig = {
         'adr/0034-configure-pool-command',
         'adr/0035-product-classification-local-copy',
         'adr/0036-work-unit-line-no-on-work-released',
+        'adr/0037-mcp-annotations-for-event-raising-tools',
       ],
     },
   ],

@@ -42,7 +42,7 @@ no scheduler).
 | [0005](./0005-rfc-7807-problem-details.md) | RFC 7807 `application/problem+json` for every error response | Accepted |
 | [0006](./0006-labor-plan-view-not-shift-plan.md) | Project Workforce's `ShiftPlanCommitted` into a separate read model, not our `ShiftPlan` aggregate | Accepted |
 | [0007](./0007-arch-go-fitness-tests.md) | Executable architecture fitness tests with arch-go | Accepted |
-| [0008](./0008-mcp-inbound-adapter.md) | Model Context Protocol as an inbound adapter, not a new service | Accepted — auth section superseded by 0016 |
+| [0008](./0008-mcp-inbound-adapter.md) | Model Context Protocol as an inbound adapter, not a new service | Accepted — auth section superseded by 0016; telemetry tools' annotations amended by 0037 |
 | [0009](./0009-product-classification-propagation-to-work-released.md) | Propagate inventory-storage's `ProductClassification` onto `WorkReleased` via a synchronous read at release time | Accepted — live lookup superseded by 0035 |
 | [0010](./0010-gift-wrap-as-a-work-released-characteristic.md) | Gift wrap as a caller-stated `WorkReleased` characteristic, not a product attribute | Accepted |
 | [0011](./0011-analytical-data-product.md) | Per-service analytical data product (report) via a separate analytics topic | Accepted |
@@ -71,6 +71,7 @@ no scheduler).
 | [0034](./0034-configure-pool-command.md) | `ConfigurePool` command (`PUT /paths/{pathId}/pool`) sets a pool's mode and WIP limit; lowering below WIP never evicts | Accepted |
 | [0035](./0035-product-classification-local-copy.md) | Product classification from a local copy of product-master's `ProductClassified` events; `PRODUCT_CLASSIFICATION_MODE=kafka\|permissive`, `http` rejected at boot | Accepted |
 | [0036](./0036-work-unit-line-no-on-work-released.md) | `WorkUnit` stores an optional `line_no` (nullable column, optional `lineNo` on the REST enqueue); `WorkReleased` v1 carries it on both topics (per-line confirm-pick, fleet decision 18) | Accepted |
+| [0037](./0037-mcp-annotations-for-event-raising-tools.md) | MCP tools that publish events (`get_backlog_telemetry`, `get_rebalance_recommendation`) are annotated `readOnlyHint: false`, `destructiveHint: true`, and name the event in their description | Accepted |
 
 ## The template
 

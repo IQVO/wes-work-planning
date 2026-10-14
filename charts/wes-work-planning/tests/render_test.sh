@@ -37,6 +37,12 @@ grep -q 'EVENT_PUBLISHER: "kafka"' <<<"$tuned" || fail "config.eventPublisher is
 grep -q 'OUTBOX_MAX_ATTEMPTS: "20"' <<<"$configmap" || fail "OUTBOX_MAX_ATTEMPTS must default to 20 (ADR-0039)"
 grep -q 'name: OUTBOX_MAX_ATTEMPTS' <<<"$api_deployment" || fail "api Deployment must set OUTBOX_MAX_ATTEMPTS explicitly too"
 
+# ADR-0040: the RELOCATE work CPT horizon (approved_at + horizon) reaches
+# cmd/wes through the same ConfigMap, defaulting to 24h.
+grep -q 'RELOCATION_CPT_HORIZON: "24h"' <<<"$configmap" || fail "RELOCATION_CPT_HORIZON must default to 24h (ADR-0040)"
+horizon="$(helm template "$release" "$chart_dir" --set config.relocationCptHorizon=6h --show-only templates/configmap.yaml)"
+grep -q 'RELOCATION_CPT_HORIZON: "6h"' <<<"$horizon" || fail "config.relocationCptHorizon is not rendered into the ConfigMap"
+
 # The other workloads read their own explicit env and must NOT inherit the
 # api's HTTP_ADDR (reports would bind :8080) or anything else from it.
 for template in reports-deployment.yaml projector-deployment.yaml mcp-deployment.yaml; do

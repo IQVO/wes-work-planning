@@ -74,6 +74,7 @@ no scheduler).
 | [0037](./0037-mcp-annotations-for-event-raising-tools.md) | MCP tools that publish events (`get_backlog_telemetry`, `get_rebalance_recommendation`) are annotated `readOnlyHint: false`, `destructiveHint: true`, and name the event in their description | Accepted |
 | [0038](./0038-reports-api-openapi-contract.md) | The `cmd/wes-reports` routes get their own OpenAPI contract, `apis/openapi-reports.yaml`: Spectral-linted, rendered into the docs, contract-tested against the real router | Accepted |
 | [0039](./0039-outbox-relay-attempt-cap.md) | Outbox relay attempt cap: a row is no longer claimed after `OUTBOX_MAX_ATTEMPTS` failed sends (default 20, `0` = unlimited), logged at ERROR and kept for re-arming; later same-key rows overtake it | Accepted |
+| [0040](./0040-slot-plan-relocation-work.md) | Consume slotting-optimization's `SlotPlanApproved` into one `RELOCATE` work unit per move: a move into a slot another move vacates waits for that move's completion, a newer plan cancels older not-yet-released units, `WorkReleased` v1 gains an optional `relocation` block | Accepted |
 
 ## The template
 

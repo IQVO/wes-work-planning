@@ -86,8 +86,10 @@ func (uc *ApplyWorkDemandReleased) Execute(ctx context.Context, req ApplyWorkDem
 }
 
 func (uc *ApplyWorkDemandReleased) enqueueRequest(req ApplyWorkDemandReleasedRequest) (EnqueueWorkUnitRequest, error) {
-	if _, err := workunit.ParseWorkKind(req.WorkKind.String()); err != nil {
-		return EnqueueWorkUnitRequest{}, err
+	// Only a transfer leg may arrive as a work demand: RELOCATE is planned
+	// from slot plans (ADR-0040), never from network-inventory-planning.
+	if kind, err := workunit.ParseWorkKind(req.WorkKind.String()); err != nil || !kind.IsTransfer() {
+		return EnqueueWorkUnitRequest{}, workunit.ErrUnknownWorkKind
 	}
 	pathId, err := shared.NewPathId(req.PathId)
 	if err != nil {

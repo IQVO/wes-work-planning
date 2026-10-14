@@ -45,6 +45,9 @@ const (
 	TopicOrderManagementEvents = "warehouse.order-management.events"
 	TopicNetworkDemandEvents   = "warehouse.network-inventory-planning.events"
 	TopicProductMasterEvents   = "warehouse.product-master.events"
+	// TopicSlottingEvents is slotting-optimization's integration topic
+	// (SlotPlanApproved, ADR-0040).
+	TopicSlottingEvents = "warehouse.slotting-optimization.events"
 )
 
 // Full CloudEvents `type` strings this service CONSUMES from other bounded
@@ -64,6 +67,10 @@ const (
 	// TypeProductClassified is product-master's classification event
 	// (warehouse.product-master.events), feeding the local copy (ADR-0035).
 	TypeProductClassified = "com.warehouse.wms.product-master.product.ProductClassified"
+	// TypeSlotPlanApproved is slotting-optimization's approved slot plan
+	// (warehouse.slotting-optimization.events), planned as RELOCATE work
+	// (ADR-0040).
+	TypeSlotPlanApproved = "com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved"
 )
 
 // ErrNotCloudEvent marks a message that is not a valid CloudEvents 1.0 event.

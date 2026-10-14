@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/telemetry"
+	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 )
 
 // appConfig is the process-level configuration read from the environment
@@ -156,6 +157,15 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// RELOCATION_CPT_HORIZON is how far after a slot plan's approval its
+// RELOCATE work units' CPT lies (ADR-0040). Unset, malformed or
+// non-positive falls back to 24h.
+const relocationCPTHorizonEnv = "RELOCATION_CPT_HORIZON"
+
+func relocationCPTHorizon() time.Duration {
+	return durationEnv(relocationCPTHorizonEnv, usecases.DefaultRelocationCPTHorizon)
 }
 
 // OUTBOX_MAX_ATTEMPTS caps how many failed sends an outbox row may

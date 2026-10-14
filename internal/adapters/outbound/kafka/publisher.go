@@ -329,6 +329,7 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 	cpt, ref, sku, giftWrap := "", "", "", false
 	transferRef, siteId, quantity, lineNo := "", "", 0, 0
 	var workKind workunit.WorkKind
+	var relocation map[string]any
 	if unit, err := p.workUnits.FindById(ctx, ev.WorkUnitId); err == nil {
 		cpt = unit.CPT().Time().Format(time.RFC3339)
 		ref = unit.Reference()
@@ -339,6 +340,7 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 		siteId = unit.SiteId()
 		quantity = unit.Quantity()
 		lineNo = unit.LineNo()
+		relocation = relocationData(unit)
 	}
 
 	requiredCapabilities, fragile := p.classificationHints(ctx, sku)
@@ -378,11 +380,11 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 	}
 	// Transfer context (ADR-0033): same strictly-additive discipline —
 	// the four OPTIONAL fields appear only on a transfer-referenced unit
-	// (work_kind is the discriminator: a non-transfer unit has none), so
-	// the payload of every order-driven unit stays byte-identical to
-	// before this feature existed. Consumers must treat absent as "not
-	// transfer work".
-	if workKind != "" {
+	// (a transfer work_kind is the discriminator: order work has none, and
+	// RELOCATE work carries its relocation object instead), so the payload
+	// of every order-driven unit stays byte-identical to before this
+	// feature existed. Consumers must treat absent as "not transfer work".
+	if workKind.IsTransfer() {
 		data["work_kind"] = workKind.String()
 		if transferRef != "" {
 			data["transfer_ref"] = transferRef
@@ -394,7 +396,37 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 			data["quantity"] = quantity
 		}
 	}
+	// Slot-plan move (ADR-0040): ONE optional nested object, present only
+	// on a RELOCATE unit — exactly what fulfillment-execution's RELOCATE
+	// task decodes (its ADR 0047).
+	if relocation != nil {
+		data["relocation"] = relocation
+	}
 	return json.Marshal(data)
+}
+
+// relocationData is WorkReleased.data.relocation for a RELOCATE unit, nil
+// for every other unit: plan_id, move_seq (always present, 0 included),
+// kind, sku, and from_bin / to_bin omitted when the move leaves that side
+// to be scanned at execution (Assign / Vacate).
+func relocationData(unit *workunit.WorkUnit) map[string]any {
+	move, ok := unit.Relocation()
+	if !ok {
+		return nil
+	}
+	out := map[string]any{
+		"plan_id":  move.PlanId,
+		"move_seq": move.MoveSeq,
+		"kind":     move.Kind.String(),
+		"sku":      unit.SKU(),
+	}
+	if move.FromSlot != "" {
+		out["from_bin"] = move.FromSlot
+	}
+	if move.ToSlot != "" {
+		out["to_bin"] = move.ToSlot
+	}
+	return out
 }
 
 // pathOnlyData is the best-effort payload for event types that carry only

@@ -51,7 +51,8 @@ func statusFor(err error) int {
 		errors.Is(err, release.ErrEmptyPool),
 		errors.Is(err, workunit.ErrAlreadyReleased),
 		errors.Is(err, workunit.ErrAlreadyCompleted),
-		errors.Is(err, workunit.ErrNotReleased):
+		errors.Is(err, workunit.ErrNotReleased),
+		errors.Is(err, workunit.ErrCancelled):
 		return http.StatusConflict
 	case errors.Is(err, shared.ErrInvalidQuantity),
 		errors.Is(err, shared.ErrInvalidRate),
@@ -109,6 +110,7 @@ var problemCatalog = []problemCategory{
 	{workunit.ErrAlreadyReleased, "work-unit-already-released", "Work unit already released"},
 	{workunit.ErrAlreadyCompleted, "work-unit-already-completed", "Work unit already completed"},
 	{workunit.ErrNotReleased, "work-unit-not-released", "Work unit not released"},
+	{workunit.ErrCancelled, "work-unit-cancelled", "Work unit cancelled"},
 	{shared.ErrInvalidQuantity, "invalid-quantity", "Invalid quantity"},
 	{shared.ErrInvalidRate, "invalid-rate", "Invalid rate"},
 	{shared.ErrInvalidStationCount, "invalid-station-count", "Invalid station count"},

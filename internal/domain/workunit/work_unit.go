@@ -13,6 +13,9 @@ const (
 	Pending State = iota
 	Released
 	Completed
+	// Cancelled is terminal: a Pending unit withdrawn before release (a
+	// superseded slot plan's move, ADR-0040). It is never released.
+	Cancelled
 )
 
 func (s State) String() string {
@@ -23,6 +26,8 @@ func (s State) String() string {
 		return "Released"
 	case Completed:
 		return "Completed"
+	case Cancelled:
+		return "Cancelled"
 	default:
 		return "Unknown"
 	}
@@ -30,7 +35,7 @@ func (s State) String() string {
 
 // ParseState validates and converts the persisted string form of a State
 // (the inverse of State.String). Anything that is not exactly Pending,
-// Released or Completed — including "" and "Unknown" — is rejected with
+// Released, Completed or Cancelled — including "" and "Unknown" — is rejected with
 // ErrUnknownState, so a corrupt stored value can never become an invalid
 // state inside an aggregate.
 func ParseState(value string) (State, error) {
@@ -41,6 +46,8 @@ func ParseState(value string) (State, error) {
 		return Released, nil
 	case Completed.String():
 		return Completed, nil
+	case Cancelled.String():
+		return Cancelled, nil
 	default:
 		return Pending, ErrUnknownState
 	}
@@ -60,9 +67,12 @@ type WorkUnit struct {
 	siteId      string
 	quantity    int
 	lineNo      int
+	relocation  *RelocationMove
+	blockedBy   string
 	state       State
 	releasedAt  *time.Time
 	completedAt *time.Time
+	cancelledAt *time.Time
 }
 
 // NewWorkUnit constructs a Pending WorkUnit for a path, carrying its CPT and
@@ -181,9 +191,59 @@ func ValidateLineNo(lineNo int) error {
 	return nil
 }
 
+// Relocation returns the slot-plan move a RELOCATE unit executes
+// (ADR-0040); ok is false for every other unit.
+func (w *WorkUnit) Relocation() (move RelocationMove, ok bool) {
+	if w.relocation == nil {
+		return RelocationMove{}, false
+	}
+	return *w.relocation, true
+}
+
+// SetRelocation records the validated slot-plan move after construction
+// (built by NewRelocationMove), mirroring the additive-setter discipline.
+func (w *WorkUnit) SetRelocation(move RelocationMove) { w.relocation = &move }
+
+// BlockedBy is the id of the work unit this unit waits on: a slot-plan move
+// into a slot another move of the same plan vacates is admitted to its pool
+// only once that move completes (ADR-0040). "" means not blocked.
+func (w *WorkUnit) BlockedBy() string { return w.blockedBy }
+
+// IsBlocked reports whether the unit still waits on another unit.
+func (w *WorkUnit) IsBlocked() bool { return w.blockedBy != "" }
+
+// SetBlockedBy records the work unit this one waits on.
+func (w *WorkUnit) SetBlockedBy(workUnitId string) { w.blockedBy = workUnitId }
+
+// Unblock clears the wait: the unit it waited on has completed.
+func (w *WorkUnit) Unblock() { w.blockedBy = "" }
+
+// Cancel withdraws a Pending unit for good (ADR-0040: a superseded slot
+// plan's not-yet-released move). Released and Completed units run to
+// completion and refuse with ErrAlreadyReleased; a second Cancel refuses
+// with ErrCancelled.
+func (w *WorkUnit) Cancel(at time.Time) error {
+	if w.state == Cancelled {
+		return ErrCancelled
+	}
+	if w.state != Pending {
+		return ErrAlreadyReleased
+	}
+	w.state = Cancelled
+	w.cancelledAt = &at
+	return nil
+}
+
+// CancelledAt is when the unit was cancelled; nil unless Cancelled.
+func (w *WorkUnit) CancelledAt() *time.Time { return w.cancelledAt }
+
 // Release admits the unit into active work. A unit may be assigned/released
-// at most once — releasing an already-released or completed unit fails.
+// at most once — releasing an already-released or completed unit fails, and
+// a cancelled unit is never released.
 func (w *WorkUnit) Release(at time.Time) error {
+	if w.state == Cancelled {
+		return ErrCancelled
+	}
 	if w.state != Pending {
 		return ErrAlreadyReleased
 	}

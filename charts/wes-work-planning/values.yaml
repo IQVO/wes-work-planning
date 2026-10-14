@@ -211,6 +211,11 @@ config:
   # runbook). Later rows, including rows with the same key, then overtake it.
   # 0 = unlimited (one poison row blocks the relay forever).
   outboxMaxAttempts: 20
+  # RELOCATE work CPT horizon (ADR-0040); RELOCATION_CPT_HORIZON. Each move
+  # of an approved slot plan is planned with CPT = approved_at + this Go
+  # duration, which orders it against other RELOCATE work in the pool.
+  # Malformed or non-positive falls back to 24h.
+  relocationCptHorizon: "24h"
 
 database:
   # Plaintext URL (fine for local/dev clusters). Prefer existingSecret for

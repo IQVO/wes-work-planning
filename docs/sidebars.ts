@@ -161,6 +161,7 @@ const sidebars: SidebarsConfig = {
         'adr/0037-mcp-annotations-for-event-raising-tools',
         'adr/0038-reports-api-openapi-contract',
         'adr/0039-outbox-relay-attempt-cap',
+        'adr/0040-slot-plan-relocation-work',
       ],
     },
   ],

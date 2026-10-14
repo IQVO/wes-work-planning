@@ -17,6 +17,16 @@ var (
 	ErrEmptyId               = errors.New("work unit id must not be empty")
 	ErrEmptyReference        = errors.New("work unit reference must not be empty")
 	ErrUnknownWorkKind       = errors.New("unknown transfer work kind")
+	// ErrUnknownRelocationKind marks a slot-plan move kind other than
+	// Relocate, Assign or Vacate (ADR-0040).
+	ErrUnknownRelocationKind = errors.New("unknown relocation kind")
+	// ErrInvalidRelocationMove marks a slot-plan move that is incomplete or
+	// inconsistent: no plan id, a negative move_seq, a slot its kind
+	// requires is missing, or both slots are the same (ADR-0040).
+	ErrInvalidRelocationMove = errors.New("invalid relocation move")
+	// ErrCancelled marks a transition attempted on a Cancelled work unit:
+	// Cancelled is terminal (ADR-0040).
+	ErrCancelled = errors.New("work unit is cancelled")
 	// ErrInvalidLineNo marks a line number outside 1..MaxLineNo
 	// (2147483647, math.MaxInt32: every line_no column is a 32-bit
 	// INTEGER). 0 is not an error: it is the "unknown" value of the

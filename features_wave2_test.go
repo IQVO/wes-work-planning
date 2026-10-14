@@ -22,6 +22,7 @@ import (
 	"github.com/cucumber/godog"
 
 	inboundhttp "github.com/claudioed/wes-work-planning/internal/adapters/inbound/http"
+	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
@@ -36,7 +37,9 @@ type inboundExtras struct {
 	taskCompleted  *usecases.ApplyTaskCompleted
 	orderAllocated *usecases.ApplyOrderAllocated
 	workDemand     *usecases.ApplyWorkDemandReleased
-	readiness      *inboundhttp.Readiness
+	// slotPlan is ADR-0040's SlotPlanApproved use case.
+	slotPlan  *usecases.ApplySlotPlanApproved
+	readiness *inboundhttp.Readiness
 }
 
 // wireInboundExtras completes the production-shaped wiring: it declares the
@@ -56,6 +59,7 @@ func wireInboundExtras(
 		{Id: "PACK", MatchPrefix: "pack"},
 		{Id: "REBIN", MatchPrefix: "rebin"},
 		{Id: "SLAM", MatchPrefix: "slam"},
+		{Id: "RELOCATE", MatchPrefix: "relocate", Intake: []string{pathcatalog.IntakeSlotRelocation}},
 	})
 	readiness := &inboundhttp.Readiness{}
 
@@ -63,11 +67,17 @@ func wireInboundExtras(
 	h.ConfigurePool = usecases.NewConfigurePool(pools)
 	h.Readiness = readiness
 
+	// ADR-0040: RELOCATE units are planned by ApplySlotPlanApproved, and a
+	// completion (REST or TaskCompleted) admits the moves waiting on it.
+	relocations := workUnits.(ports.RelocationWorkRepo)
+	h.RecordCompletion = h.RecordCompletion.WithRelocationWork(relocations)
+
 	enqueue := usecases.NewEnqueueWorkUnit(workUnits, pools, publisher, clock)
 	return &inboundExtras{
-		taskCompleted:  usecases.NewApplyTaskCompleted(usecases.NewRecordCompletion(workUnits, pools, publisher, clock), processed),
+		taskCompleted:  usecases.NewApplyTaskCompleted(usecases.NewRecordCompletion(workUnits, pools, publisher, clock).WithRelocationWork(relocations), processed),
 		orderAllocated: usecases.NewApplyOrderAllocated(enqueue, processed, catalogue),
 		workDemand:     usecases.NewApplyWorkDemandReleased(enqueue, processed, catalogue),
+		slotPlan:       usecases.NewApplySlotPlanApproved(workUnits, relocations, pools, memory.NewSlotPlanRepo(), processed, catalogue, publisher, clock),
 		readiness:      readiness,
 	}
 }

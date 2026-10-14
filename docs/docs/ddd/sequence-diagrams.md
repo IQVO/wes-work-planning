@@ -197,6 +197,57 @@ Source: `internal/adapters/inbound/kafka/consumer.go`,
 `ReleaseProcessed` path that undoes the mark on failure when there is no
 transaction.
 
+## 3a. Plan an approved slot plan as RELOCATE work (`SlotPlanApproved`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SO as slotting-optimization
+    participant KIN as Kafka consumer
+    participant ASP as ApplySlotPlanApproved
+    participant PE as ProcessedEventRepo
+    participant Plans as SlotPlanRepo
+    participant Reloc as RelocationWorkRepo
+    participant PoolRepo as WorkPoolRepo
+    participant UnitRepo as WorkUnitRepo
+    participant Outbox as outbox_events
+
+    SO->>KIN: SlotPlanApproved plan_id, site_id, approved_at, moves
+    KIN->>ASP: Execute with CloudEvents id
+    ASP->>PE: TryMarkProcessed id, inside one transaction
+    alt already processed
+        ASP-->>KIN: SlotPlanAlreadyProcessed, ack
+    else first delivery
+        ASP->>ASP: relocation.NewPlan, RELOCATE in catalogue and intake admits SLOT_RELOCATION
+        ASP->>Plans: LatestAtSite site_id
+        alt older than or equal to the site's latest plan
+            ASP->>Plans: Save receipt
+            ASP-->>KIN: SlotPlanStale or SlotPlanAlreadyApplied, nothing planned
+        else newest plan for the site
+            ASP->>Reloc: PendingRelocationsAtSite
+            ASP->>ASP: Cancel other plans' Pending units, Withdraw their pool entries
+            ASP->>ASP: Predecessors: a fill waits on the vacate of its slot
+            ASP->>PoolRepo: Save RELOCATE pool with unblocked moves enqueued
+            ASP->>UnitRepo: Save cancelled and planned units
+            ASP->>Plans: Save receipt
+            ASP->>Outbox: WorkUnitCreated per planned unit
+        end
+    end
+    Note over KIN: poison is tried 3 times, then sent to warehouse.slotting-optimization.events.dlq
+```
+
+Releasing a RELOCATE unit is diagram 2 unchanged; its `WorkReleased` carries
+the `relocation` object fulfillment-execution's RELOCATE task decodes. When
+that task's `TaskCompleted` arrives, diagram 3 runs and `RecordCompletion`
+additionally asks `RelocationWorkRepo.PendingBlockedBy` for the moves waiting
+on the completed unit, clears their `blocked_by` and enqueues them in the
+same transaction.
+
+Source: `internal/adapters/inbound/kafka/consumer.go` (`handleSlottingEvent`),
+`internal/application/usecases/apply_slot_plan_approved.go`,
+`internal/application/usecases/record_completion.go`,
+`internal/domain/relocation/plan.go` ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)).
+
 ## 4. Commit a shift plan (travel hint and drift reconciliation)
 
 ```mermaid

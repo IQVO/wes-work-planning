@@ -30,8 +30,12 @@ type repositories struct {
 	laborPlanViews ports.LaborPlanViewRepo
 	inventoryViews ports.InventoryViewRepo
 	processedEvts  ports.ProcessedEventRepo
-	pgPool         *pgxpool.Pool
-	uow            ports.UnitOfWork
+	// relocations and slotPlans back ADR-0040's slot-plan relocation work:
+	// the same work-unit adapter answers the RELOCATE finders.
+	relocations ports.RelocationWorkRepo
+	slotPlans   ports.SlotPlanRepo
+	pgPool      *pgxpool.Pool
+	uow         ports.UnitOfWork
 }
 
 // travelDistanceLookup wires the facility-layout travel-distance ACL
@@ -88,14 +92,17 @@ func wireRepositories(databaseURL, migrationsDatabaseURL, migrationsPath string,
 }
 
 func memoryRepositories() repositories {
+	workUnits := memory.NewWorkUnitRepo()
 	return repositories{
 		charges:        memory.NewChargeRepo(),
 		plans:          memory.NewPlanRepo(),
 		pools:          memory.NewWorkPoolRepo(),
-		workUnits:      memory.NewWorkUnitRepo(),
+		workUnits:      workUnits,
 		laborPlanViews: memory.NewLaborPlanViewRepo(),
 		inventoryViews: memory.NewInventoryViewRepo(),
 		processedEvts:  memory.NewProcessedEventRepo(),
+		relocations:    workUnits,
+		slotPlans:      memory.NewSlotPlanRepo(),
 	}
 }
 
@@ -128,14 +135,17 @@ func postgresRepositories(databaseURL, migrationsDatabaseURL, migrationsPath str
 		pool.Close()
 		return repositories{}, err
 	}
+	workUnits := postgres.NewWorkUnitRepo(pool)
 	return repositories{
 		charges:        postgres.NewChargeRepo(pool),
 		plans:          postgres.NewPlanRepo(pool),
 		pools:          postgres.NewWorkPoolRepo(pool),
-		workUnits:      postgres.NewWorkUnitRepo(pool),
+		workUnits:      workUnits,
 		laborPlanViews: postgres.NewLaborPlanViewRepo(pool),
 		inventoryViews: postgres.NewInventoryViewRepo(pool),
 		processedEvts:  postgres.NewProcessedEventRepo(pool),
+		relocations:    workUnits,
+		slotPlans:      postgres.NewSlotPlanRepo(pool),
 		pgPool:         pool,
 		uow:            postgres.NewUnitOfWork(pool),
 	}, nil

@@ -91,6 +91,10 @@ type pathData struct {
 	Direct                  bool     `json:"direct"`
 	RequiredCapabilities    []string `json:"required_capabilities"`
 	DestinationLocationRole string   `json:"destination_location_role,omitempty"`
+	// Intake is the path's declared demand sources (process-path-management
+	// ADR 0034); absent from an older producer, [] for an explicit-id-only
+	// path. Both decode to an empty slice: no declared intake.
+	Intake []string `json:"intake,omitempty"`
 }
 
 // Reader is the subset of *kafkago.Reader this Consumer needs, so tests
@@ -371,6 +375,7 @@ func (c *Consumer) applyUpsert(data pathData) {
 		MatchPrefix:             data.MatchPrefix,
 		RequiredCapabilities:    data.RequiredCapabilities,
 		DestinationLocationRole: data.DestinationLocationRole,
+		Intake:                  data.Intake,
 	}
 }
 

@@ -35,7 +35,7 @@ func TestScanWorkUnit_TransitionTimestamps(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &WorkUnitRepo{}
-			unit, err := r.scanWorkUnit("wu-1", "pick-a", "ref-1", "sku", tc.state, "", "", "", false, 0, nil, cpt, tc.releasedAt, tc.completedAt)
+			unit, err := r.scanWorkUnit(workUnitRow{id: "wu-1", pathId: "pick-a", reference: "ref-1", sku: "sku", state: tc.state, cpt: cpt, releasedAt: tc.releasedAt, completedAt: tc.completedAt})
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("err = %v, want %v", err, tc.wantErr)
@@ -61,7 +61,7 @@ func TestScanWorkUnit_LineNoColumn(t *testing.T) {
 	three := 3
 	r := &WorkUnitRepo{}
 
-	withLine, err := r.scanWorkUnit("order-1-line-3", "pick-a", "order-1", "", "Pending", "", "", "", false, 0, &three, cpt, nil, nil)
+	withLine, err := r.scanWorkUnit(workUnitRow{id: "order-1-line-3", pathId: "pick-a", reference: "order-1", state: "Pending", lineNo: &three, cpt: cpt})
 	if err != nil {
 		t.Fatalf("scan with line: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestScanWorkUnit_LineNoColumn(t *testing.T) {
 		t.Fatalf("LineNo = %d, want 3", withLine.LineNo())
 	}
 
-	noLine, err := r.scanWorkUnit("wu-legacy", "pick-a", "order-1", "", "Pending", "", "", "", false, 0, nil, cpt, nil, nil)
+	noLine, err := r.scanWorkUnit(workUnitRow{id: "wu-legacy", pathId: "pick-a", reference: "order-1", state: "Pending", cpt: cpt})
 	if err != nil {
 		t.Fatalf("scan NULL line: %v", err)
 	}
@@ -97,5 +97,47 @@ func TestLineNoToColumn_NeverBindsAnOutOfRangeValue(t *testing.T) {
 	}
 	if lineNoToColumn(9223372036854775807) != nil {
 		t.Fatal("lineNoToColumn(MaxInt64) must be NULL")
+	}
+}
+
+// ADR-0040: a Cancelled row needs cancelled_at; the relocation columns
+// rehydrate the move and a corrupt relocation_kind fails loud.
+func TestScanWorkUnit_RelocationColumns(t *testing.T) {
+	cpt := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	cancelledAt := cpt.Add(-time.Hour)
+	r := &WorkUnitRepo{}
+	base := workUnitRow{id: "plan-1-move-1", pathId: "RELOCATE", reference: "plan-1", sku: "SKU-2", state: "Pending",
+		workKind: "RELOCATE", siteId: "SITE-1", cpt: cpt, relocationPlanId: "plan-1", relocationMoveSeq: 1,
+		relocationKind: "Relocate", fromSlot: "S2", toSlot: "S3", blockedBy: "plan-1-move-2"}
+
+	unit, err := r.scanWorkUnit(base)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	m, ok := unit.Relocation()
+	if !ok || m.PlanId != "plan-1" || m.MoveSeq != 1 || m.Kind != workunit.RelocationKindRelocate || m.FromSlot != "S2" || m.ToSlot != "S3" {
+		t.Fatalf("relocation = (%+v, %v)", m, ok)
+	}
+	if unit.BlockedBy() != "plan-1-move-2" || unit.WorkKind() != workunit.WorkKindRelocate {
+		t.Fatalf("blocked_by = %q kind = %q", unit.BlockedBy(), unit.WorkKind())
+	}
+
+	cancelled := base
+	cancelled.state, cancelled.cancelledAt = "Cancelled", &cancelledAt
+	got, err := r.scanWorkUnit(cancelled)
+	if err != nil || got.State() != workunit.Cancelled || !got.CancelledAt().Equal(cancelledAt) {
+		t.Fatalf("cancelled scan = (%v, %v)", got, err)
+	}
+
+	noStamp := base
+	noStamp.state = "Cancelled"
+	if _, err := r.scanWorkUnit(noStamp); !errors.Is(err, workunit.ErrMissingTransitionTime) {
+		t.Fatalf("cancelled without cancelled_at = %v, want ErrMissingTransitionTime", err)
+	}
+
+	corrupt := base
+	corrupt.relocationKind = "Swap"
+	if _, err := r.scanWorkUnit(corrupt); !errors.Is(err, workunit.ErrUnknownRelocationKind) {
+		t.Fatalf("corrupt relocation_kind = %v, want ErrUnknownRelocationKind", err)
 	}
 }

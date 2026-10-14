@@ -36,8 +36,8 @@ CloudEvents `subject`: the **work unit id** for `workunit` events, the
 |---|---|---|---|---|
 | `com.warehouse.wes.work-planning.charge.ChargeForecastReceived` | path id | `path_id` | `ReceiveChargeForecast` | — |
 | `com.warehouse.wes.work-planning.plan.ShiftPlanCommitted` | path id | `path_id` | `CommitShiftPlan` | — |
-| `com.warehouse.wes.work-planning.workunit.WorkUnitCreated` | work unit id | `path_id`, `work_unit_id` | `EnqueueWorkUnit` (REST or `ApplyOrderAllocated`) | — |
-| **`com.warehouse.wes.work-planning.workunit.WorkReleased`** | work unit id | `path_id`, `work_unit_id`, `cpt`, `ref`, optional `required_capabilities`, `fragile`, `gift_wrap`, `line_no` ([ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)) | `ReleaseNextWork` (REST or MCP) | **fulfillment-execution** — `internal/adapters/inbound/kafka/consumer.go` turns it into a `Task` |
+| `com.warehouse.wes.work-planning.workunit.WorkUnitCreated` | work unit id | `path_id`, `work_unit_id` | `EnqueueWorkUnit` (REST, `ApplyOrderAllocated`, `ApplyWorkDemandReleased`) and `ApplySlotPlanApproved` | — |
+| **`com.warehouse.wes.work-planning.workunit.WorkReleased`** | work unit id | `path_id`, `work_unit_id`, `cpt`, `ref`, optional `required_capabilities`, `fragile`, `gift_wrap`, `line_no` ([ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)), transfer fields ([ADR-0033](../adr/0033-transfer-work-demand-choreography.md)), `relocation` on RELOCATE units ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) | `ReleaseNextWork` (REST or MCP) | **fulfillment-execution** — `internal/adapters/inbound/kafka/consumer.go` turns it into a `Task` |
 | `com.warehouse.wes.work-planning.workunit.WorkUnitCompleted` | work unit id | `path_id`, `work_unit_id` | `RecordCompletion` (REST or `ApplyTaskCompleted`) | — |
 | `com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached` | path id | `path_id` | `SampleBacklog` when backlog depth exceeds the alarm threshold | — |
 | `com.warehouse.wes.work-planning.workpool.RateDeviationDetected` | path id | `path_id` | **nothing** — reserved for a future detection rule, not emitted (decided 2026-10-06: kept) | — |
@@ -86,6 +86,7 @@ total (exponential backoff) and then dead-lettered. Each handler marks the Cloud
 | `warehouse.fulfillment.events` | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | fulfillment-execution | `ApplyTaskCompleted` → `RecordCompletion` |
 | `warehouse.order-management.events` | `com.warehouse.wes.order-management.order.OrderAllocated` | order-management | `ApplyOrderAllocated` → `EnqueueWorkUnit` per line |
 | `warehouse.order-management.events` | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | order-management | same |
+| `warehouse.slotting-optimization.events` | `com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved` | slotting-optimization | `ApplySlotPlanApproved` → one RELOCATE unit per move, sequenced, superseding the site's older plan ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) |
 | `warehouse.process-path-management.events` | `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` / `ProcessPathUpdated` / `ProcessPathDeactivated` | process-path-management | `kafkacatalog.Consumer` (process-unique group, replays from earliest), only with `PATH_CATALOGUE_SOURCE=kafka` |
 
 ## Event flow through a shift

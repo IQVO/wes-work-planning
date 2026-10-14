@@ -24,6 +24,7 @@ package pathcatalog
 
 import (
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -51,6 +52,23 @@ type PathDefinition struct {
 	// Available for a future consumer (e.g. destination-aware release
 	// ordering) to use; this field alone adds no such logic.
 	DestinationLocationRole string
+	// Intake is process-path-management's declared set of demand sources
+	// allowed to route work onto this path (its ADR 0034, fleet decision
+	// E5): CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION,
+	// INVENTORY_CONTROL. Empty means "not declared" (an older producer, or
+	// a path reached only by explicit id). Mirrored verbatim.
+	Intake []string
+}
+
+// IntakeSlotRelocation is the intake value of approved slot plans
+// (ADR-0040).
+const IntakeSlotRelocation = "SLOT_RELOCATION"
+
+// Admits reports whether the path accepts work from demand source: true
+// when the path declares no intake at all (routed by explicit id) or when
+// its intake lists source.
+func (d PathDefinition) Admits(source string) bool {
+	return len(d.Intake) == 0 || slices.Contains(d.Intake, source)
 }
 
 // Catalogue is the validated, in-memory set of a building's declared

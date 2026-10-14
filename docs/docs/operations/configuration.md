@@ -45,10 +45,16 @@ API-key, token or scope variable to set.
 | Variable | Default | Required | Meaning | Read in |
 |---|---|---|---|---|
 | `EVENT_PUBLISHER` | `log` | no | `log` writes every domain event to the log only. `kafka` publishes to `warehouse.work-planning.events` **and** `warehouse.wes.analytics`: through the transactional outbox and its in-process relay when `DATABASE_URL` is set ([ADR-0014](../adr/0014-transactional-outbox.md)), directly to both topics otherwise. Any value other than `kafka` behaves like `log`. | `cmd/wes/config.go:55` |
-| `KAFKA_BROKERS` | *(unset)* | conditional | Comma-separated broker list (`localhost:9092` from the host against the fleet's single broker). **Setting it starts the inbound integration-event consumer** on five topics, independently of `EVENT_PUBLISHER`. Required by `EVENT_PUBLISHER=kafka`, `PATH_CATALOGUE_SOURCE=kafka` and `PRODUCT_CLASSIFICATION_MODE=kafka` (each fails the boot with a named error when it is missing). | `cmd/wes/config.go:54` |
+| `KAFKA_BROKERS` | *(unset)* | conditional | Comma-separated broker list (`localhost:9092` from the host against the fleet's single broker). **Setting it starts the inbound integration-event consumer** on six topics (including `warehouse.slotting-optimization.events`, [ADR-0040](../adr/0040-slot-plan-relocation-work.md)), independently of `EVENT_PUBLISHER`. Required by `EVENT_PUBLISHER=kafka`, `PATH_CATALOGUE_SOURCE=kafka` and `PRODUCT_CLASSIFICATION_MODE=kafka` (each fails the boot with a named error when it is missing). | `cmd/wes/config.go:54` |
 | `KAFKA_CONSUMER_GROUP` | `wes-work-planning` | no | Group id of the integration-event consumer, shared by every replica. Give any *second* process against the shared broker (a developer's `go run`, the e2e harness) a unique value, or the rebalance hands the partition to one member and the other silently consumes nothing. | `cmd/wes/serving.go:193` |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | no | Sleep between relay passes that found nothing to publish (a pass that drained a full batch of 100 loops immediately). Only used with `EVENT_PUBLISHER=kafka` **and** `DATABASE_URL`. A malformed or non-positive value falls back to `1s`. | `cmd/wes/publisher.go:74` |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | no | Outbox relay attempt cap ([ADR-0039](../adr/0039-outbox-relay-attempt-cap.md)): a row that has failed this many sends is no longer claimed, logged once at ERROR (`outbox relay: row reached the attempt cap and is no longer claimed`) and left in `outbox_events` for inspection; later rows, including rows with the same key, overtake it. `0` = unlimited (one poison row blocks the relay forever). A malformed or negative value falls back to `20`. Re-arm a row with `UPDATE outbox_events SET attempts = 0 WHERE id = ...` ([Runbook](./runbook.md#re-arm-an-outbox-row-that-hit-the-attempt-cap)). Chart value `config.outboxMaxAttempts`. | `cmd/wes/publisher.go:72` |
+
+### Slot-plan relocation
+
+| Variable | Default | Required | Meaning | Read in |
+|---|---|---|---|---|
+| `RELOCATION_CPT_HORIZON` | `24h` | no | Go duration added to a slot plan's `approved_at` to give its RELOCATE work units their CPT ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)). A malformed or non-positive value falls back to `24h`. Chart value `config.relocationCptHorizon`. | `cmd/wes/config.go` |
 
 ### Process-path catalogue
 
@@ -161,6 +167,7 @@ address. `charts/wes-work-planning/tests/render_test.sh` (CI job
 |---|---|---|
 | `config.httpAddr`, `config.eventPublisher`, `config.logLevel` | `HTTP_ADDR`, `EVENT_PUBLISHER`, `LOG_LEVEL` | api (`EVENT_PUBLISHER`/`LOG_LEVEL` also MCP) |
 | `config.outboxMaxAttempts` (default `20`) | `OUTBOX_MAX_ATTEMPTS` | api |
+| `config.relocationCptHorizon` (default `24h`) | `RELOCATION_CPT_HORIZON` | api |
 | `database.url` / `database.existingSecret` + `existingSecretKey` | `DATABASE_URL` | api, MCP |
 | `database.migrationsExistingSecretKey` (`optional: true`) | `MIGRATIONS_DATABASE_URL` | api |
 | `kafka.enabled` + `kafka.brokers` | `KAFKA_BROKERS` | api, MCP; the projector always gets `kafka.brokers` |

@@ -37,6 +37,7 @@ flowchart LR
         ATC["ApplyTaskCompleted"]
         AOA["ApplyOrderAllocated"]
         AWD["ApplyWorkDemandReleased"]
+        ASP["ApplySlotPlanApproved"]
         OPC["ObserveProductClassification"]
     end
     REST --> RCF
@@ -55,6 +56,7 @@ flowchart LR
     KAFKA --> ATC
     KAFKA --> AOA
     KAFKA --> AWD
+    KAFKA --> ASP
     KAFKA --> OPC
     ATC --> RC
     AOA --> EWU
@@ -124,10 +126,12 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
   (`409 wip-limit-reached`); the earliest CPT goes first (insertion order
   breaks ties); each entry is released at most once. A pending entry whose
   work unit already moved on (left by a pre-versioning lost update) is healed
-  and skipped. Optimistic retry as above.
+  and skipped, and so is a leftover entry of a `Cancelled` RELOCATE unit
+  ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)). Optimistic retry as above.
 - **Events**: `WorkReleased` (the integration publisher enriches it with CPT,
-  reference, `gift_wrap`, `line_no`, transfer fields and — from the
-  classification copy — `required_capabilities`/`fragile`). Also increments
+  reference, `gift_wrap`, `line_no`, transfer fields, the RELOCATE
+  `relocation` object and — from the classification copy —
+  `required_capabilities`/`fragile`). Also increments
   `wes.work_units.released`.
 
 ### RecordCompletion
@@ -139,7 +143,10 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
   (`work-unit-not-released`) and is not already completed
   (`work-unit-already-completed`). Its pool entry is reconciled to completed,
   which frees the WIP slot; a path with no pool or a pool that never held the
-  unit is not an error.
+  unit is not an error. Completing a RELOCATE unit also admits, in the same
+  atomic scope, every Pending RELOCATE unit blocked by it (`blocked_by` is
+  cleared and the unit enters the RELOCATE pool), so a fill never runs
+  before the vacate of its slot ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)).
 - **Events**: `WorkUnitCompleted`.
 
 ### SampleBacklog
@@ -186,14 +193,14 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 
 | Use case | Trigger | Returns | Not found |
 |---|---|---|---|
-| `GetWorkUnit` | `GET /work-units/{id}` | one work unit (`id`, `pathId`, `cpt`, `reference`, `state`, `giftWrap`, `sku`, `lineNo`, `releasedAt`, `completedAt`) | `404` |
+| `GetWorkUnit` | `GET /work-units/{id}` | one work unit (`id`, `pathId`, `cpt`, `reference`, `state`, `giftWrap`, `sku`, `lineNo`, `releasedAt`, `completedAt`, `cancelledAt`; RELOCATE units add `relocation` = `planId`, `moveSeq`, `kind`, `siteId`, `fromSlot`, `toSlot`, `blockedBy`) | `404` |
 | `GetWorkUnitsByReference` | `GET /work-units?reference=` | every work unit with that reference (an array; empty when none) | `400 reference-required` when the parameter is missing |
 | `LaborPlanView` | `GET /paths/{pathId}/labor-plan-view` | the `LaborPlanObserved` projection, with the ADR-0019 drift outcome | `404` until a `ShiftPlanCommitted` for the path arrives |
 | `InventoryView` | `GET /inventory-view/{sku}` | the `UsableInventoryObserved` projection | `404` until an inventory event for the SKU arrives |
 
 ## Inbound-event use cases
 
-All six claim the CloudEvents `id` in `processed_events` inside the **same**
+All seven claim the CloudEvents `id` in `processed_events` inside the **same**
 atomic scope as their effect (`onceAtomically`,
 [ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)): a
 redelivery is a no-op, and a failure rolls the mark back so the retry
@@ -207,6 +214,7 @@ re-applies the event. The consumer that calls them is described on
 | `ApplyTaskCompleted` | `TaskCompleted` (`warehouse.fulfillment.events`) | runs `RecordCompletion` for `work_unit_id` | an unknown work unit is a logged skip (still marked processed); any other error is retried, then DLQ | `WorkUnitCompleted` (via `RecordCompletion`) |
 | `ApplyOrderAllocated` | `OrderAllocated` / `OrderPartiallyAllocated` (`warehouse.order-management.events`) | one `EnqueueWorkUnit` per line: id `{order_id}-line-{line_no}`, CPT = `promise_date`, reference = `order_id`, plus `sku`, `gift_wrap`, `line_no` ([ADR-0031](../adr/0031-order-allocated-choreography.md), [ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)) | every line's `path_id` checked against the catalogue before anything is enqueued; an out-of-range `line_no` is stored as unknown; a line already in the pool is skipped | `WorkUnitCreated` per new line |
 | `ApplyWorkDemandReleased` | `WorkDemandReleased` (`warehouse.network-inventory-planning.events`) | one `EnqueueWorkUnit` with id = reference = `demand_id`, CPT = `cpt`, and the transfer fields ([ADR-0033](../adr/0033-transfer-work-demand-choreography.md)) | `work_kind` must be `TRANSFER_PICK`, `TRANSFER_DISPATCH` or `TRANSFER_ARRIVAL`; `path_id` in the catalogue; an existing `demand_id` is a no-op | `WorkUnitCreated` |
+| `ApplySlotPlanApproved` | `SlotPlanApproved` (`warehouse.slotting-optimization.events`) | one RELOCATE unit per move: id `{plan_id}-move-{seq}` (seq = 0-based position in `moves`), reference = `plan_id`, CPT = `approved_at` + `RELOCATION_CPT_HORIZON`, path `RELOCATE`. A move into a slot another move of the plan vacates gets `blocked_by` and stays out of the pool until that unit completes (swap cycles broken at the lowest seq). A newer plan for the site cancels the other plans' **Pending** units (state `Cancelled`, pool entry withdrawn); released work runs to completion ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) | move `kind` must be `Relocate`, `Assign` or `Vacate` with the slots that kind needs; `RELOCATE` must be in the catalogue and, when it declares an intake, admit `SLOT_RELOCATION` (process-path-management ADR 0034); all retried, then DLQ. An older plan than the site's latest, or the same plan again, is a no-op | `WorkUnitCreated` per planned unit |
 | `ObserveProductClassification` | `ProductClassified` (`warehouse.product-master.events`) | version-guarded upsert into `product_classification_copy` ([ADR-0035](../adr/0035-product-classification-local-copy.md)) | an older or equal version is a stale no-op (id still recorded) | none |
 
 ## Events no use case raises

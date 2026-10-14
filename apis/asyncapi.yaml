@@ -260,6 +260,33 @@ channels:
       message:
         $ref: "#/components/messages/WorkDemandReleased"
 
+  warehouse.slotting-optimization.events:
+    description: >-
+      slotting-optimization's integration topic, CONSUMED by this service
+      (owned by that bounded context; listed here read-only for orientation,
+      mirroring its own apis/asyncapi.yaml). Key = the plan id. This service
+      consumes only SlotPlanApproved and ignores SlotPlanGenerated,
+      SlotPlanRejected and every other type (ADR-0040).
+    publish:
+      operationId: consumeSlotPlanApproved
+      summary: Consume approved slot plans and plan their moves as RELOCATE work.
+      description: >-
+        Read under the shared consumer group with its own
+        `warehouse.slotting-optimization.events.dlq`. Each SlotPlanApproved
+        becomes one RELOCATE work unit per move (id `<plan_id>-move-<seq>`,
+        seq = 0-based position in `moves`, ref = plan_id, path RELOCATE whose
+        catalogue intake must admit SLOT_RELOCATION). A move into a slot that
+        another move of the same plan vacates is held out of the pool until
+        that move's unit completes. A newer approved plan for the same site
+        cancels the older plan's not-yet-released units; released work runs
+        to completion; an older or duplicate plan is a no-op. The CloudEvents
+        `id` is claimed in the same transaction (redelivery is a no-op). A
+        malformed plan, an unknown move kind or an intake without
+        SLOT_RELOCATION is retried and then dead-lettered; a message
+        interrupted by shutdown is never dead-lettered.
+      message:
+        $ref: "#/components/messages/SlotPlanApproved"
+
   warehouse.product-master.events:
     description: >-
       product-master's integration topic, CONSUMED by this service (owned by
@@ -422,6 +449,53 @@ components:
               sku: SKU-T1
               quantity: 17
 
+    SlotPlanApproved:
+      name: SlotPlanApproved
+      title: Slot Plan Approved (consumed)
+      summary: slotting-optimization approved a slot plan for a site.
+      description: >-
+        CONSUMED from `warehouse.slotting-optimization.events` — this entry
+        mirrors the producer's own contract (SlotPlanApprovedEvent)
+        read-only and is NOT published by this service. Only `plan_id`,
+        `site_id`, `approved_at`, `supersedes_plan_id` and `moves` are read;
+        `assignments` is ignored (ADR-0040).
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/SlotPlanApprovedEvent"
+      examples:
+        - name: slotPlanApproved
+          summary: A plan with one Assign, one Relocate and one Vacate.
+          payload:
+            specversion: "1.0"
+            id: 0b9a8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d
+            source: /warehouse/slotting-optimization
+            type: com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved
+            subject: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            time: "2026-10-08T12:30:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:slotting-optimization:events:SlotPlanApproved:v1
+            data:
+              plan_id: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              site_id: SITE-1
+              approved_at: "2026-10-08T12:30:00Z"
+              supersedes_plan_id: plan-8e7d6c5b-4a39-4281-b0c9-d8e7f6a5b4c3
+              assignments:
+                - sku: SKU-1
+                  slot: WH1-FWD-A01-01-01-A
+              moves:
+                - sku: SKU-1
+                  to_slot: WH1-FWD-A01-01-01-A
+                  kind: Assign
+                - sku: SKU-2
+                  from_slot: WH1-FWD-A02-03-01-A
+                  to_slot: WH1-FWD-A01-01-02-A
+                  kind: Relocate
+                - sku: SKU-3
+                  from_slot: WH1-FWD-A01-01-03-A
+                  kind: Vacate
+
     ProductClassified:
       name: ProductClassified
       title: Product Classified (consumed)
@@ -546,6 +620,31 @@ components:
               ref: order-88421-line-4
               required_capabilities: ["hazmat"]
               fragile: true
+        - name: workReleasedRelocate
+          summary: >-
+            A RELOCATE move of an approved slot plan was released (ADR-0040);
+            fulfillment-execution turns it into a RELOCATE task.
+          payload:
+            specversion: "1.0"
+            id: 11111111-1111-4111-8111-111111111111
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkReleased
+            subject: plan-3b0e8d2a-move-1
+            time: "2026-10-15T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:WorkReleased:v1
+            data:
+              path_id: RELOCATE
+              work_unit_id: plan-3b0e8d2a-move-1
+              cpt: "2026-10-16T08:00:00Z"
+              ref: plan-3b0e8d2a
+              relocation:
+                plan_id: plan-3b0e8d2a
+                move_seq: 1
+                kind: Relocate
+                sku: SKU-2
+                from_bin: WH1-FWD-A02-03-01-A
+                to_bin: WH1-FWD-A01-01-02-A
 
     WorkUnitCompleted:
       name: WorkUnitCompleted
@@ -1207,6 +1306,66 @@ components:
                   description: OPTIONAL. Units of the SKU the leg moves.
                   minimum: 0
 
+    SlotPlanApprovedEvent:
+      title: SlotPlanApproved CloudEvent (consumed)
+      description: >-
+        Mirror of slotting-optimization's SlotPlanApprovedEvent (read-only).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved"
+            dataschema:
+              type: string
+              const: "urn:warehouse:slotting-optimization:events:SlotPlanApproved:v1"
+            data:
+              type: object
+              required:
+                - plan_id
+                - site_id
+                - approved_at
+                - moves
+              properties:
+                plan_id:
+                  type: string
+                site_id:
+                  type: string
+                approved_at:
+                  type: string
+                  format: date-time
+                supersedes_plan_id:
+                  type: string
+                  description: OPTIONAL. The plan this one replaces.
+                assignments:
+                  type: array
+                  description: Full forward map; ignored by this service.
+                  items:
+                    type: object
+                moves:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - sku
+                      - kind
+                    properties:
+                      sku:
+                        type: string
+                      from_slot:
+                        type: string
+                        description: Absent for Assign.
+                      to_slot:
+                        type: string
+                        description: Absent for Vacate.
+                      kind:
+                        type: string
+                        enum: [Assign, Relocate, Vacate]
+
     ProductClassifiedEvent:
       title: ProductClassified CloudEvent (consumed)
       description: >-
@@ -1439,6 +1598,48 @@ components:
                     carried a positive quantity.
                   minimum: 0
                   example: 17
+                relocation:
+                  type: object
+                  description: >-
+                    OPTIONAL (ADR-0040). Present only on a RELOCATE work unit
+                    (one planned from slotting-optimization's
+                    SlotPlanApproved): the slot-plan move it executes,
+                    exactly the object fulfillment-execution's RELOCATE task
+                    decodes (its ADR 0047). Absent on order and transfer
+                    work, whose payloads are byte-identical to before.
+                    RELOCATE work never carries `work_kind`/`transfer_ref`.
+                  required:
+                    - plan_id
+                    - move_seq
+                    - kind
+                    - sku
+                  properties:
+                    plan_id:
+                      type: string
+                      description: The approved slot plan this move belongs to.
+                      example: plan-3b0e8d2a
+                    move_seq:
+                      type: integer
+                      minimum: 0
+                      description: >-
+                        0-based position of the move in the plan's published
+                        `moves`; always present, `0` included.
+                      example: 1
+                    kind:
+                      type: string
+                      enum: [Relocate, Assign, Vacate]
+                      example: Relocate
+                    sku:
+                      type: string
+                      example: SKU-2
+                    from_bin:
+                      type: string
+                      description: Slot the stock leaves; absent for Assign.
+                      example: WH1-FWD-A02-03-01-A
+                    to_bin:
+                      type: string
+                      description: Slot the stock lands in; absent for Vacate.
+                      example: WH1-FWD-A01-01-02-A
 
     WorkUnitCompletedEvent:
       title: WorkUnitCompleted CloudEvent

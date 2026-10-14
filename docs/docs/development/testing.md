@@ -121,8 +121,9 @@ CI runs them in the `evals-tests` job.
 (`testcontainers-go/modules/kafka`); nothing reads `DATABASE_URL` or
 `KAFKA_BROKERS` from the environment, which the fitness tests enforce. They
 cover the Postgres repositories and migrations (including the
-`0001`–`0013` chain, pool limits and `statement_timeout`, optimistic
-concurrency on `work_pools`, gift-wrap / line-no / transfer columns), the
+`0001`–`0014` chain, pool limits and `statement_timeout`, optimistic
+concurrency on `work_pools`, gift-wrap / line-no / transfer / relocation
+columns and `slot_plans`), the
 outbox and its lag gauge, the housekeeper, the idempotency middleware, the
 Kafka consumer (atomic processed mark, DLQ and DLQ auto-create,
 `WorkDemandReleased`), partition affinity of the `Hash` balancer, the Kafka

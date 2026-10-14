@@ -26,7 +26,7 @@ func TestWorkUnitRepo_UnknownStoredStateIsRejectedOnEveryFinder(t *testing.T) {
 
 	if _, err := db.Exec(ctx, `
 		INSERT INTO work_units (id, path_id, cpt, reference, sku, gift_wrap, state)
-		VALUES ('wu-corrupt', 'pick-corrupt', $1, 'ref-corrupt', '', false, 'Cancelled')
+		VALUES ('wu-corrupt', 'pick-corrupt', $1, 'ref-corrupt', '', false, 'Archived')
 	`, cpt); err != nil {
 		t.Fatalf("insert corrupt row: %v", err)
 	}

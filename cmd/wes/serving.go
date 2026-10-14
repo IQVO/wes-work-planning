@@ -83,7 +83,7 @@ func newServing(d servingDeps) *serving {
 		repos:                   d.repos,
 		catalogue:               d.catalogue,
 		kafkaBrokers:            d.cfg.kafkaBrokers,
-		recordCompletion:        usecases.NewRecordCompletion(d.repos.workUnits, d.repos.pools, d.publisher, clock).WithUnitOfWork(d.repos.uow),
+		recordCompletion:        usecases.NewRecordCompletion(d.repos.workUnits, d.repos.pools, d.publisher, clock).WithUnitOfWork(d.repos.uow).WithRelocationWork(d.repos.relocations),
 		enqueueWorkUnit:         usecases.NewEnqueueWorkUnit(d.repos.workUnits, d.repos.pools, d.publisher, clock).WithUnitOfWork(d.repos.uow),
 		cancelCatalogueConsumer: d.cancelCatalogueConsumer,
 		kafkaCatalogue:          d.kafkaCatalogue,
@@ -212,7 +212,11 @@ func (s *serving) newInboundConsumer(groupID string) *inboundkafka.Consumer {
 	applyTaskCompleted := usecases.NewApplyTaskCompleted(s.recordCompletion, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
 	applyOrderAllocated := usecases.NewApplyOrderAllocated(s.enqueueWorkUnit, s.repos.processedEvts, s.catalogue).WithUnitOfWork(s.repos.uow)
 	applyWorkDemandReleased := usecases.NewApplyWorkDemandReleased(s.enqueueWorkUnit, s.repos.processedEvts, s.catalogue).WithUnitOfWork(s.repos.uow)
-	return inboundkafka.NewConsumer(brokerList(s.kafkaBrokers), groupID, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, applyWorkDemandReleased, s.catalogue, s.logger)
+	// ADR-0040: SlotPlanApproved -> sequenced RELOCATE work units.
+	applySlotPlanApproved := usecases.NewApplySlotPlanApproved(s.repos.workUnits, s.repos.relocations, s.repos.pools, s.repos.slotPlans,
+		s.repos.processedEvts, s.catalogue, s.publisher, s.clock).WithUnitOfWork(s.repos.uow).WithCPTHorizon(relocationCPTHorizon())
+	return inboundkafka.NewConsumer(brokerList(s.kafkaBrokers), groupID, observeLabor, observeInventory, applyTaskCompleted, applyOrderAllocated, applyWorkDemandReleased, s.catalogue, s.logger).
+		WithSlotPlans(applySlotPlanApproved)
 }
 
 // gracefulShutdown drains the process (ADR-0023 §graceful shutdown):

@@ -96,6 +96,7 @@ zero" are different facts.
 | **`work-unit-already-released`** | Work unit already released | **at most one active assignment** |
 | **`work-unit-already-completed`** | Work unit already completed | **no double-complete** |
 | `work-unit-not-released` | Work unit not released | must be released before completing |
+| `work-unit-cancelled` | Work unit cancelled | a RELOCATE move cancelled by a newer slot plan for its site is never released ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) |
 | `concurrent-modification` | The work pool was modified concurrently; retry the request | optimistic-concurrency retry budget (12 attempts) exhausted on a `WorkPool` save ([ADR-0029](../adr/0029-work-pool-optimistic-concurrency.md)) |
 
 `409` is the right code here because these are **state conflicts**, not input

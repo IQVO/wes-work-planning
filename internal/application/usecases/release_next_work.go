@@ -126,7 +126,10 @@ func (uc *ReleaseNextWork) nextReleasableUnit(ctx context.Context, pool *release
 		if unit.State() == workunit.Pending {
 			return unit, nil
 		}
-		if err := pool.Reconcile(workUnitId, true, unit.State() == workunit.Completed); err != nil {
+		// A Cancelled unit (ADR-0040) is finished like a Completed one: its
+		// entry must not hold a WIP slot or be handed out again.
+		finished := unit.State() == workunit.Completed || unit.State() == workunit.Cancelled
+		if err := pool.Reconcile(workUnitId, true, finished); err != nil {
 			return nil, err
 		}
 	}

@@ -114,6 +114,25 @@ type workUnitResponseDTO struct {
 	// reaches the corresponding lifecycle state.
 	ReleasedAt  *time.Time `json:"releasedAt,omitempty"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	// CancelledAt is set only on a Cancelled unit (ADR-0040: a superseded
+	// slot plan's move that was never released).
+	CancelledAt *time.Time `json:"cancelledAt,omitempty"`
+	// Relocation is the slot-plan move of a RELOCATE unit (ADR-0040),
+	// omitted on every other unit.
+	Relocation *relocationDTO `json:"relocation,omitempty"`
+}
+
+// relocationDTO is one slot-plan move as the work-unit read shows it.
+type relocationDTO struct {
+	PlanId   string `json:"planId"`
+	MoveSeq  int    `json:"moveSeq"`
+	Kind     string `json:"kind"`
+	SiteId   string `json:"siteId"`
+	FromSlot string `json:"fromSlot,omitempty"`
+	ToSlot   string `json:"toSlot,omitempty"`
+	// BlockedBy is the work unit this move waits on before it can be
+	// released; omitted when it waits on nothing.
+	BlockedBy string `json:"blockedBy,omitempty"`
 }
 
 // configurePoolRequestDTO carries wipLimit as a pointer so an omitted limit —

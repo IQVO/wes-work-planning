@@ -1266,8 +1266,11 @@ components:
       description: >
         Pending (enqueued, not yet released) → Released (admitted into
         active work) → Completed. At most one active assignment; cannot
-        complete twice or before release.
-      enum: [Pending, Released, Completed]
+        complete twice or before release. Cancelled (ADR-0040) is terminal
+        and reached only from Pending: a RELOCATE unit of a slot plan that
+        a newer approved plan for the same site superseded before it was
+        released.
+      enum: [Pending, Released, Completed, Cancelled]
       example: Pending
 
     WorkUnitResponse:
@@ -1326,7 +1329,56 @@ components:
             When this work unit was completed (Released → Completed).
             Omitted until completed.
           example: "2026-08-21T10:00:00Z"
+        cancelledAt:
+          type: string
+          format: date-time
+          description: >-
+            When this work unit was cancelled (Pending → Cancelled, ADR-0040).
+            Omitted unless the state is Cancelled.
+          example: "2026-10-15T09:00:00Z"
+        relocation:
+          $ref: "#/components/schemas/RelocationMove"
       required: [id, pathId, cpt, reference, state, giftWrap]
+
+    RelocationMove:
+      type: object
+      description: >-
+        The slot-plan move a RELOCATE work unit executes (ADR-0040). Present
+        only on RELOCATE units (pathId RELOCATE, reference = the plan id);
+        absent on order and transfer work.
+      properties:
+        planId:
+          type: string
+          description: The approved slot plan (slotting-optimization) this move belongs to.
+          example: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+        moveSeq:
+          type: integer
+          minimum: 0
+          description: 0-based position of the move in the plan's published moves.
+          example: 1
+        kind:
+          type: string
+          enum: [Relocate, Assign, Vacate]
+          example: Relocate
+        siteId:
+          type: string
+          example: SITE-1
+        fromSlot:
+          type: string
+          description: Slot vacated; omitted for Assign.
+          example: WH1-FWD-A02-03-01-A
+        toSlot:
+          type: string
+          description: Slot filled; omitted for Vacate.
+          example: WH1-FWD-A01-01-02-A
+        blockedBy:
+          type: string
+          description: >-
+            The work unit (same plan) that vacates this move's toSlot; this
+            unit is not releasable until that one completes. Omitted when it
+            waits on nothing.
+          example: plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07-move-2
+      required: [planId, moveSeq, kind, siteId]
 
     PoolMode:
       type: string

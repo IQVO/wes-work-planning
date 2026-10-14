@@ -91,7 +91,7 @@ down within 10 s and stop.
 
 | Database | Runner | When | Files | Bookkeeping table |
 |---|---|---|---|---|
-| OLTP | `cmd/wes` via golang-migrate (`internal/adapters/outbound/postgres/migrate.go`) | every start, before the pool opens; `ErrNoChange` is success | `migrations/0001`–`0013` (`MIGRATIONS_PATH`) | golang-migrate's `schema_migrations` |
+| OLTP | `cmd/wes` via golang-migrate (`internal/adapters/outbound/postgres/migrate.go`) | every start, before the pool opens; `ErrNoChange` is success | `migrations/0001`–`0014` (`MIGRATIONS_PATH`) | golang-migrate's `schema_migrations` |
 | Analytical | `cmd/wes-projector` (`internal/adapters/outbound/analyticsstore/migrate.go`) | every start, before its pool opens | `migrations/analytics/0001_report.up.sql` (`ANALYTICS_MIGRATIONS_PATH`) | `schema_migrations_analytics` (one row per applied file) |
 
 - The OLTP migration step uses `MIGRATIONS_DATABASE_URL` when set — it must be
@@ -111,7 +111,7 @@ down within 10 s and stop.
 OLTP tables: `charge_forecasts`, `shift_plans`, `work_pools`,
 `work_pool_entries`, `work_units`, `processed_events`, `labor_plan_view`,
 `usable_inventory_view`, `outbox_events`, `idempotency_keys`,
-`product_classification_copy`, plus `events`, which `0001_init` creates but
+`product_classification_copy`, `slot_plans` (0014, [ADR-0040](../adr/0040-slot-plan-relocation-work.md)), plus `events`, which `0001_init` creates but
 no code reads or writes. Analytical tables: `analytics_processed_events`,
 `analytics_consumed_events`, `throughput_rollup`.
 
@@ -141,6 +141,7 @@ Writers use `RequiredAcks=all` and a 10 ms `BatchTimeout`.
 | `warehouse.fulfillment.events` | `TaskCompleted` | `cmd/wes` | same | earliest | same; unknown work unit = INFO skip |
 | `warehouse.order-management.events` | `OrderAllocated`, `OrderPartiallyAllocated` | `cmd/wes` | same | earliest | same |
 | `warehouse.network-inventory-planning.events` | `WorkDemandReleased` | `cmd/wes` | same | earliest | same |
+| `warehouse.slotting-optimization.events` | `SlotPlanApproved` (`SlotPlanGenerated`/`SlotPlanRejected` ignored) | `cmd/wes` | same | earliest | same; a malformed plan, unknown move kind or a RELOCATE intake without `SLOT_RELOCATION` → `.dlq` after the retries ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) |
 | `warehouse.product-master.events` | `ProductClassified` | `cmd/wes` (`PRODUCT_CLASSIFICATION_MODE=kafka`) | `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | earliest | invalid → WARN + commit past; transient → retried forever (200 ms → 5 s), never committed until applied |
 | `warehouse.process-path-management.events` | `ProcessPathCreated`, `ProcessPathUpdated`, `ProcessPathDeactivated` | `cmd/wes` (`PATH_CATALOGUE_SOURCE=kafka`) | per-process `wes-work-planning-process-path-catalogue-<host>-<pid>-<nanos>` | earliest (full replay every boot) | WARN + skip |
 | `warehouse.wes.analytics` | `WorkReleased`, `WorkUnitCompleted`, `BacklogThresholdBreached`, `PathThrottled`, `RateDeviationDetected` (others acknowledged) | `cmd/wes-projector` | `wes-analytics` | earliest | `ReadMessage` commits first; an invalid CloudEvent is WARN-skipped, a handling error is logged at ERROR and the loop moves on |
@@ -314,6 +315,39 @@ analytics). DSNs are read only at boot.
 ([ADR-0034](../adr/0034-configure-pool-command.md)). Lowering the limit below
 current WIP never evicts work; releases pause until WIP drops under it. It
 raises no event.
+
+### Slot-plan relocation work (RELOCATE)
+
+Approved slot plans become RELOCATE work units
+([ADR-0040](../adr/0040-slot-plan-relocation-work.md)). To see a plan's moves:
+
+```sql
+SELECT id, state, relocation_move_seq, relocation_kind, from_slot, to_slot, blocked_by
+FROM work_units WHERE relocation_plan_id = 'plan-...' ORDER BY relocation_move_seq;
+SELECT * FROM slot_plans WHERE site_id = 'SITE-1' ORDER BY approved_at DESC;
+```
+
+or `GET /work-units?reference=<plan_id>` (each unit's `relocation` object).
+
+- **A move never releases.** It is `Pending` with `blocked_by` set: it waits
+  for the unit that vacates its target slot. Complete that unit (its
+  fulfillment-execution task, or `POST /work-units/{id}/complete` once
+  released) and the waiting move enters the RELOCATE pool in the same
+  transaction.
+- **Moves were `Cancelled`.** A newer `SlotPlanApproved` for the same site
+  arrived; its older plans' unreleased moves are cancelled on purpose.
+  Released moves are never cancelled and finish normally.
+- **A plan is in `warehouse.slotting-optimization.events.dlq`.** Read
+  `x-dlq-error`: `unknown relocation kind` / `invalid relocation move` /
+  `invalid slot plan` is a producer bug; `intake does not admit
+  SLOT_RELOCATION` or `unknown process path id` means the RELOCATE path is not
+  in the catalogue or its intake was not seeded (process-path-management
+  `make seed-catalogue`, ADR 0034). Fix it, then
+  [replay](#replay-a-dead-lettered-message) the message — a replay is
+  idempotent.
+- **CPT of RELOCATE work.** `approved_at` + `RELOCATION_CPT_HORIZON`
+  (default `24h`, chart `config.relocationCptHorizon`); it orders RELOCATE
+  units in their own pool only.
 
 ### Run a second consumer against the shared broker
 

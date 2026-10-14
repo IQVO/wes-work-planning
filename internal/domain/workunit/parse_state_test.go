@@ -15,8 +15,9 @@ func TestParseState(t *testing.T) {
 		{"pending", "Pending", Pending, nil},
 		{"released", "Released", Released, nil},
 		{"completed", "Completed", Completed, nil},
+		{"cancelled", "Cancelled", Cancelled, nil},
 		{"empty", "", Pending, ErrUnknownState},
-		{"unknown", "Cancelled", Pending, ErrUnknownState},
+		{"unknown", "Archived", Pending, ErrUnknownState},
 		{"unknown sentinel string is not a valid stored state", "Unknown", Pending, ErrUnknownState},
 		{"wrong case", "released", Pending, ErrUnknownState},
 		{"surrounding space", " Released ", Pending, ErrUnknownState},
@@ -38,7 +39,7 @@ func TestParseState(t *testing.T) {
 // Every state the aggregate can be in must round-trip through the persisted
 // string form, or a legitimate row would start failing to rehydrate.
 func TestParseState_RoundTripsEveryState(t *testing.T) {
-	for _, s := range []State{Pending, Released, Completed} {
+	for _, s := range []State{Pending, Released, Completed, Cancelled} {
 		got, err := ParseState(s.String())
 		if err != nil || got != s {
 			t.Fatalf("ParseState(%q) = %v, %v; want %v, nil", s.String(), got, err, s)

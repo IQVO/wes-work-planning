@@ -125,6 +125,25 @@ func toWorkUnitResponseDTO(unit *workunit.WorkUnit) workUnitResponseDTO {
 		LineNo:      unit.LineNo(),
 		ReleasedAt:  unit.ReleasedAt(),
 		CompletedAt: unit.CompletedAt(),
+		CancelledAt: unit.CancelledAt(),
+		Relocation:  toRelocationDTO(unit),
+	}
+}
+
+// toRelocationDTO is the RELOCATE move of unit, nil for any other unit.
+func toRelocationDTO(unit *workunit.WorkUnit) *relocationDTO {
+	move, ok := unit.Relocation()
+	if !ok {
+		return nil
+	}
+	return &relocationDTO{
+		PlanId:    move.PlanId,
+		MoveSeq:   move.MoveSeq,
+		Kind:      move.Kind.String(),
+		SiteId:    unit.SiteId(),
+		FromSlot:  move.FromSlot,
+		ToSlot:    move.ToSlot,
+		BlockedBy: unit.BlockedBy(),
 	}
 }
 

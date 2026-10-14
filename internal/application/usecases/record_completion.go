@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
+	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
@@ -21,11 +22,12 @@ import (
 // minutes and every /release call 409'd for the rest of the run even
 // though fulfillment-execution kept completing tasks with zero Kafka lag).
 type RecordCompletion struct {
-	workUnits ports.WorkUnitRepo
-	pools     ports.WorkPoolRepo
-	publisher ports.EventPublisher
-	clock     ports.Clock
-	uow       ports.UnitOfWork
+	workUnits   ports.WorkUnitRepo
+	pools       ports.WorkPoolRepo
+	publisher   ports.EventPublisher
+	clock       ports.Clock
+	uow         ports.UnitOfWork
+	relocations ports.RelocationWorkRepo
 }
 
 func NewRecordCompletion(workUnits ports.WorkUnitRepo, pools ports.WorkPoolRepo, publisher ports.EventPublisher, clock ports.Clock) *RecordCompletion {
@@ -36,6 +38,14 @@ func NewRecordCompletion(workUnits ports.WorkUnitRepo, pools ports.WorkPoolRepo,
 // (ADR-0014). Optional: nil keeps the calls running back to back.
 func (uc *RecordCompletion) WithUnitOfWork(u ports.UnitOfWork) *RecordCompletion {
 	uc.uow = u
+	return uc
+}
+
+// WithRelocationWork enables ADR-0040's sequencing: completing a RELOCATE
+// unit admits every Pending unit blocked by it into the same pool, in the
+// same atomic scope. Optional: nil admits nothing.
+func (uc *RecordCompletion) WithRelocationWork(r ports.RelocationWorkRepo) *RecordCompletion {
+	uc.relocations = r
 	return uc
 }
 
@@ -90,6 +100,8 @@ func (uc *RecordCompletion) completeOnce(ctx context.Context, req RecordCompleti
 // completePoolEntry frees the unit's WIP slot. A path with no pool, or a
 // pool that never held this unit, is not an error (best-effort secondary
 // aggregate, as before); a lost optimistic race is, so it gets retried.
+// For a RELOCATE unit it also admits the units waiting on it (ADR-0040),
+// saving them after the pool so a lost race writes nothing.
 func (uc *RecordCompletion) completePoolEntry(ctx context.Context, unit *workunit.WorkUnit) error {
 	pool, err := uc.pools.FindByPathId(ctx, unit.PathId())
 	if errors.Is(err, ports.ErrNotFound) {
@@ -101,5 +113,41 @@ func (uc *RecordCompletion) completePoolEntry(ctx context.Context, unit *workuni
 	if err := pool.Reconcile(unit.Id(), true, true); err != nil {
 		return nil // ErrUnknownEntry: this pool never held the unit
 	}
-	return uc.pools.Save(ctx, pool)
+	admitted, err := uc.admitWaiting(ctx, pool, unit)
+	if err != nil {
+		return err
+	}
+	if err := uc.pools.Save(ctx, pool); err != nil {
+		return err
+	}
+	for _, u := range admitted {
+		if err := uc.workUnits.Save(ctx, u); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// admitWaiting unblocks every Pending unit of the same path waiting on unit
+// and enqueues it into pool (ADR-0040). Only RELOCATE units have waiters.
+func (uc *RecordCompletion) admitWaiting(ctx context.Context, pool *release.WorkPool, unit *workunit.WorkUnit) ([]*workunit.WorkUnit, error) {
+	if uc.relocations == nil || unit.WorkKind() != workunit.WorkKindRelocate {
+		return nil, nil
+	}
+	waiting, err := uc.relocations.PendingBlockedBy(ctx, unit.Id())
+	if err != nil {
+		return nil, err
+	}
+	admitted := make([]*workunit.WorkUnit, 0, len(waiting))
+	for _, w := range waiting {
+		if !w.PathId().Equals(pool.PathId()) {
+			continue
+		}
+		w.Unblock()
+		if err := pool.Enqueue(w.Id(), w.CPT()); err != nil && !errors.Is(err, release.ErrDuplicateEntry) {
+			return nil, err
+		}
+		admitted = append(admitted, w)
+	}
+	return admitted, nil
 }

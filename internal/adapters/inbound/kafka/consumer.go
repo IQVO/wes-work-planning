@@ -90,6 +90,28 @@ type workDemandReleasedData struct {
 	Quantity    int       `json:"quantity"`
 }
 
+// slotPlanApprovedData is slotting-optimization's SlotPlanApproved payload
+// (the CloudEvents `data` object), mirrored read-only from the producer's
+// apis/asyncapi.yaml (SlotPlanApprovedEvent): only the fields this context
+// plans from. `assignments` (the full forward map) is not needed: the moves
+// are what changes on the floor (ADR-0040).
+type slotPlanApprovedData struct {
+	PlanId           string             `json:"plan_id"`
+	SiteId           string             `json:"site_id"`
+	ApprovedAt       time.Time          `json:"approved_at"`
+	SupersedesPlanId string             `json:"supersedes_plan_id,omitempty"`
+	Moves            []slotPlanMoveData `json:"moves"`
+}
+
+// slotPlanMoveData is one SlotMove: kind Assign | Relocate | Vacate; a
+// Vacate omits to_slot and an Assign omits from_slot.
+type slotPlanMoveData struct {
+	SKU      string `json:"sku"`
+	FromSlot string `json:"from_slot,omitempty"`
+	ToSlot   string `json:"to_slot,omitempty"`
+	Kind     string `json:"kind"`
+}
+
 // dlqTopicSuffix names the dead-letter topic a poison message is
 // published to, relative to its OWN source topic (never a fixed
 // constant): each of the four consumed topics gets its own
@@ -116,8 +138,10 @@ const (
 )
 
 // Consumer consumes warehouse.workforce.events, warehouse.inventory.events,
-// warehouse.fulfillment.events, warehouse.order-management.events, and
-// warehouse.network-inventory-planning.events. The
+// warehouse.fulfillment.events, warehouse.order-management.events,
+// warehouse.network-inventory-planning.events and, once WithSlotPlans wires
+// it, warehouse.slotting-optimization.events (SlotPlanApproved -> RELOCATE
+// work, ADR-0040). The
 // first two are projected into the labor-plan-view and inventory-view read
 // models; TaskCompleted from the third is fed into ApplyTaskCompleted (which
 // wraps the existing RecordCompletion) to close the control loop's feedback
@@ -139,6 +163,11 @@ type Consumer struct {
 	fulfillmentReader     *kafkago.Reader
 	orderManagementReader *kafkago.Reader
 	networkDemandReader   *kafkago.Reader
+	// slottingReader reads warehouse.slotting-optimization.events; nil
+	// until WithSlotPlans wires the SlotPlanApproved use case (ADR-0040).
+	slottingReader *kafkago.Reader
+	brokers        []string
+	groupID        string
 	// dlqWriters holds one *kafkago.Writer per consumed topic
 	// (topic -> writer), each publishing to that topic's own
 	// "<topic>.dlq" — see dlqPublish's doc comment. Keyed by the
@@ -152,6 +181,7 @@ type Consumer struct {
 	applyTaskCompleted      *usecases.ApplyTaskCompleted
 	applyOrderAllocated     *usecases.ApplyOrderAllocated
 	applyWorkDemandReleased *usecases.ApplyWorkDemandReleased
+	applySlotPlanApproved   *usecases.ApplySlotPlanApproved
 	catalogue               ports.PathCatalogue
 	logger                  *slog.Logger
 }
@@ -202,6 +232,8 @@ func newConsumer(brokers []string, groupID string, fulfillmentTopic string, obse
 			GroupID: groupID,
 			Topic:   cloudevents.TopicNetworkDemandEvents,
 		}),
+		brokers:                 brokers,
+		groupID:                 groupID,
 		dlqWriters:              dlqWriters,
 		observeLabor:            observeLabor,
 		observeInventory:        observeInventory,
@@ -213,29 +245,67 @@ func newConsumer(brokers []string, groupID string, fulfillmentTopic string, obse
 	}
 }
 
+// WithSlotPlans adds the sixth stream (ADR-0040): SlotPlanApproved from
+// warehouse.slotting-optimization.events, under the same consumer group,
+// with its own "<topic>.dlq" writer, fed into ApplySlotPlanApproved.
+func (c *Consumer) WithSlotPlans(uc *usecases.ApplySlotPlanApproved) *Consumer {
+	return c.WithSlotPlansTopic(uc, cloudevents.TopicSlottingEvents)
+}
+
+// WithSlotPlansTopic is WithSlotPlans against an explicit topic, so an
+// integration test can point the real handling at a throwaway topic.
+func (c *Consumer) WithSlotPlansTopic(uc *usecases.ApplySlotPlanApproved, topic string) *Consumer {
+	c.applySlotPlanApproved = uc
+	c.slottingReader = kafkago.NewReader(kafkago.ReaderConfig{
+		Brokers: c.brokers,
+		GroupID: c.groupID,
+		Topic:   topic,
+	})
+	c.dlqWriters[topic] = newDLQWriter(c.brokers, topic)
+	return c
+}
+
 func (c *Consumer) Close() error {
-	err1 := c.workforceReader.Close()
-	err2 := c.inventoryReader.Close()
-	err3 := c.fulfillmentReader.Close()
-	err4 := c.orderManagementReader.Close()
-	err5 := c.networkDemandReader.Close()
-	errs := []error{err1, err2, err3, err4, err5}
+	errs := []error{}
+	for _, r := range c.readers() {
+		errs = append(errs, r.reader.Close())
+	}
 	for _, w := range c.dlqWriters {
 		errs = append(errs, w.Close())
 	}
 	return errors.Join(errs...)
 }
 
-// Run consumes all five topics until ctx is cancelled.
-func (c *Consumer) Run(ctx context.Context) error {
-	errCh := make(chan error, 5)
-	go func() { errCh <- c.consumeLoop(ctx, c.workforceReader, c.handleWorkforceEvent) }()
-	go func() { errCh <- c.consumeLoop(ctx, c.inventoryReader, c.handleInventoryEvent) }()
-	go func() { errCh <- c.consumeLoop(ctx, c.fulfillmentReader, c.handleFulfillmentEvent) }()
-	go func() { errCh <- c.consumeLoop(ctx, c.orderManagementReader, c.handleOrderManagementEvent) }()
-	go func() { errCh <- c.consumeLoop(ctx, c.networkDemandReader, c.handleNetworkDemandEvent) }()
+// stream pairs one consumed topic's reader with its handler.
+type stream struct {
+	reader *kafkago.Reader
+	handle func(context.Context, ce.Event) error
+}
 
-	for i := 0; i < 5; i++ {
+// readers lists every stream this consumer reads: the five fixed topics,
+// plus slotting-optimization's when WithSlotPlans wired it.
+func (c *Consumer) readers() []stream {
+	out := []stream{
+		{c.workforceReader, c.handleWorkforceEvent},
+		{c.inventoryReader, c.handleInventoryEvent},
+		{c.fulfillmentReader, c.handleFulfillmentEvent},
+		{c.orderManagementReader, c.handleOrderManagementEvent},
+		{c.networkDemandReader, c.handleNetworkDemandEvent},
+	}
+	if c.slottingReader != nil {
+		out = append(out, stream{c.slottingReader, c.handleSlottingEvent})
+	}
+	return out
+}
+
+// Run consumes every stream until ctx is cancelled.
+func (c *Consumer) Run(ctx context.Context) error {
+	streams := c.readers()
+	errCh := make(chan error, len(streams))
+	for _, s := range streams {
+		go func() { errCh <- c.consumeLoop(ctx, s.reader, s.handle) }()
+	}
+	for range streams {
 		if err := <-errCh; err != nil {
 			return err
 		}
@@ -569,6 +639,46 @@ func (c *Consumer) handleNetworkDemandEvent(ctx context.Context, env ce.Event) e
 		CPT:         data.CPT,
 	})
 	return err
+}
+
+// handleSlottingEvent filters for SlotPlanApproved and feeds it into
+// ApplySlotPlanApproved (ADR-0040), which plans one RELOCATE work unit per
+// move with the CloudEvents id marked processed in the SAME atomic scope.
+// SlotPlanGenerated, SlotPlanRejected and unknown types are ignored. A
+// broken plan, an unknown RELOCATE path or an intake without
+// SLOT_RELOCATION is returned as an error: dispatch retries it and then
+// dead-letters it (deterministic poison); a message only shutdown
+// cancellation interrupted is never dead-lettered (dispatch's ctx guard).
+func (c *Consumer) handleSlottingEvent(ctx context.Context, env ce.Event) error {
+	if env.Type() != cloudevents.TypeSlotPlanApproved {
+		return nil
+	}
+
+	var data slotPlanApprovedData
+	if err := env.DataAs(&data); err != nil {
+		return err
+	}
+	moves := make([]usecases.SlotPlanMove, len(data.Moves))
+	for i, m := range data.Moves {
+		moves[i] = usecases.SlotPlanMove{SKU: m.SKU, Kind: m.Kind, FromSlot: m.FromSlot, ToSlot: m.ToSlot}
+	}
+	outcome, err := c.applySlotPlanApproved.Execute(ctx, usecases.ApplySlotPlanApprovedRequest{
+		EventId:          env.ID(),
+		OccurredAt:       env.Time(),
+		PlanId:           data.PlanId,
+		SiteId:           data.SiteId,
+		ApprovedAt:       data.ApprovedAt,
+		SupersedesPlanId: data.SupersedesPlanId,
+		Moves:            moves,
+	})
+	if err != nil {
+		return err
+	}
+	if outcome == usecases.SlotPlanStale {
+		c.logInfo(ctx, "SlotPlanApproved older than the site's current plan; recorded, nothing planned",
+			"event_id", env.ID(), "plan_id", data.PlanId, "site_id", data.SiteId)
+	}
+	return nil
 }
 
 // logError emits a structured ERROR record (ADR-0023: a DLQ hand-off is an

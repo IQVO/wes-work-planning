@@ -282,6 +282,54 @@ rides the work unit and reappears as OPTIONAL fields on the published
 `WorkReleased` payload. Like the order integration, this is
 fire-and-forget: `WorkReleased` is the only signal back.
 
+### `warehouse.slotting-optimization.events` — `com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved`
+
+```json
+{
+  "specversion": "1.0", "id": "...", "type": "com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved",
+  "source": "/warehouse/slotting-optimization", "subject": "plan-3b0e8d2a-...", "time": "...",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:slotting-optimization:events:SlotPlanApproved:v1",
+  "data": {
+    "plan_id": "plan-3b0e8d2a-...", "site_id": "SITE-1", "approved_at": "2026-10-08T12:30:00Z",
+    "supersedes_plan_id": "plan-8e7d6c5b-...",
+    "assignments": [{"sku": "SKU-1", "slot": "WH1-FWD-A01-01-01-A"}],
+    "moves": [
+      {"sku": "SKU-1", "to_slot": "WH1-FWD-A01-01-01-A", "kind": "Assign"},
+      {"sku": "SKU-2", "from_slot": "WH1-FWD-A02-03-01-A", "to_slot": "WH1-FWD-A01-01-02-A", "kind": "Relocate"},
+      {"sku": "SKU-3", "from_slot": "WH1-FWD-A01-01-03-A", "kind": "Vacate"}
+    ]
+  }
+}
+```
+
+Fleet decision E1 ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)): an
+approved slot plan is executed as WES floor work. `ApplySlotPlanApproved`
+plans **one RELOCATE work unit per move** (id `<plan_id>-move-<seq>`, seq =
+0-based position in `moves`; `assignments` is ignored), sequences a move into
+a slot another move of the same plan vacates after that vacate completes, and
+lets a newer plan for the same site cancel the older plans' not-yet-released
+moves. Only `SlotPlanApproved` is handled; `SlotPlanGenerated` and
+`SlotPlanRejected` are ignored. The stream is read under the shared consumer
+group with its own `warehouse.slotting-optimization.events.dlq`; a malformed
+plan, an unknown move kind or a RELOCATE path whose intake refuses
+`SLOT_RELOCATION` is retried and then dead-lettered, and a message only
+shutdown interrupted is never dead-lettered.
+
+A released RELOCATE unit's `WorkReleased` carries one optional nested object,
+exactly what fulfillment-execution's RELOCATE task decodes (its ADR 0047):
+
+```json
+"relocation": {"plan_id": "plan-3b0e8d2a", "move_seq": 1, "kind": "Relocate",
+               "sku": "SKU-2", "from_bin": "WH1-FWD-A02-03-01-A", "to_bin": "WH1-FWD-A01-01-02-A"}
+```
+
+`move_seq` is always present (`0` included); `from_bin` is absent for
+`Assign`, `to_bin` for `Vacate`. RELOCATE work never carries the transfer
+fields (`work_kind`, `transfer_ref`). fulfillment-execution's `TaskCompleted`
+for that task completes the unit through the existing `ApplyTaskCompleted`,
+which admits the moves waiting on it.
+
 ### `warehouse.product-master.events` — `ProductClassified`
 
 Type `com.warehouse.wms.product-master.product.ProductClassified`, consumed

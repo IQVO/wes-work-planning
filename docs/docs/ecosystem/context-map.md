@@ -32,6 +32,7 @@ flowchart LR
     FE["<b>fulfillment-execution</b><br/>Core"]
     NF["<b>network-fulfillment</b><br/>Supporting"]
     PM["<b>product-master</b><br/>WMS tier, Supporting"]
+    SO["<b>slotting-optimization</b><br/>WMS tier, Supporting"]
     AG["<b>warehouse-ops-agent</b>"]
 
     WM -- "U to D, C/S, OHS+PL to ACL<br/>Kafka ShiftPlanCommitted" --> WP
@@ -39,6 +40,7 @@ flowchart LR
     OM -- "U to D, C/S, OHS+PL to ACL<br/>Kafka OrderAllocated, OrderPartiallyAllocated" --> WP
     PPM -- "U to D, OHS+PL to CF<br/>Kafka ProcessPath events or YAML file" --> WP
     PM -- "U to D, PL to local copy<br/>Kafka ProductClassified" --> WP
+    SO -- "U to D, C/S, OHS+PL to ACL<br/>Kafka SlotPlanApproved" --> WP
     FE -- "U to D, C/S feedback edge, OHS+PL to ACL<br/>Kafka TaskCompleted" --> WP
     WP -- "U to D, C/S, OHS+PL<br/>Kafka WorkReleased" --> FE
     WP -- "U to D, C/S, OHS+PL<br/>Kafka PathCapacityChanged" --> OM
@@ -73,9 +75,10 @@ service's own analytics topic `warehouse.wes.analytics`.
 | product-master | they U, we D | their PL, our local copy | Kafka `warehouse.product-master.events`, `com.warehouse.wms.product-master.product.ProductClassified` (version-guarded copy, read at release) | **Wired**, `PRODUCT_CLASSIFICATION_MODE=kafka`; default `permissive` reads nothing | `internal/adapters/inbound/kafka/product_classification_consumer.go`, `internal/adapters/outbound/productclassificationcopy/` ([ADR-0035](../adr/0035-product-classification-local-copy.md); replaces the retired inventory-storage REST lookup of [ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md)) |
 | order-management (demand) | they U, we D | C/S; their OHS+PL, our ACL | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` / `OrderPartiallyAllocated` | **Live** | ours: `consumer.go` (`orderAllocatedData`), `usecases.ApplyOrderAllocated` ([ADR-0031](../adr/0031-order-allocated-choreography.md)) |
 | order-management (capacity) | we U, they D | C/S; our OHS+PL | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` | **Live** | theirs: `internal/adapters/outbound/kafkapathcapacity/consumer.go` ([ADR-0018](../adr/0018-path-capacity-changed.md)) |
+| slotting-optimization | they U, we D | C/S; their OHS+PL, our ACL (`slotPlanApprovedData` → `relocation.Plan`) | Kafka `warehouse.slotting-optimization.events`, `com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved` | **Wired** (fleet decision E1): each move becomes a RELOCATE work unit released to fulfillment-execution's RELOCATE task | ours: `consumer.go` (`handleSlottingEvent`), `usecases.ApplySlotPlanApproved` ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) |
 | process-path-management | they U, we D | their OHS+PL, we CF | Kafka `warehouse.process-path-management.events`, `com.warehouse.wes.process-path-management.processpath.*`; or a YAML file | **Live** with `PATH_CATALOGUE_SOURCE=kafka`; file source is the default | `internal/adapters/outbound/kafkacatalog/`, `internal/adapters/outbound/filecatalog/` ([ADR-0012](../adr/0012-process-path-catalogue-validation.md), [ADR-0030](../adr/0030-kafka-sourced-path-catalogue.md)) |
 | facility-layout | they U, we D | their OHS, we CF | REST `GET /distance?from=&to=` at shift-plan commit | **Wired**, default `TRAVEL_DISTANCE_MODE=permissive` never calls out | `internal/adapters/outbound/traveldistance/` ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) |
-| fulfillment-execution (release) | we U, they D | C/S; our OHS+PL | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.workunit.WorkReleased` | **Live** | theirs: `internal/adapters/inbound/kafka/consumer.go` |
+| fulfillment-execution (release) | we U, they D | C/S; our OHS+PL | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.workunit.WorkReleased` (RELOCATE units add `relocation`, [ADR-0040](../adr/0040-slot-plan-relocation-work.md)) | **Live** | theirs: `internal/adapters/inbound/kafka/consumer.go`; RELOCATE task: their ADR 0047 |
 | fulfillment-execution (feedback) | they U, we D | C/S, roles reversed; their OHS+PL, our ACL | Kafka `warehouse.fulfillment.events`, `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | **Live** | ours: `consumer.go` (`taskCompletedData`), `usecases.ApplyTaskCompleted` |
 | network-fulfillment | we U, they D | our OHS+PL, they CF | Kafka `warehouse.work-planning.events`, `PathCapacityChanged` | **Live** (behind their `CAPABILITY_OFFER_ENABLED`) | theirs: `internal/adapters/outbound/pathcapacitycache/consumer.go` |
 | warehouse-ops-agent | we U, they D | our OHS | REST (`WES_WORK_PLANNING_REST_URL`, reports URL) and MCP (`get_backlog_telemetry`, `get_rebalance_recommendation`) | **Live** | theirs: `internal/config/config.go` |

@@ -63,6 +63,33 @@ func (r *WorkUnitRepo) FindByReference(ctx context.Context, reference string) ([
 	return out, nil
 }
 
+// PendingRelocationsAtSite returns every Pending RELOCATE work unit of
+// siteId (ADR-0040).
+func (r *WorkUnitRepo) PendingRelocationsAtSite(ctx context.Context, siteId string) ([]*workunit.WorkUnit, error) {
+	return r.filter(func(u *workunit.WorkUnit) bool {
+		return u.WorkKind() == workunit.WorkKindRelocate && u.SiteId() == siteId && u.State() == workunit.Pending
+	}), nil
+}
+
+// PendingBlockedBy returns every Pending work unit waiting on workUnitId.
+func (r *WorkUnitRepo) PendingBlockedBy(ctx context.Context, workUnitId string) ([]*workunit.WorkUnit, error) {
+	return r.filter(func(u *workunit.WorkUnit) bool {
+		return u.BlockedBy() == workUnitId && u.State() == workunit.Pending
+	}), nil
+}
+
+func (r *WorkUnitRepo) filter(keep func(*workunit.WorkUnit) bool) []*workunit.WorkUnit {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := []*workunit.WorkUnit{}
+	for _, u := range r.byId {
+		if keep(u) {
+			out = append(out, cloneWorkUnit(u))
+		}
+	}
+	return out
+}
+
 // cloneWorkUnit returns an independent copy of u, rebuilt exactly the way
 // the Postgres adapter rehydrates a row. Handing out the stored pointer let
 // concurrent use cases mutate one aggregate in place -- a data race no
@@ -79,11 +106,18 @@ func cloneWorkUnit(u *workunit.WorkUnit) *workunit.WorkUnit {
 	cp.SetSiteId(u.SiteId())
 	cp.SetQuantity(u.Quantity())
 	cp.SetLineNo(u.LineNo())
+	if m, ok := u.Relocation(); ok {
+		cp.SetRelocation(m)
+	}
+	cp.SetBlockedBy(u.BlockedBy())
 	if at := u.ReleasedAt(); at != nil {
 		_ = cp.Release(*at)
 	}
 	if at := u.CompletedAt(); at != nil {
 		_ = cp.Complete(*at)
+	}
+	if at := u.CancelledAt(); at != nil {
+		_ = cp.Cancel(*at)
 	}
 	return cp
 }

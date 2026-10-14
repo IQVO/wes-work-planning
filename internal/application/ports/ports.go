@@ -10,6 +10,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
 	"github.com/claudioed/wes-work-planning/internal/domain/plan"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
+	"github.com/claudioed/wes-work-planning/internal/domain/relocation"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
@@ -47,6 +48,31 @@ type WorkUnitRepo interface {
 	// reference; that mirrors FindByPathId's empty-collection semantics
 	// rather than FindById's single-resource semantics.
 	FindByReference(ctx context.Context, reference string) ([]*workunit.WorkUnit, error)
+}
+
+// RelocationWorkRepo reads the RELOCATE work units planned from approved
+// slot plans (ADR-0040). The same adapter that implements WorkUnitRepo
+// implements it; it is a separate port so the many WorkUnitRepo fakes stay
+// untouched.
+type RelocationWorkRepo interface {
+	// PendingRelocationsAtSite returns every RELOCATE work unit of siteId
+	// still Pending (blocked or pooled), of any plan. Empty slice, not
+	// ErrNotFound, when there is none.
+	PendingRelocationsAtSite(ctx context.Context, siteId string) ([]*workunit.WorkUnit, error)
+	// PendingBlockedBy returns every Pending work unit waiting on
+	// workUnitId (blocked_by = workUnitId). Empty slice when there is none.
+	PendingBlockedBy(ctx context.Context, workUnitId string) ([]*workunit.WorkUnit, error)
+}
+
+// SlotPlanRepo records the approved slot plans this context has applied,
+// per site, so a newer plan can supersede an older one regardless of the
+// order the events arrive in (ADR-0040).
+type SlotPlanRepo interface {
+	// LatestAtSite returns the latest-approved recorded plan of siteId
+	// (ties broken by the greater plan id), or ErrNotFound.
+	LatestAtSite(ctx context.Context, siteId string) (relocation.Receipt, error)
+	// Save records a plan; recording the same plan id again is a no-op.
+	Save(ctx context.Context, receipt relocation.Receipt) error
 }
 
 // EventPublisher publishes domain events raised by use cases.

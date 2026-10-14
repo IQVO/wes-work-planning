@@ -875,6 +875,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the Work Pool telemetry for process path "([^"]*)" does not report remaining capacity$`, w.telemetryNoRemainingCapacity)
 
 	registerWave2Steps(sc, w)
+	registerSlotPlanSteps(sc, w)
 }
 
 // TestFeatures runs the Gherkin acceptance suite under features/.

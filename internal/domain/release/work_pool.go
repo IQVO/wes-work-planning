@@ -246,6 +246,24 @@ func (p *WorkPool) Release(workUnitId string) error {
 	return ErrUnknownEntry
 }
 
+// Withdraw takes a still-pending entry out of the pool for good (ADR-0040:
+// a superseded slot plan's move that was never released). Released and
+// completed entries refuse with ErrAlreadyReleased — work already handed
+// out runs to completion; an id the pool never held is ErrUnknownEntry.
+func (p *WorkPool) Withdraw(workUnitId string) error {
+	for i, e := range p.entries {
+		if e.workUnitId != workUnitId {
+			continue
+		}
+		if e.state != pending {
+			return ErrAlreadyReleased
+		}
+		p.entries = append(p.entries[:i], p.entries[i+1:]...)
+		return nil
+	}
+	return ErrUnknownEntry
+}
+
 // RemainingCapacity reports how many more units this pool can admit right
 // now, and whether that figure means anything (see ADR-0018).
 //

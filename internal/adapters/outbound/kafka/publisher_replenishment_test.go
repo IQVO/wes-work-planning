@@ -25,9 +25,9 @@ import (
 
 // feReplenishment, feWorkReleased and feReplenishmentMove below are a
 // field-for-field copy of fulfillment-execution's decoder
-// (origin/feature/replenish-task, internal/adapters/inbound/kafka/consumer.go
-// WorkReleasedData / WorkReleasedReplenishment, and internal/domain/task
-// NewReplenishmentMove): quantity is a pointer there so an absent value is
+// (merged on origin/develop, internal/adapters/inbound/kafka/consumer.go
+// WorkReleasedData / WorkReleasedReplenishment / replenishmentMoveOf, and
+// internal/domain/task/replenishment.go NewReplenishmentMove): quantity is a pointer there so an absent value is
 // rejected, not read as 0.
 type feReplenishment struct {
 	RequestId string `json:"request_id"`

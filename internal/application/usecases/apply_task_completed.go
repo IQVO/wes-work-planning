@@ -3,9 +3,11 @@ package usecases
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
+	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
 // TaskCompletedOutcome reports what ApplyTaskCompleted did with one
@@ -62,17 +64,27 @@ type ApplyTaskCompletedRequest struct {
 	OccurredAt time.Time
 }
 
-// Execute applies one TaskCompleted. ports.ErrNotFound from
-// RecordCompletion (an unknown work unit) is the only error converted into
-// a successful outcome; every other error is returned and nothing is
-// committed, so the caller retries and, once retries are exhausted,
-// dead-letters the event.
+// Execute applies one TaskCompleted. Two deterministic domain facts are
+// converted into successful outcomes instead of errors (ADR-0043):
+// ports.ErrNotFound from RecordCompletion (an unknown work unit) and
+// workunit.ErrAlreadyCompleted (a second, DISTINCT task completed a work
+// unit that was already completed — a stale fact that no longer applies,
+// logged once at INFO). The event is marked processed either way, so a
+// redelivery is a cheap no-op that does not re-log the skip. Every other
+// error is returned and nothing is committed, so the caller retries and,
+// once retries are exhausted, dead-letters the event.
 func (uc *ApplyTaskCompleted) Execute(ctx context.Context, req ApplyTaskCompletedRequest) (TaskCompletedOutcome, error) {
 	outcome := TaskCompletedApplied
 	alreadyProcessed, err := onceAtomically(ctx, uc.uow, uc.processed, req.EventId, req.OccurredAt, func(ctx context.Context) error {
 		_, err := uc.recordCompletion.Execute(ctx, RecordCompletionRequest{WorkUnitId: req.WorkUnitId})
 		if errors.Is(err, ports.ErrNotFound) {
 			outcome = TaskCompletedUnknownWorkUnit
+			return nil
+		}
+		if errors.Is(err, workunit.ErrAlreadyCompleted) {
+			outcome = TaskCompletedAlreadyCompleted
+			slog.InfoContext(ctx, "TaskCompleted for a work unit that is already completed; skipping",
+				"event_id", req.EventId, "work_unit_id", req.WorkUnitId)
 			return nil
 		}
 		return err

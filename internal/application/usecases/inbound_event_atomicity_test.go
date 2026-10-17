@@ -155,6 +155,9 @@ func processedVariants() []func() processedVariant {
 
 type completionFixture struct {
 	workUnits *memory.WorkUnitRepo
+	pools     *memory.WorkPoolRepo
+	publisher *events.LogPublisher
+	clock     memory.FixedClock
 	flaky     *flakyWorkUnits
 	uc        *usecases.ApplyTaskCompleted
 }
@@ -181,6 +184,9 @@ func newCompletionFixture(t *testing.T, v processedVariant, failures int) comple
 	record := usecases.NewRecordCompletion(flaky, pools, publisher, clock).WithUnitOfWork(v.uow)
 	return completionFixture{
 		workUnits: workUnits,
+		pools:     pools,
+		publisher: publisher,
+		clock:     clock,
 		flaky:     flaky,
 		uc:        usecases.NewApplyTaskCompleted(record, v.processed).WithUnitOfWork(v.uow),
 	}
@@ -281,9 +287,9 @@ func TestApplyTaskCompleted_AlreadyCompletedWorkUnitIsALoggedSkip(t *testing.T) 
 	}
 }
 
-// A domain error other than ErrNotFound (here: double-complete under a new
-// event id) is NOT a skip: it propagates so the consumer retries/DLQs it,
-// and the event stays unmarked.
+// A domain error outside the two classified no-ops (here: completing a
+// unit that was never released) is NOT a skip: it propagates so the
+// consumer retries/DLQs it, and the event stays unmarked.
 func TestApplyTaskCompleted_OtherErrorsPropagateAndLeaveNoMark(t *testing.T) {
 	for _, newVariant := range processedVariants() {
 		v := newVariant()
@@ -293,10 +299,17 @@ func TestApplyTaskCompleted_OtherErrorsPropagateAndLeaveNoMark(t *testing.T) {
 			if _, err := f.uc.Execute(ctx, completionRequest("evt-a", "wu-1")); err != nil {
 				t.Fatalf("first completion: %v", err)
 			}
+			// wu-2 is enqueued but never released: completing it is a
+			// genuine domain inconsistency, not a classified no-op.
+			if _, err := usecases.NewEnqueueWorkUnit(f.workUnits, f.pools, f.publisher, f.clock).Execute(ctx, usecases.EnqueueWorkUnitRequest{
+				WorkUnitId: "wu-2", PathId: mustPath(t, "pick-a"), CPT: shared.NewCPT(f.clock.At.Add(2 * time.Hour)), Reference: "order-2",
+			}); err != nil {
+				t.Fatalf("enqueue wu-2: %v", err)
+			}
 			for attempt := 1; attempt <= 2; attempt++ {
-				_, err := f.uc.Execute(ctx, completionRequest("evt-b", "wu-1"))
-				if !errors.Is(err, workunit.ErrAlreadyCompleted) {
-					t.Fatalf("attempt %d: got %v, want ErrAlreadyCompleted every time (a mark left behind would turn attempt 2 into a silent success)", attempt, err)
+				_, err := f.uc.Execute(ctx, completionRequest("evt-b", "wu-2"))
+				if !errors.Is(err, workunit.ErrNotReleased) {
+					t.Fatalf("attempt %d: got %v, want ErrNotReleased every time (a mark left behind would turn attempt 2 into a silent success)", attempt, err)
 				}
 			}
 		})

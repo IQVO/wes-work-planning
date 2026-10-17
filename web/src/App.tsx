@@ -1,10 +1,12 @@
 import { NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { PlanningScreen } from "./screens/PlanningScreen";
 import { PoolConfigScreen } from "./screens/PoolConfigScreen";
+import { ChargeForecastScreen } from "./screens/ChargeForecastScreen";
 
 const SUB_NAV = [
   { to: ".", label: "Dashboard", end: true },
   { to: "pool", label: "Pool configuration", end: true },
+  { to: "charge", label: "Charge forecast", end: true },
 ];
 
 const linkStyle = ({ isActive }: { isActive: boolean }) => ({
@@ -50,13 +52,16 @@ function PlanningLayout() {
  *  (standalone dev, see main.tsx).
  *
  *  - (index): the existing telemetry/rebalance dashboard + work-unit search.
- *  - pool: configure a path's work pool (PUT /paths/{pathId}/pool). */
+ *  - pool: configure a path's work pool (PUT /paths/{pathId}/pool).
+ *  - charge: the planner's manual charge-forecast intake (POST
+ *    /paths/{pathId}/charge, Idempotency-Key per submission). */
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<PlanningLayout />}>
         <Route index element={<PlanningScreen />} />
         <Route path="pool" element={<PoolConfigScreen />} />
+        <Route path="charge" element={<ChargeForecastScreen />} />
       </Route>
     </Routes>
   );

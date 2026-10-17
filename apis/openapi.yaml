@@ -282,6 +282,7 @@ paths:
   /paths/{pathId}/work-units:
     post:
       operationId: enqueueWorkUnit
+      deprecated: true
       summary: Enqueue a work unit onto a process path's work pool
       description: >
         Adds a releasable unit of work (e.g. a pick task) to a process path's
@@ -304,6 +305,12 @@ paths:
         stored response verbatim and does not enqueue again. A missing key is
         `400 idempotency-key-required`; the same key with a different body
         is `422 idempotency-key-reused`. Use a fresh key per logical action.
+
+        Superseded by the K1 choreography (X3): order-management publishes
+        `OrderAllocated` / `OrderPartiallyAllocated` and this service's
+        `ApplyOrderAllocated` consumer enqueues one work unit per line
+        (OM ADR 0005 / WP ADR-0031); removal planned with the next breaking
+        window.
       tags: [Work Units]
       parameters:
         - $ref: "#/components/parameters/PathId"
@@ -809,6 +816,7 @@ paths:
   /work-units/{id}/complete:
     post:
       operationId: recordCompletion
+      deprecated: true
       summary: Record completion of a released work unit
       description: >
         Finishes a released work unit — the RecordCompletion use case.
@@ -819,6 +827,10 @@ paths:
         endpoint is also the target of the additive `TaskCompleted` Kafka
         consumer (Task 8) — fulfillment-execution's task completion drives
         the exact same use case as this HTTP call.
+        Superseded by the `TaskCompleted` consumer (K14): fulfillment-execution
+        publishes task completion on Kafka and this service consumes it to
+        drive the same use case; removal planned with the next breaking
+        window.
       tags: [Work Units]
       parameters:
         - $ref: "#/components/parameters/WorkUnitId"

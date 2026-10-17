@@ -1,0 +1,17 @@
+{
+  "specversion": "1.0",
+  "id": "4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a",
+  "source": "/warehouse/pick-face-replenishment",
+  "type": "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled",
+  "subject": "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07",
+  "time": "2026-10-17T09:50:00Z",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:pick-face-replenishment:events:ReplenishmentCancelled:v1",
+  "data": {
+    "request_id": "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07",
+    "site_id": "WH1",
+    "sku": "SKU-1",
+    "reason": "ASSIGNMENT_CHANGED",
+    "cancelled_at": "2026-10-17T09:50:00Z"
+  }
+}

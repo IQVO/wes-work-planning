@@ -48,6 +48,10 @@ const (
 	// TopicSlottingEvents is slotting-optimization's integration topic
 	// (SlotPlanApproved, ADR-0040).
 	TopicSlottingEvents = "warehouse.slotting-optimization.events"
+	// TopicPickFaceReplenishmentEvents is pick-face-replenishment's
+	// integration topic (ReplenishmentRequested / ReplenishmentCancelled,
+	// ADR-0042).
+	TopicPickFaceReplenishmentEvents = "warehouse.pick-face-replenishment.events"
 )
 
 // Full CloudEvents `type` strings this service CONSUMES from other bounded
@@ -71,6 +75,13 @@ const (
 	// (warehouse.slotting-optimization.events), planned as RELOCATE work
 	// (ADR-0040).
 	TypeSlotPlanApproved = "com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved"
+	// TypeReplenishmentRequested and TypeReplenishmentCancelled are
+	// pick-face-replenishment's request events
+	// (warehouse.pick-face-replenishment.events): a request is planned as
+	// REPLENISH work and a cancellation withdraws it while it is still
+	// Pending (ADR-0042). ReplenishmentCompleted is ignored.
+	TypeReplenishmentRequested = "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested"
+	TypeReplenishmentCancelled = "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled"
 )
 
 // ErrNotCloudEvent marks a message that is not a valid CloudEvents 1.0 event.

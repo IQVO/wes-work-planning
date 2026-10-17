@@ -109,6 +109,9 @@ func cloneWorkUnit(u *workunit.WorkUnit) *workunit.WorkUnit {
 	if m, ok := u.Relocation(); ok {
 		cp.SetRelocation(m)
 	}
+	if m, ok := u.Replenishment(); ok {
+		cp.SetReplenishment(m)
+	}
 	cp.SetBlockedBy(u.BlockedBy())
 	if at := u.ReleasedAt(); at != nil {
 		_ = cp.Release(*at)

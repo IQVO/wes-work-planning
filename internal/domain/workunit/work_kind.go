@@ -14,6 +14,10 @@ const (
 	// WorkKindRelocate is one move of an approved slot plan (ADR-0040),
 	// released on the RELOCATE process path.
 	WorkKindRelocate WorkKind = "RELOCATE"
+	// WorkKindReplenish is one pick-face replenishment request of
+	// pick-face-replenishment (ADR-0042), released on the REPLENISH process
+	// path.
+	WorkKindReplenish WorkKind = "REPLENISH"
 )
 
 // String returns the exact wire form (the identity for a string enum, kept
@@ -34,7 +38,7 @@ func (k WorkKind) IsTransfer() bool {
 // require IsTransfer (a WorkDemandReleased can never carry RELOCATE).
 func ParseWorkKind(value string) (WorkKind, error) {
 	k := WorkKind(value)
-	if k.IsTransfer() || k == WorkKindRelocate {
+	if k.IsTransfer() || k == WorkKindRelocate || k == WorkKindReplenish {
 		return k, nil
 	}
 	return "", ErrUnknownWorkKind

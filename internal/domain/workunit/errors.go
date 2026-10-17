@@ -24,6 +24,14 @@ var (
 	// inconsistent: no plan id, a negative move_seq, a slot its kind
 	// requires is missing, or both slots are the same (ADR-0040).
 	ErrInvalidRelocationMove = errors.New("invalid relocation move")
+	// ErrUnknownReplenishmentPriority marks a replenishment priority other
+	// than NORMAL or URGENT (ADR-0042).
+	ErrUnknownReplenishmentPriority = errors.New("unknown replenishment priority")
+	// ErrInvalidReplenishmentMove marks a pick-face replenishment that is
+	// incomplete or inconsistent: no request id (or one longer than 200
+	// characters), no SKU or bin, equal bins, or a quantity below 1
+	// (ADR-0042).
+	ErrInvalidReplenishmentMove = errors.New("invalid replenishment move")
 	// ErrCancelled marks a transition attempted on a Cancelled work unit:
 	// Cancelled is terminal (ADR-0040).
 	ErrCancelled = errors.New("work unit is cancelled")

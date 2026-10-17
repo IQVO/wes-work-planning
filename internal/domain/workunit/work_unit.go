@@ -68,6 +68,7 @@ type WorkUnit struct {
 	quantity    int
 	lineNo      int
 	relocation  *RelocationMove
+	replenish   *ReplenishmentMove
 	blockedBy   string
 	state       State
 	releasedAt  *time.Time
@@ -203,6 +204,24 @@ func (w *WorkUnit) Relocation() (move RelocationMove, ok bool) {
 // SetRelocation records the validated slot-plan move after construction
 // (built by NewRelocationMove), mirroring the additive-setter discipline.
 func (w *WorkUnit) SetRelocation(move RelocationMove) { w.relocation = &move }
+
+// Replenishment returns the pick-face replenishment a REPLENISH unit
+// executes (ADR-0042); ok is false for every other unit.
+func (w *WorkUnit) Replenishment() (move ReplenishmentMove, ok bool) {
+	if w.replenish == nil {
+		return ReplenishmentMove{}, false
+	}
+	return *w.replenish, true
+}
+
+// SetReplenishment records the validated replenishment (built by
+// NewReplenishmentMove) after construction. The move is the single source of
+// the unit's SKU and quantity, so both are set from it and can never drift.
+func (w *WorkUnit) SetReplenishment(move ReplenishmentMove) {
+	w.replenish = &move
+	w.sku = move.SKU
+	w.quantity = move.Quantity
+}
 
 // BlockedBy is the id of the work unit this unit waits on: a slot-plan move
 // into a slot another move of the same plan vacates is admitted to its pool

@@ -162,6 +162,7 @@ const sidebars: SidebarsConfig = {
         'adr/0038-reports-api-openapi-contract',
         'adr/0039-outbox-relay-attempt-cap',
         'adr/0040-slot-plan-relocation-work',
+        'adr/0041-work-unit-created-origin',
       ],
     },
   ],

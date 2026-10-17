@@ -163,6 +163,7 @@ const sidebars: SidebarsConfig = {
         'adr/0039-outbox-relay-attempt-cap',
         'adr/0040-slot-plan-relocation-work',
         'adr/0041-work-unit-created-origin',
+        'adr/0042-pick-face-replenishment-work',
         'adr/0043-taskcompleted-already-completed-skip',
       ],
     },

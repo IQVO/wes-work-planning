@@ -332,6 +332,48 @@ fields (`work_kind`, `transfer_ref`). fulfillment-execution's `TaskCompleted`
 for that task completes the unit through the existing `ApplyTaskCompleted`,
 which admits the moves waiting on it.
 
+### `warehouse.pick-face-replenishment.events` — `ReplenishmentRequested` / `ReplenishmentCancelled`
+
+```json
+{
+  "specversion": "1.0", "id": "...", "type": "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested",
+  "source": "/warehouse/pick-face-replenishment", "subject": "repl-3b0e8d2a-...", "time": "...",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:pick-face-replenishment:events:ReplenishmentRequested:v1",
+  "data": {
+    "request_id": "repl-3b0e8d2a-...", "site_id": "WH1", "sku": "SKU-1",
+    "forward_bin": "WH1-FWD-A01-01-01-A", "source_bin": "WH1-RSV-A07-03-02-B",
+    "quantity": 24, "priority": "NORMAL", "policy_min": 10, "policy_max": 60,
+    "requested_at": "2026-10-17T09:30:00Z"
+  }
+}
+```
+
+[ADR-0042](../adr/0042-pick-face-replenishment-work.md): consumed only when
+`REPLENISHMENT_MODE=kafka`, under the stable group
+`REPLENISHMENT_CONSUMER_GROUP` shared by every replica. `ApplyReplenishmentRequested`
+plans **one REPLENISH work unit per request id** (id `replenish-<request_id>`,
+reference = `request_id`, path `REPLENISH`; `source_bin` becomes `from_bin`,
+`forward_bin` becomes `to_bin`); a redelivery, or a different event for a planned
+request id, is a no-op. CPT = `requested_at` + `REPLENISHMENT_CPT_HORIZON` (8h)
+for `NORMAL`, + `REPLENISHMENT_URGENT_CPT_HORIZON` (1h) for `URGENT`, so urgent
+requests sit in the front band. `ReplenishmentCancelled` cancels the unit only
+while it is still `Pending`; released work runs to completion.
+`ReplenishmentCompleted` and every unknown type are ignored. Poison goes to
+`warehouse.pick-face-replenishment.events.dlq`; a message only shutdown
+interrupted is never dead-lettered.
+
+A released REPLENISH unit's `WorkReleased` carries one optional nested object,
+exactly what fulfillment-execution's REPLENISH task decodes (its ADR 0050):
+
+```json
+"replenishment": {"request_id": "repl-9c2f6b1e-...", "sku": "SKU-2", "from_bin": "WH1-RSV-A07-03-02-B",
+                  "to_bin": "WH1-FWD-A01-01-02-A", "quantity": 6, "priority": "URGENT"}
+```
+
+All six members are always present. REPLENISH work never carries `relocation`
+or the transfer fields.
+
 ### `warehouse.product-master.events` — `ProductClassified`
 
 Type `com.warehouse.wms.product-master.product.ProductClassified`, consumed

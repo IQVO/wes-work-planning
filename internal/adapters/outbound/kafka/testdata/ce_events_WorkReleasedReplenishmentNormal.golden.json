@@ -1,0 +1,24 @@
+{
+  "specversion": "1.0",
+  "id": "11111111-1111-4111-8111-111111111111",
+  "source": "/warehouse/wes-work-planning",
+  "type": "com.warehouse.wes.work-planning.workunit.WorkReleased",
+  "subject": "replenish-repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:wes-work-planning:events:WorkReleased:v1",
+  "time": "2026-10-17T09:45:00Z",
+  "data": {
+    "cpt": "2026-10-17T17:30:00Z",
+    "path_id": "REPLENISH",
+    "ref": "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07",
+    "replenishment": {
+      "from_bin": "WH1-RSV-A07-03-02-B",
+      "priority": "NORMAL",
+      "quantity": 24,
+      "request_id": "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07",
+      "sku": "SKU-1",
+      "to_bin": "WH1-FWD-A01-01-01-A"
+    },
+    "work_unit_id": "replenish-repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+  }
+}

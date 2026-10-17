@@ -65,6 +65,11 @@ func run() error {
 		return err
 	}
 
+	replenishment, err := buildReplenishment(loadReplenishmentConfig(cfg.kafkaBrokers, repos.pgPool != nil), logger)
+	if err != nil {
+		return err
+	}
+
 	publisher, relay, stopPublisher, err := wireEventPublisher(logger, cfg.eventPublisherKind, cfg.kafkaBrokers, repos.workUnits, classification.lookup, repos.pgPool)
 	if err != nil {
 		return err
@@ -81,6 +86,7 @@ func run() error {
 		kafkaCatalogue:          kafkaCatalogue,
 		cancelCatalogueConsumer: cancelCatalogueConsumer,
 		classification:          classification,
+		replenishment:           replenishment,
 	}).run()
 }
 

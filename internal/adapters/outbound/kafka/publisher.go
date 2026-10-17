@@ -329,7 +329,7 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 	cpt, ref, sku, giftWrap := "", "", "", false
 	transferRef, siteId, quantity, lineNo := "", "", 0, 0
 	var workKind workunit.WorkKind
-	var relocation map[string]any
+	var relocation, replenishment map[string]any
 	if unit, err := p.workUnits.FindById(ctx, ev.WorkUnitId); err == nil {
 		cpt = unit.CPT().Time().Format(time.RFC3339)
 		ref = unit.Reference()
@@ -341,6 +341,7 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 		quantity = unit.Quantity()
 		lineNo = unit.LineNo()
 		relocation = relocationData(unit)
+		replenishment = replenishmentData(unit)
 	}
 
 	requiredCapabilities, fragile := p.classificationHints(ctx, sku)
@@ -402,7 +403,31 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 	if relocation != nil {
 		data["relocation"] = relocation
 	}
+	// Pick-face replenishment (ADR-0042): ONE optional nested object next to
+	// `relocation`, present only on a REPLENISH unit — exactly the six
+	// members fulfillment-execution's REPLENISH task decodes (its ADR 0050).
+	if replenishment != nil {
+		data["replenishment"] = replenishment
+	}
 	return json.Marshal(data)
+}
+
+// replenishmentData is WorkReleased.data.replenishment for a REPLENISH unit,
+// nil for every other unit: request_id, sku, from_bin, to_bin, quantity
+// (always present) and priority (NORMAL | URGENT).
+func replenishmentData(unit *workunit.WorkUnit) map[string]any {
+	move, ok := unit.Replenishment()
+	if !ok {
+		return nil
+	}
+	return map[string]any{
+		"request_id": move.RequestId,
+		"sku":        move.SKU,
+		"from_bin":   move.FromBin,
+		"to_bin":     move.ToBin,
+		"quantity":   move.Quantity,
+		"priority":   move.Priority.String(),
+	}
 }
 
 // relocationData is WorkReleased.data.relocation for a RELOCATE unit, nil

@@ -290,6 +290,40 @@ channels:
       message:
         $ref: "#/components/messages/SlotPlanApproved"
 
+  warehouse.pick-face-replenishment.events:
+    description: >-
+      pick-face-replenishment's integration topic, CONSUMED by this service
+      (owned by that bounded context; listed here read-only for orientation,
+      mirroring its own apis/asyncapi.yaml). Key = the request id. This
+      service consumes only ReplenishmentRequested and ReplenishmentCancelled
+      and ignores ReplenishmentCompleted and every other type (ADR-0042).
+    publish:
+      operationId: consumeReplenishmentEvents
+      summary: Consume replenishment requests and plan them as REPLENISH work.
+      description: >-
+        A dedicated consumer reads this topic under the stable consumer group
+        `REPLENISHMENT_CONSUMER_GROUP` (only with `REPLENISHMENT_MODE=kafka`;
+        the default `permissive` consumes nothing) with its own
+        `warehouse.pick-face-replenishment.events.dlq`. Each
+        ReplenishmentRequested becomes exactly ONE REPLENISH work unit (id
+        `replenish-<request_id>`, ref = request_id, path REPLENISH, released
+        with the additive `replenishment` object of WorkReleased); a
+        redelivery of the same CloudEvents `id`, or a second DIFFERENT event
+        for an already-planned request id, is a no-op. ReplenishmentCancelled
+        cancels the request's unit only while it is still Pending (not yet
+        released); released or completed work runs to completion, and a
+        cancellation for an unknown request is a no-op. The CloudEvents `id`
+        is claimed in the same transaction as the effect. Invalid
+        CloudEvents (including the retired flat envelope) are WARN-logged and
+        skipped; a payload that can never be applied is dead-lettered at
+        once, any other failure is retried and then dead-lettered; a message
+        interrupted by shutdown is never dead-lettered, and the offset is
+        committed only after success.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ReplenishmentRequested"
+          - $ref: "#/components/messages/ReplenishmentCancelled"
+
   warehouse.product-master.events:
     description: >-
       product-master's integration topic, CONSUMED by this service (owned by
@@ -499,6 +533,80 @@ components:
                   from_slot: WH1-FWD-A01-01-03-A
                   kind: Vacate
 
+    ReplenishmentRequested:
+      name: ReplenishmentRequested
+      title: Replenishment Requested (consumed)
+      summary: pick-face-replenishment asked for stock to be moved to a forward pick face.
+      description: >-
+        CONSUMED from `warehouse.pick-face-replenishment.events` — this entry
+        mirrors the producer's own contract (ReplenishmentRequestedEvent)
+        read-only and is NOT published by this service. `request_id`,
+        `site_id`, `sku`, `source_bin` (the reserve bin, becomes `from_bin`),
+        `forward_bin` (the pick face, becomes `to_bin`), `quantity`,
+        `priority` and `requested_at` are read; `policy_min` and `policy_max`
+        are ignored (ADR-0042).
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ReplenishmentRequestedEvent"
+      examples:
+        - name: replenishmentRequested
+          summary: 24 units of SKU-1 from a reserve bin to its forward bin.
+          payload:
+            specversion: "1.0"
+            id: 6f1d2c3b-4a5e-4b7c-8d9e-0a1b2c3d4e5f
+            source: /warehouse/pick-face-replenishment
+            type: com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested
+            subject: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            time: "2026-10-17T09:30:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:pick-face-replenishment:events:ReplenishmentRequested:v1
+            data:
+              request_id: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              site_id: WH1
+              sku: SKU-1
+              forward_bin: WH1-FWD-A01-01-01-A
+              source_bin: WH1-RSV-A07-03-02-B
+              quantity: 24
+              priority: NORMAL
+              policy_min: 10
+              policy_max: 60
+              requested_at: "2026-10-17T09:30:00Z"
+
+    ReplenishmentCancelled:
+      name: ReplenishmentCancelled
+      title: Replenishment Cancelled (consumed)
+      summary: pick-face-replenishment cancelled an open replenishment request.
+      description: >-
+        CONSUMED from `warehouse.pick-face-replenishment.events` — this entry
+        mirrors the producer's own contract (ReplenishmentCancelledEvent)
+        read-only and is NOT published by this service. Only `request_id` is
+        needed to find the unit; `reason` is carried for logs (ADR-0042).
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ReplenishmentCancelledEvent"
+      examples:
+        - name: replenishmentCancelled
+          summary: Cancelled because the slot plan moved the SKU to another forward bin.
+          payload:
+            specversion: "1.0"
+            id: 4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a
+            source: /warehouse/pick-face-replenishment
+            type: com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled
+            subject: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+            time: "2026-10-17T09:50:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:pick-face-replenishment:events:ReplenishmentCancelled:v1
+            data:
+              request_id: repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07
+              site_id: WH1
+              sku: SKU-1
+              reason: ASSIGNMENT_CHANGED
+              cancelled_at: "2026-10-17T09:50:00Z"
+
     ProductClassified:
       name: ProductClassified
       title: Product Classified (consumed)
@@ -648,6 +756,32 @@ components:
                 sku: SKU-2
                 from_bin: WH1-FWD-A02-03-01-A
                 to_bin: WH1-FWD-A01-01-02-A
+        - name: workReleasedReplenish
+          summary: >-
+            A URGENT pick-face replenishment was released on the REPLENISH
+            path (ADR-0042); fulfillment-execution turns it into a REPLENISH
+            task (its ADR 0050).
+          payload:
+            specversion: "1.0"
+            id: 11111111-1111-4111-8111-111111111111
+            source: /warehouse/wes-work-planning
+            type: com.warehouse.wes.work-planning.workunit.WorkReleased
+            subject: replenish-repl-9c2f6b1e-5d3a-4e8b-a7f0-1b2c3d4e5f60
+            time: "2026-10-17T09:45:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:wes-work-planning:events:WorkReleased:v1
+            data:
+              path_id: REPLENISH
+              work_unit_id: replenish-repl-9c2f6b1e-5d3a-4e8b-a7f0-1b2c3d4e5f60
+              cpt: "2026-10-17T10:30:00Z"
+              ref: repl-9c2f6b1e-5d3a-4e8b-a7f0-1b2c3d4e5f60
+              replenishment:
+                request_id: repl-9c2f6b1e-5d3a-4e8b-a7f0-1b2c3d4e5f60
+                sku: SKU-2
+                from_bin: WH1-RSV-A07-03-02-B
+                to_bin: WH1-FWD-A01-01-02-A
+                quantity: 6
+                priority: URGENT
 
     WorkUnitCompleted:
       name: WorkUnitCompleted
@@ -1384,6 +1518,104 @@ components:
                         type: string
                         enum: [Assign, Relocate, Vacate]
 
+    ReplenishmentRequestedEvent:
+      title: ReplenishmentRequested CloudEvent (consumed)
+      description: >-
+        Mirror of pick-face-replenishment's ReplenishmentRequestedEvent
+        (read-only).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested"
+            dataschema:
+              type: string
+              const: "urn:warehouse:pick-face-replenishment:events:ReplenishmentRequested:v1"
+            data:
+              type: object
+              required:
+                - request_id
+                - site_id
+                - sku
+                - forward_bin
+                - source_bin
+                - quantity
+                - priority
+                - requested_at
+              properties:
+                request_id:
+                  type: string
+                site_id:
+                  type: string
+                sku:
+                  type: string
+                forward_bin:
+                  type: string
+                  description: The pick face to fill; becomes the work unit's `to_bin`.
+                source_bin:
+                  type: string
+                  description: The reserve bin the stock comes from; becomes `from_bin`.
+                quantity:
+                  type: integer
+                  minimum: 1
+                priority:
+                  type: string
+                  enum: [NORMAL, URGENT]
+                policy_min:
+                  type: integer
+                  description: Ignored by this service.
+                policy_max:
+                  type: integer
+                  description: Ignored by this service.
+                requested_at:
+                  type: string
+                  format: date-time
+
+    ReplenishmentCancelledEvent:
+      title: ReplenishmentCancelled CloudEvent (consumed)
+      description: >-
+        Mirror of pick-face-replenishment's ReplenishmentCancelledEvent
+        (read-only).
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled"
+            dataschema:
+              type: string
+              const: "urn:warehouse:pick-face-replenishment:events:ReplenishmentCancelled:v1"
+            data:
+              type: object
+              required:
+                - request_id
+                - reason
+              properties:
+                request_id:
+                  type: string
+                site_id:
+                  type: string
+                  description: Ignored by this service.
+                sku:
+                  type: string
+                  description: Ignored by this service.
+                reason:
+                  type: string
+                  enum: [OPERATOR, ASSIGNMENT_CHANGED, POLICY_REMOVED]
+                  description: Carried for logs only.
+                cancelled_at:
+                  type: string
+                  format: date-time
+
     ProductClassifiedEvent:
       title: ProductClassified CloudEvent (consumed)
       description: >-
@@ -1658,6 +1890,55 @@ components:
                       type: string
                       description: Slot the stock lands in; absent for Vacate.
                       example: WH1-FWD-A01-01-02-A
+                replenishment:
+                  type: object
+                  description: >-
+                    OPTIONAL (ADR-0042). Present only on a REPLENISH work unit
+                    (one planned from pick-face-replenishment's
+                    ReplenishmentRequested, released on the `REPLENISH` path):
+                    the pick-face replenishment move it executes, exactly the
+                    object fulfillment-execution's REPLENISH task decodes (its
+                    ADR 0050). Absent on order, transfer and RELOCATE work,
+                    whose payloads are byte-identical to before. REPLENISH
+                    work never carries `relocation`, `work_kind` or
+                    `transfer_ref`. All six members are always present.
+                  required:
+                    - request_id
+                    - sku
+                    - from_bin
+                    - to_bin
+                    - quantity
+                    - priority
+                  properties:
+                    request_id:
+                      type: string
+                      description: The pick-face-replenishment request; one work unit per request id.
+                      example: repl-9c2f6b1e-5d3a-4e8b-a7f0-1b2c3d4e5f60
+                    sku:
+                      type: string
+                      example: SKU-2
+                    from_bin:
+                      type: string
+                      description: Reserve bin the stock leaves.
+                      example: WH1-RSV-A07-03-02-B
+                    to_bin:
+                      type: string
+                      description: Forward pick face the stock lands in; differs from from_bin.
+                      example: WH1-FWD-A01-01-02-A
+                    quantity:
+                      type: integer
+                      minimum: 1
+                      example: 6
+                    priority:
+                      type: string
+                      enum: [NORMAL, URGENT]
+                      description: >-
+                        URGENT requests are released with a CPT of
+                        requested_at + `REPLENISHMENT_URGENT_CPT_HORIZON`
+                        (default 1h) against `REPLENISHMENT_CPT_HORIZON`
+                        (default 8h) for NORMAL, so they sit in the front
+                        band of every earliest-CPT-first queue.
+                      example: URGENT
 
     WorkUnitCompletedEvent:
       title: WorkUnitCompleted CloudEvent

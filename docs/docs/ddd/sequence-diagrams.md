@@ -173,8 +173,11 @@ sequenceDiagram
                 UC-->>ATC: TaskCompletedUnknownWorkUnit, processed skip
             end
             UC->>Unit: Complete now
-            alt already completed or not released
-                Unit-->>UC: ErrAlreadyCompleted or ErrNotReleased
+            alt already completed
+                Unit-->>UC: ErrAlreadyCompleted
+                UC-->>ATC: TaskCompletedAlreadyCompleted, INFO-logged processed skip
+            else not released
+                Unit-->>UC: ErrNotReleased
             end
             UC->>PoolRepo: FindByPathId
             UC->>Pool: Reconcile entry to completed

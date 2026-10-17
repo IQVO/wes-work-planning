@@ -100,6 +100,49 @@ func TestLineNoToColumn_NeverBindsAnOutOfRangeValue(t *testing.T) {
 	}
 }
 
+// ADR-0042: the replenishment columns rehydrate the move (sku and quantity
+// come from the unit's own columns), a corrupt priority fails loud, and a
+// REPLENISH row without its columns is refused instead of silently losing
+// the move.
+func TestScanWorkUnit_ReplenishmentColumns(t *testing.T) {
+	cpt := time.Date(2026, 10, 17, 17, 30, 0, 0, time.UTC)
+	r := &WorkUnitRepo{}
+	base := workUnitRow{id: "replenish-r1", pathId: "REPLENISH", reference: "r1", sku: "SKU-1", state: "Pending", workKind: "REPLENISH",
+		siteId: "WH1", quantity: 24, cpt: cpt, replenishmentRequestId: "r1", replenishmentFromBin: "RSV-1", replenishmentToBin: "FWD-1", replenishmentPriority: "URGENT"}
+
+	unit, err := r.scanWorkUnit(base)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	m, ok := unit.Replenishment()
+	want := workunit.ReplenishmentMove{RequestId: "r1", SKU: "SKU-1", FromBin: "RSV-1", ToBin: "FWD-1", Quantity: 24, Priority: workunit.ReplenishmentPriorityUrgent}
+	if !ok || m != want || unit.WorkKind() != workunit.WorkKindReplenish {
+		t.Fatalf("replenishment = (%+v, %v) kind %q", m, ok, unit.WorkKind())
+	}
+
+	corrupt := base
+	corrupt.replenishmentPriority = "HIGH"
+	if _, err := r.scanWorkUnit(corrupt); !errors.Is(err, workunit.ErrUnknownReplenishmentPriority) {
+		t.Fatalf("corrupt priority = %v, want ErrUnknownReplenishmentPriority", err)
+	}
+	broken := base
+	broken.replenishmentToBin = broken.replenishmentFromBin
+	if _, err := r.scanWorkUnit(broken); !errors.Is(err, workunit.ErrInvalidReplenishmentMove) {
+		t.Fatalf("equal bins = %v, want ErrInvalidReplenishmentMove", err)
+	}
+	missing := base
+	missing.replenishmentPriority, missing.replenishmentRequestId, missing.replenishmentFromBin, missing.replenishmentToBin = "", "", "", ""
+	if _, err := r.scanWorkUnit(missing); !errors.Is(err, workunit.ErrInvalidReplenishmentMove) {
+		t.Fatalf("REPLENISH row without columns = %v, want ErrInvalidReplenishmentMove", err)
+	}
+	plain := workUnitRow{id: "wu-1", pathId: "pick-a", reference: "o-1", state: "Pending", cpt: cpt}
+	if u, err := r.scanWorkUnit(plain); err != nil {
+		t.Fatalf("order row: %v", err)
+	} else if _, ok := u.Replenishment(); ok {
+		t.Fatal("an order row must carry no replenishment")
+	}
+}
+
 // ADR-0040: a Cancelled row needs cancelled_at; the relocation columns
 // rehydrate the move and a corrupt relocation_kind fails loud.
 func TestScanWorkUnit_RelocationColumns(t *testing.T) {

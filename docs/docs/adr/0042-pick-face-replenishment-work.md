@@ -49,7 +49,9 @@ inventory-storage's `StockRelocated`.
    deployment that has not opted in plans no REPLENISH work;
    `REPLENISHMENT_MODE=kafka` runs it under the STABLE group
    `REPLENISHMENT_CONSUMER_GROUP`, shared by every replica. `kafka` without the
-   group or without `KAFKA_BROKERS`, and any other mode value, is a boot error.
+   group, without `KAFKA_BROKERS` or without `DATABASE_URL` (Postgres: the planned
+   work is shared state, so the in-memory repositories are never an option for
+   this consumer), and any other mode value, is a boot error.
    The consumer follows the fleet pattern: dispatch on the FULL CloudEvents
    type; `ReplenishmentRequested` and `ReplenishmentCancelled` are handled;
    `ReplenishmentCompleted` and every unknown type are committed past; a message
@@ -144,7 +146,7 @@ inventory-storage's `StockRelocated`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `REPLENISHMENT_MODE` | `permissive` | `kafka` runs the consumer; `permissive` (or unset) consumes nothing; anything else is a boot error |
-| `REPLENISHMENT_CONSUMER_GROUP` | *(unset)* | STABLE consumer group shared by every replica; required (boot error if unset or blank) when the mode is `kafka`; also requires `KAFKA_BROKERS` |
+| `REPLENISHMENT_CONSUMER_GROUP` | *(unset)* | STABLE consumer group shared by every replica; required (boot error if unset or blank) when the mode is `kafka`; also requires `KAFKA_BROKERS` and `DATABASE_URL` |
 | `REPLENISHMENT_CPT_HORIZON` | `8h` | CPT of a NORMAL request = `requested_at` + this Go duration |
 | `REPLENISHMENT_URGENT_CPT_HORIZON` | `1h` | CPT of an URGENT request = `requested_at` + this Go duration; capped at the normal horizon |
 
@@ -155,7 +157,7 @@ Text for the orchestrator to roll into `.claude/rules/integration-events.md`
 > `internal/adapters/inbound/kafka/replenishment_consumer.go` reads
 > `warehouse.pick-face-replenishment.events` under its own STABLE group
 > `REPLENISHMENT_CONSUMER_GROUP` (unset = boot error; so is a missing
-> `KAFKA_BROKERS`), acts only on
+> `KAFKA_BROKERS` or a missing `DATABASE_URL`), acts only on
 > `com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested`
 > (`ApplyReplenishmentRequested`: ONE `REPLENISH` work unit per request id, id
 > `replenish-<request_id>`) and `...ReplenishmentCancelled`

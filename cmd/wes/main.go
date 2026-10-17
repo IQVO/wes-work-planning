@@ -65,7 +65,7 @@ func run() error {
 		return err
 	}
 
-	replenishment, err := buildReplenishment(loadReplenishmentConfig(cfg.kafkaBrokers), logger)
+	replenishment, err := buildReplenishment(loadReplenishmentConfig(cfg.kafkaBrokers, repos.pgPool != nil), logger)
 	if err != nil {
 		return err
 	}

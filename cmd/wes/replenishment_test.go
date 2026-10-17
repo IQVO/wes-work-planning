@@ -25,7 +25,7 @@ func TestBuildReplenishment_PermissiveByDefault(t *testing.T) {
 }
 
 func TestBuildReplenishment_KafkaEnablesTheConsumer(t *testing.T) {
-	w, err := buildReplenishment(replenishmentConfig{mode: "KAFKA", groupID: "wes-replenishment", kafkaBrokers: "kafka:9092"}, quietLogger())
+	w, err := buildReplenishment(replenishmentConfig{mode: "KAFKA", groupID: "wes-replenishment", kafkaBrokers: "kafka:9092", hasDatabase: true}, quietLogger())
 	if err != nil {
 		t.Fatalf("buildReplenishment: %v", err)
 	}
@@ -39,11 +39,12 @@ func TestBuildReplenishment_RejectsAtBoot(t *testing.T) {
 		cfg     replenishmentConfig
 		wantErr string
 	}{
-		"unknown mode":             {replenishmentConfig{mode: "http"}, "REPLENISHMENT_MODE"},
-		"kafka without the group":  {replenishmentConfig{mode: "kafka", kafkaBrokers: "kafka:9092"}, "REPLENISHMENT_CONSUMER_GROUP"},
-		"kafka with a blank group": {replenishmentConfig{mode: "kafka", groupID: "  ", kafkaBrokers: "kafka:9092"}, "REPLENISHMENT_CONSUMER_GROUP"},
-		"kafka without brokers":    {replenishmentConfig{mode: "kafka", groupID: "g"}, "KAFKA_BROKERS"},
-		"kafka with blank brokers": {replenishmentConfig{mode: "kafka", groupID: "g", kafkaBrokers: " "}, "KAFKA_BROKERS"},
+		"unknown mode":             {replenishmentConfig{mode: "http", hasDatabase: true}, "REPLENISHMENT_MODE"},
+		"kafka without the group":  {replenishmentConfig{mode: "kafka", kafkaBrokers: "kafka:9092", hasDatabase: true}, "REPLENISHMENT_CONSUMER_GROUP"},
+		"kafka with a blank group": {replenishmentConfig{mode: "kafka", groupID: "  ", kafkaBrokers: "kafka:9092", hasDatabase: true}, "REPLENISHMENT_CONSUMER_GROUP"},
+		"kafka without brokers":    {replenishmentConfig{mode: "kafka", groupID: "g", hasDatabase: true}, "KAFKA_BROKERS"},
+		"kafka with blank brokers": {replenishmentConfig{mode: "kafka", groupID: "g", kafkaBrokers: " ", hasDatabase: true}, "KAFKA_BROKERS"},
+		"kafka without Postgres":   {replenishmentConfig{mode: "kafka", groupID: "g", kafkaBrokers: "kafka:9092"}, "DATABASE_URL"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -58,8 +59,8 @@ func TestBuildReplenishment_RejectsAtBoot(t *testing.T) {
 func TestLoadReplenishmentConfig_ReadsTheEnvironment(t *testing.T) {
 	t.Setenv("REPLENISHMENT_MODE", "kafka")
 	t.Setenv("REPLENISHMENT_CONSUMER_GROUP", "g-1")
-	cfg := loadReplenishmentConfig("b:9092")
-	if cfg.mode != "kafka" || cfg.groupID != "g-1" || cfg.kafkaBrokers != "b:9092" {
+	cfg := loadReplenishmentConfig("b:9092", true)
+	if cfg.mode != "kafka" || cfg.groupID != "g-1" || cfg.kafkaBrokers != "b:9092" || !cfg.hasDatabase {
 		t.Fatalf("cfg = %+v", cfg)
 	}
 }

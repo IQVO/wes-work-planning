@@ -39,13 +39,18 @@ type replenishmentConfig struct {
 	// every replica shares (the planned work is shared state in Postgres).
 	groupID      string
 	kafkaBrokers string
+	// hasDatabase is true when Postgres is wired (DATABASE_URL set): the
+	// consumer's effect is shared state, so kafka mode refuses to run on the
+	// in-memory repositories.
+	hasDatabase bool
 }
 
-func loadReplenishmentConfig(kafkaBrokers string) replenishmentConfig {
+func loadReplenishmentConfig(kafkaBrokers string, hasDatabase bool) replenishmentConfig {
 	return replenishmentConfig{
 		mode:         os.Getenv(replenishmentModeEnv),
 		groupID:      os.Getenv(replenishmentGroupEnv),
 		kafkaBrokers: kafkaBrokers,
+		hasDatabase:  hasDatabase,
 	}
 }
 
@@ -76,6 +81,9 @@ func buildReplenishment(cfg replenishmentConfig, logger *slog.Logger) (replenish
 	}
 	if strings.TrimSpace(cfg.kafkaBrokers) == "" {
 		return replenishmentWiring{}, errors.New("REPLENISHMENT_MODE=kafka requires KAFKA_BROKERS to be set")
+	}
+	if !cfg.hasDatabase {
+		return replenishmentWiring{}, errors.New("REPLENISHMENT_MODE=kafka requires DATABASE_URL to be set (Postgres): the planned work is shared state and is never kept in memory")
 	}
 	logger.Info("replenishment planning configured", "mode", replenishmentModeKafka, "topic", cloudevents.TopicPickFaceReplenishmentEvents, "group_id", cfg.groupID)
 	return replenishmentWiring{enabled: true, groupID: cfg.groupID}, nil

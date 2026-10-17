@@ -25,6 +25,11 @@ const (
 	// id). A legitimate fact on a shared topic, not a failure: the event is
 	// marked processed and nothing else changes.
 	TaskCompletedUnknownWorkUnit
+	// TaskCompletedAlreadyCompleted: a second, DISTINCT task completed a
+	// work unit that was already completed. A fact that no longer
+	// applies, not a failure: the event is marked processed (so a
+	// redelivery does not re-log the skip) and nothing else changes.
+	TaskCompletedAlreadyCompleted
 )
 
 // ApplyTaskCompleted is the inbound-event use case behind

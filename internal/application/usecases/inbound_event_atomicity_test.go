@@ -246,6 +246,41 @@ func TestApplyTaskCompleted_UnknownWorkUnitIsAProcessedSkip(t *testing.T) {
 	}
 }
 
+// A second, DISTINCT TaskCompleted (a new event id) for a work unit that is
+// already completed is a stale fact, not a poison message: it is classified
+// as a skip, marked processed so a redelivery does not re-log, and never
+// returned as an error (ADR-0043).
+func TestApplyTaskCompleted_AlreadyCompletedWorkUnitIsALoggedSkip(t *testing.T) {
+	for _, newVariant := range processedVariants() {
+		v := newVariant()
+		t.Run(v.name, func(t *testing.T) {
+			f := newCompletionFixture(t, v, 0)
+			ctx := context.Background()
+
+			if _, err := f.uc.Execute(ctx, completionRequest("evt-a", "wu-1")); err != nil {
+				t.Fatalf("first completion: %v", err)
+			}
+			outcome, err := f.uc.Execute(ctx, completionRequest("evt-b", "wu-1"))
+			if err != nil {
+				t.Fatalf("a stale completion must not be an error, got %v", err)
+			}
+			if outcome != usecases.TaskCompletedAlreadyCompleted {
+				t.Fatalf("outcome = %v, want TaskCompletedAlreadyCompleted", outcome)
+			}
+			// The skip must be marked processed, so a redelivery is a
+			// cheap no-op that does not re-log.
+			outcome, err = f.uc.Execute(ctx, completionRequest("evt-b", "wu-1"))
+			if err != nil || outcome != usecases.TaskCompletedAlreadyProcessed {
+				t.Fatalf("redelivery = (%v, %v), want the skip to have been marked processed", outcome, err)
+			}
+			unit, _ := f.workUnits.FindById(ctx, "wu-1")
+			if unit.State() != workunit.Completed {
+				t.Fatalf("work unit state = %v, want Completed", unit.State())
+			}
+		})
+	}
+}
+
 // A domain error other than ErrNotFound (here: double-complete under a new
 // event id) is NOT a skip: it propagates so the consumer retries/DLQs it,
 // and the event stays unmarked.

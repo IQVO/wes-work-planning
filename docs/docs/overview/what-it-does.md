@@ -113,7 +113,11 @@ event consumed from `fulfillment-execution` through `ApplyTaskCompleted` —
 the same use case, called from a different inbound adapter. Completion also
 frees the unit's WIP slot on its `WorkPool` (the pool entry is reconciled to
 `completed`), which is what lets the next release on a saturated
-release-fed path proceed.
+release-fed path proceed. Over Kafka, a `TaskCompleted` with a **new** event
+id for a unit that is already completed is a logged, processed skip
+(`TaskCompletedAlreadyCompleted`), not a dead letter
+([ADR-0043](../adr/0043-taskcompleted-already-completed-skip.md)); over REST
+the same double completion still answers `409`.
 
 ### 6. `SampleBacklog(path)`
 

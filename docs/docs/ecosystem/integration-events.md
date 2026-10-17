@@ -242,13 +242,15 @@ line number is 1 to 2147483647 (the column is a 32-bit `INTEGER`); a larger or
 non-positive value on the inbound event is stored as unknown rather than
 failing the event.
 
-This integration is deliberately **fire-and-forget**: there is no reply event
-back to order-management. The existing `WorkUnitCreated`/`WorkReleased`
-events already published on `warehouse.work-planning.events` remain the only
-observable signal of downstream progress — the same signal every other
-`EnqueueWorkUnit` caller (including the REST endpoint) already relies on.
-This was a confirmed v1 design choice made when rejecting order-management's
-former synchronous HTTP coupling, not an oversight.
+There is no dedicated reply event back to order-management. The
+`WorkUnitCreated` event already published on `warehouse.work-planning.events`
+is the enqueue confirmation: for an order line its `data` carries the order id
+as `reference` and the line number as `line_no`, next to `path_id` and
+`work_unit_id` ([ADR-0041](../adr/0041-work-unit-created-origin.md)), so a
+consumer such as order-management can match them instead of parsing the
+work-unit id. Both fields
+are optional and the event stays `v1`; the analytics stream does not carry
+them. `WorkReleased` remains the signal that the unit moved on to active work.
 
 ### `warehouse.network-inventory-planning.events` — `com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased`
 

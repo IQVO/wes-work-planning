@@ -39,15 +39,28 @@ func NewShiftPlanCommitted(pathId PathId, at time.Time) ShiftPlanCommitted {
 }
 
 // WorkUnitCreated is raised when a new work unit is enqueued into a path's
-// work pool.
+// work pool. Reference and LineNo are the unit's originating reference (the
+// order id for order work) and line number, carried as explicit attributes
+// (ADR-0041) so a consumer correlates the unit to its source without parsing
+// the work-unit id. Both are zero when the unit has no such origin.
 type WorkUnitCreated struct {
 	baseEvent
 	WorkUnitId string
 	PathId     PathId
+	Reference  string
+	LineNo     int
 }
 
 func NewWorkUnitCreated(workUnitId string, pathId PathId, at time.Time) WorkUnitCreated {
 	return WorkUnitCreated{baseEvent: baseEvent{name: "WorkUnitCreated", at: at}, WorkUnitId: workUnitId, PathId: pathId}
+}
+
+// WithOrigin returns a copy of the event carrying the unit's originating
+// reference and line number.
+func (e WorkUnitCreated) WithOrigin(reference string, lineNo int) WorkUnitCreated {
+	e.Reference = reference
+	e.LineNo = lineNo
+	return e
 }
 
 // WorkReleased is raised when the release policy admits a work unit from the

@@ -299,7 +299,7 @@ func (p *Publisher) dataFor(ctx context.Context, e shared.DomainEvent) (json.Raw
 	case shared.ShiftPlanCommitted:
 		return pathOnlyData(ev.PathId)
 	case shared.WorkUnitCreated:
-		return workUnitData(ev.WorkUnitId, ev.PathId)
+		return workUnitCreatedData(ev)
 	case shared.BacklogThresholdBreached:
 		return pathOnlyData(ev.PathId)
 	case shared.RateDeviationDetected:
@@ -439,6 +439,23 @@ func pathOnlyData(pathId shared.PathId) (json.RawMessage, error) {
 // work-unit identity alongside their process path.
 func workUnitData(workUnitId string, pathId shared.PathId) (json.RawMessage, error) {
 	return json.Marshal(map[string]any{"path_id": pathId.String(), "work_unit_id": workUnitId})
+}
+
+// workUnitCreatedData is the WorkUnitCreated payload on the integration
+// stream: the path/work-unit identity plus, strictly additively (ADR-0041),
+// the originating `reference` (the order id for order work) and `line_no`.
+// Each is omitted when unknown, so a unit with no origin keeps the exact
+// payload every consumer already reads. The analytics stream does not carry
+// them.
+func workUnitCreatedData(ev shared.WorkUnitCreated) (json.RawMessage, error) {
+	data := map[string]any{"path_id": ev.PathId.String(), "work_unit_id": ev.WorkUnitId}
+	if ev.Reference != "" {
+		data["reference"] = ev.Reference
+	}
+	if ev.LineNo > 0 {
+		data["line_no"] = ev.LineNo
+	}
+	return json.Marshal(data)
 }
 
 // pathCapacityChangedData is the PathCapacityChanged payload consumed by

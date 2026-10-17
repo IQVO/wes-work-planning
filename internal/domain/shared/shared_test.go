@@ -110,6 +110,27 @@ func TestWorkUnitCreatedEvent(t *testing.T) {
 	}
 }
 
+func TestWorkUnitCreatedEvent_WithOrigin(t *testing.T) {
+	pathId, err := NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	base := NewWorkUnitCreated("order-1-line-2", pathId, time.Now())
+	if base.Reference != "" || base.LineNo != 0 {
+		t.Fatalf("a bare event carries no origin, got reference %q line %d", base.Reference, base.LineNo)
+	}
+	ev := base.WithOrigin("order-1", 2)
+	if ev.Reference != "order-1" || ev.LineNo != 2 {
+		t.Fatalf("got reference %q line %d, want order-1 / 2", ev.Reference, ev.LineNo)
+	}
+	if base.Reference != "" {
+		t.Fatal("WithOrigin must not mutate the receiver")
+	}
+	if ev.WorkUnitId != "order-1-line-2" || ev.EventName() != "WorkUnitCreated" {
+		t.Fatalf("WithOrigin changed the identity: %+v", ev)
+	}
+}
+
 func TestWorkReleasedEvent(t *testing.T) {
 	pathId, err := NewPathId("pick-a")
 	if err != nil {

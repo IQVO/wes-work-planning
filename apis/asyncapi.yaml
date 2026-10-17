@@ -1228,6 +1228,21 @@ components:
                 work_unit_id:
                   type: string
                   description: Identifier of the newly created work unit.
+                reference:
+                  type: string
+                  description: >-
+                    Optional (ADR-0041). The unit's originating reference as
+                    stored: the order id for order work, the demand id for
+                    transfer work, the plan id for RELOCATE work. Omitted when
+                    empty. A consumer matches it against its own aggregates and
+                    ignores a reference it does not know.
+                line_no:
+                  type: integer
+                  minimum: 1
+                  description: >-
+                    Optional (ADR-0041). The order line number of an order-line
+                    unit (ADR-0036). Omitted when unknown. Not published on the
+                    analytics stream.
 
     WorkDemandReleasedEvent:
       title: WorkDemandReleased CloudEvent (consumed)

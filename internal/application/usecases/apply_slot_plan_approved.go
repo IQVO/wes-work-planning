@@ -266,7 +266,7 @@ func (uc *ApplySlotPlanApproved) planUnits(pool *release.WorkPool, plan *relocat
 func (uc *ApplySlotPlanApproved) save(ctx context.Context, pool *release.WorkPool, touched, created []*workunit.WorkUnit, receipt relocation.Receipt, now time.Time) error {
 	events := make([]shared.DomainEvent, 0, len(created))
 	for _, u := range created {
-		events = append(events, shared.NewWorkUnitCreated(u.Id(), u.PathId(), now))
+		events = append(events, shared.NewWorkUnitCreated(u.Id(), u.PathId(), now).WithOrigin(u.Reference(), u.LineNo()))
 	}
 	return atomically(ctx, uc.uow, func(ctx context.Context) error {
 		if err := uc.pools.Save(ctx, pool); err != nil {

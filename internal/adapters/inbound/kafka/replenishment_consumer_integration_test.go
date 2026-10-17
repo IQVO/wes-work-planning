@@ -5,11 +5,9 @@ package kafka_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,7 +21,6 @@ import (
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
-	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
@@ -78,35 +75,11 @@ func startReplEnv(t *testing.T, ctx context.Context) replEnv {
 	return replEnv{ctx: ctx, brokers: brokers, pool: pool}
 }
 
-// failingAfterPublish publishes through the real outbox publisher (so the
-// outbox rows ARE inserted inside the open transaction) and then fails, while
-// remaining is non-zero (-1 = always, n > 0 = the next n calls). It proves
-// the claim, the unit, the pool and the outbox rows roll back together.
-type failingAfterPublish struct {
-	ports.EventPublisher
-	remaining atomic.Int32
-}
-
-func (p *failingAfterPublish) Publish(ctx context.Context, events ...shared.DomainEvent) error {
-	if err := p.EventPublisher.Publish(ctx, events...); err != nil {
-		return err
-	}
-	n := p.remaining.Load()
-	if n == 0 {
-		return nil
-	}
-	if n > 0 {
-		p.remaining.Add(-1)
-	}
-	return errors.New("injected failure after the outbox insert")
-}
-
 // replStack is one running consumer with the use cases it feeds.
 type replStack struct {
 	topic, dlq, group string
 	workUnits         *postgres.WorkUnitRepo
 	releaseNext       *usecases.ReleaseNextWork
-	publisher         *failingAfterPublish
 	logs              *lockedBuffer
 }
 
@@ -133,11 +106,11 @@ func (e replEnv) startStack(t *testing.T, name string) replStack {
 		Addr: kafkago.TCP(e.brokers...), Topic: cloudevents.TopicWorkPlanningEvents, Balancer: &kafkago.Hash{},
 		BatchTimeout: 10 * time.Millisecond, RequiredAcks: kafkago.RequireAll,
 	}, s.workUnits, nil, func() string { return fmt.Sprintf("evt-out-%d", time.Now().UnixNano()) })
-	s.publisher = &failingAfterPublish{EventPublisher: postgres.NewOutboxPublisher(e.pool, encoder)}
+	publisher := postgres.NewOutboxPublisher(e.pool, encoder)
 
-	requested := usecases.NewApplyReplenishmentRequested(s.workUnits, pools, processed, catalogue, s.publisher, clock).WithUnitOfWork(uow)
+	requested := usecases.NewApplyReplenishmentRequested(s.workUnits, pools, processed, catalogue, publisher, clock).WithUnitOfWork(uow)
 	cancelled := usecases.NewApplyReplenishmentCancelled(s.workUnits, pools, processed, clock).WithUnitOfWork(uow)
-	s.releaseNext = usecases.NewReleaseNextWork(pools, s.workUnits, postgres.NewOutboxPublisher(e.pool, encoder), clock).WithUnitOfWork(uow)
+	s.releaseNext = usecases.NewReleaseNextWork(pools, s.workUnits, publisher, clock).WithUnitOfWork(uow)
 
 	logger := slog.New(slog.NewTextHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	consumer := inboundkafka.NewReplenishmentConsumerForTopic(e.brokers, s.group, s.topic, requested, cancelled, logger)
@@ -398,19 +371,23 @@ func assertReplenishmentObject(t *testing.T, got replWorkReleased) {
 	}
 }
 
-// replAtomicity injects a failure AFTER the outbox insert, inside the open
-// transaction: the claim, the pool, the unit and the outbox rows must all roll
-// back; a persistent failure is dead-lettered and committed past, a transient
-// one heals on the retry with every row committed exactly once.
+// replAtomicity makes Postgres itself fail the outbox insert of one unit (a real
+// BEFORE INSERT trigger raising an error, no Go fake), which happens inside the
+// open transaction AFTER the claim, the pool and the unit were written: all of
+// them must roll back together. The failing event is retried, dead-lettered and
+// committed past; once the cause is removed, replaying the SAME CloudEvents id
+// plans the unit exactly once, proving the failed attempt left no mark behind.
 func replAtomicity(t *testing.T, env replEnv) {
 	s := env.startStack(t, "atomic")
 	suffix := time.Now().UnixNano()
-	reqC, reqD := fmt.Sprintf("repl-itest-c-%d", suffix), fmt.Sprintf("repl-itest-d-%d", suffix)
-	evC, evD := fmt.Sprintf("evt-c-%d", suffix), fmt.Sprintf("evt-d-%d", suffix)
-	unitC, unitD := workunit.ReplenishmentWorkUnitId(reqC), workunit.ReplenishmentWorkUnitId(reqD)
+	reqC := fmt.Sprintf("repl-itest-c-%d", suffix)
+	evC := fmt.Sprintf("evt-c-%d", suffix)
+	unitC := workunit.ReplenishmentWorkUnitId(reqC)
 
-	// (1) A persistent failure: all three attempts fail after the outbox insert.
-	s.publisher.remaining.Store(-1)
+	mustExec(t, env, `CREATE OR REPLACE FUNCTION repl_itest_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'repl itest: injected outbox failure'; END $$`)
+	mustExec(t, env, fmt.Sprintf(`CREATE TRIGGER repl_itest_fail_c BEFORE INSERT ON outbox_events FOR EACH ROW WHEN (NEW.key = '%s'::bytea) EXECUTE FUNCTION repl_itest_fail()`, unitC))
+
+	// (1) Every attempt fails after the claim, the pool and the unit were written.
 	eventC := replRequestedEvent(t, evC, reqC, "NORMAL", 12, "WH1-RSV-A07-03-02-B", "WH1-FWD-A01-01-03-A")
 	s.send(t, env, reqC, true, eventC)
 	letters := s.deadLetters(t, env, 1)
@@ -428,20 +405,28 @@ func replAtomicity(t *testing.T, env replEnv) {
 		t.Fatalf("a rolled-back attempt left %d outbox rows", n)
 	}
 
-	// (2) A transient failure: the first attempt fails, the retry commits.
-	s.publisher.remaining.Store(1)
-	s.send(t, env, reqD, true, replRequestedEvent(t, evD, reqD, "URGENT", 8, "WH1-RSV-A07-03-02-B", "WH1-FWD-A01-01-04-A"))
+	// (2) The cause is removed and the same event (same CloudEvents id) is
+	// replayed: it is applied, once, with its outbox rows.
+	mustExec(t, env, `DROP TRIGGER repl_itest_fail_c ON outbox_events`)
+	s.send(t, env, reqC, true, eventC)
 	s.assertCommitted(t, env, 2)
-	if !processedRowExists(t, env.pool, evD) {
-		t.Fatal("the healed event must be marked processed")
+	if !processedRowExists(t, env.pool, evC) {
+		t.Fatal("the replayed event must be marked processed once applied")
 	}
-	if n := replCount(t, env, `SELECT count(*) FROM work_units WHERE id = $1`, unitD); n != 1 {
-		t.Fatalf("healed request planned %d units, want 1", n)
+	if n := replCount(t, env, `SELECT count(*) FROM work_units WHERE id = $1`, unitC); n != 1 {
+		t.Fatalf("replayed request planned %d units, want 1", n)
 	}
-	if n := outboxRowsOf(t, env, unitD); n == 0 {
-		t.Fatal("the healed attempt must have committed its outbox rows")
+	if n := outboxRowsOf(t, env, unitC); n == 0 {
+		t.Fatal("the applied attempt must have committed its outbox rows")
 	}
 	if got := s.deadLetters(t, env, 1); string(got[0].Value) != string(eventC) {
-		t.Fatalf("the healed event must not be dead-lettered, got %s", got[0].Value)
+		t.Fatalf("only the failed attempt may be dead-lettered, got %s", got[0].Value)
+	}
+}
+
+func mustExec(t *testing.T, env replEnv, sql string) {
+	t.Helper()
+	if _, err := env.pool.Exec(env.ctx, sql); err != nil {
+		t.Fatalf("exec %q: %v", sql, err)
 	}
 }

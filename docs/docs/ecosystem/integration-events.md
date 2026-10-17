@@ -474,7 +474,13 @@ double-completion with `ErrAlreadyCompleted`, so the aggregate would be safe
 regardless. But without the `id` check, every redelivery would surface a
 domain error from a perfectly normal Kafka behaviour, and an error that is
 sometimes meaningless is an error nobody reads. Deduplicating first keeps
-`ErrAlreadyCompleted` meaning what it says.
+`ErrAlreadyCompleted` meaning what it says. Since
+[ADR-0043](../adr/0043-taskcompleted-already-completed-skip.md), even the
+distinct-event-id case — a second, different task completing an
+already-completed unit — is a classified, INFO-logged, processed skip
+(`TaskCompletedAlreadyCompleted`), so the inbound Kafka path never surfaces
+`ErrAlreadyCompleted` at all; it remains reachable, as a `409`, only through
+the REST complete endpoint.
 
 ## Configuration
 

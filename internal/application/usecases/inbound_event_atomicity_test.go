@@ -155,6 +155,9 @@ func processedVariants() []func() processedVariant {
 
 type completionFixture struct {
 	workUnits *memory.WorkUnitRepo
+	pools     *memory.WorkPoolRepo
+	publisher *events.LogPublisher
+	clock     memory.FixedClock
 	flaky     *flakyWorkUnits
 	uc        *usecases.ApplyTaskCompleted
 }
@@ -181,6 +184,9 @@ func newCompletionFixture(t *testing.T, v processedVariant, failures int) comple
 	record := usecases.NewRecordCompletion(flaky, pools, publisher, clock).WithUnitOfWork(v.uow)
 	return completionFixture{
 		workUnits: workUnits,
+		pools:     pools,
+		publisher: publisher,
+		clock:     clock,
 		flaky:     flaky,
 		uc:        usecases.NewApplyTaskCompleted(record, v.processed).WithUnitOfWork(v.uow),
 	}
@@ -246,9 +252,44 @@ func TestApplyTaskCompleted_UnknownWorkUnitIsAProcessedSkip(t *testing.T) {
 	}
 }
 
-// A domain error other than ErrNotFound (here: double-complete under a new
-// event id) is NOT a skip: it propagates so the consumer retries/DLQs it,
-// and the event stays unmarked.
+// A second, DISTINCT TaskCompleted (a new event id) for a work unit that is
+// already completed is a stale fact, not a poison message: it is classified
+// as a skip, marked processed so a redelivery does not re-log, and never
+// returned as an error (ADR-0043).
+func TestApplyTaskCompleted_AlreadyCompletedWorkUnitIsALoggedSkip(t *testing.T) {
+	for _, newVariant := range processedVariants() {
+		v := newVariant()
+		t.Run(v.name, func(t *testing.T) {
+			f := newCompletionFixture(t, v, 0)
+			ctx := context.Background()
+
+			if _, err := f.uc.Execute(ctx, completionRequest("evt-a", "wu-1")); err != nil {
+				t.Fatalf("first completion: %v", err)
+			}
+			outcome, err := f.uc.Execute(ctx, completionRequest("evt-b", "wu-1"))
+			if err != nil {
+				t.Fatalf("a stale completion must not be an error, got %v", err)
+			}
+			if outcome != usecases.TaskCompletedAlreadyCompleted {
+				t.Fatalf("outcome = %v, want TaskCompletedAlreadyCompleted", outcome)
+			}
+			// The skip must be marked processed, so a redelivery is a
+			// cheap no-op that does not re-log.
+			outcome, err = f.uc.Execute(ctx, completionRequest("evt-b", "wu-1"))
+			if err != nil || outcome != usecases.TaskCompletedAlreadyProcessed {
+				t.Fatalf("redelivery = (%v, %v), want the skip to have been marked processed", outcome, err)
+			}
+			unit, _ := f.workUnits.FindById(ctx, "wu-1")
+			if unit.State() != workunit.Completed {
+				t.Fatalf("work unit state = %v, want Completed", unit.State())
+			}
+		})
+	}
+}
+
+// A domain error outside the two classified no-ops (here: completing a
+// unit that was never released) is NOT a skip: it propagates so the
+// consumer retries/DLQs it, and the event stays unmarked.
 func TestApplyTaskCompleted_OtherErrorsPropagateAndLeaveNoMark(t *testing.T) {
 	for _, newVariant := range processedVariants() {
 		v := newVariant()
@@ -258,10 +299,17 @@ func TestApplyTaskCompleted_OtherErrorsPropagateAndLeaveNoMark(t *testing.T) {
 			if _, err := f.uc.Execute(ctx, completionRequest("evt-a", "wu-1")); err != nil {
 				t.Fatalf("first completion: %v", err)
 			}
+			// wu-2 is enqueued but never released: completing it is a
+			// genuine domain inconsistency, not a classified no-op.
+			if _, err := usecases.NewEnqueueWorkUnit(f.workUnits, f.pools, f.publisher, f.clock).Execute(ctx, usecases.EnqueueWorkUnitRequest{
+				WorkUnitId: "wu-2", PathId: mustPath(t, "pick-a"), CPT: shared.NewCPT(f.clock.At.Add(2 * time.Hour)), Reference: "order-2",
+			}); err != nil {
+				t.Fatalf("enqueue wu-2: %v", err)
+			}
 			for attempt := 1; attempt <= 2; attempt++ {
-				_, err := f.uc.Execute(ctx, completionRequest("evt-b", "wu-1"))
-				if !errors.Is(err, workunit.ErrAlreadyCompleted) {
-					t.Fatalf("attempt %d: got %v, want ErrAlreadyCompleted every time (a mark left behind would turn attempt 2 into a silent success)", attempt, err)
+				_, err := f.uc.Execute(ctx, completionRequest("evt-b", "wu-2"))
+				if !errors.Is(err, workunit.ErrNotReleased) {
+					t.Fatalf("attempt %d: got %v, want ErrNotReleased every time (a mark left behind would turn attempt 2 into a silent success)", attempt, err)
 				}
 			}
 		})

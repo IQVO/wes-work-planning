@@ -119,7 +119,7 @@ func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitR
 		return nil, err
 	}
 
-	event := shared.NewWorkUnitCreated(unit.Id(), req.PathId, uc.clock.Now())
+	event := shared.NewWorkUnitCreated(unit.Id(), req.PathId, uc.clock.Now()).WithOrigin(unit.Reference(), unit.LineNo())
 	err = atomically(ctx, uc.uow, func(ctx context.Context) error {
 		if err := uc.pools.Save(ctx, pool); err != nil {
 			return err

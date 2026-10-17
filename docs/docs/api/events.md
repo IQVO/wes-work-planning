@@ -110,7 +110,7 @@ Topic `warehouse.work-planning.events`. Eleven event types are catalogued; the
 |---|---|---|
 | `charge.ChargeForecastReceived` | `path_id` | a charge forecast is recorded for a path |
 | `plan.ShiftPlanCommitted` | `path_id` | **this** context commits its own rate × heads × hours plan |
-| `workunit.WorkUnitCreated` | `path_id`, `work_unit_id` | a work unit is enqueued into a pool |
+| `workunit.WorkUnitCreated` | `path_id`, `work_unit_id` (+ optional `reference`, `line_no`, [ADR-0041](../adr/0041-work-unit-created-origin.md)) | a work unit is enqueued into a pool |
 | **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` (+ optional `required_capabilities`, `fragile`, `gift_wrap`, `line_no`) | the release policy admits the earliest-CPT unit |
 | `workunit.WorkUnitCompleted` | `path_id`, `work_unit_id` | a released unit completes |
 | `workpool.BacklogThresholdBreached` | `path_id` | backlog depth crosses the pool's alarm threshold |

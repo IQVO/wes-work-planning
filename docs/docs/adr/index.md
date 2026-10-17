@@ -76,6 +76,7 @@ no scheduler).
 | [0039](./0039-outbox-relay-attempt-cap.md) | Outbox relay attempt cap: a row is no longer claimed after `OUTBOX_MAX_ATTEMPTS` failed sends (default 20, `0` = unlimited), logged at ERROR and kept for re-arming; later same-key rows overtake it | Accepted |
 | [0040](./0040-slot-plan-relocation-work.md) | Consume slotting-optimization's `SlotPlanApproved` into one `RELOCATE` work unit per move: a move into a slot another move vacates waits for that move's completion, a newer plan cancels older not-yet-released units, `WorkReleased` v1 gains an optional `relocation` block | Accepted |
 | [0041](./0041-work-unit-created-origin.md) | `WorkUnitCreated` on the integration stream carries the optional `reference` (the order id for order work) and `line_no`, so order-management can confirm a release by matching attributes instead of parsing the work-unit id; additive, `v1` stays `v1`, analytics stream unchanged | Accepted |
+| [0042](./0042-pick-face-replenishment-work.md) | Consume pick-face-replenishment's `ReplenishmentRequested`/`ReplenishmentCancelled` (opt-in `REPLENISHMENT_MODE=kafka`) into ONE `REPLENISH` work unit per request id: URGENT gets the short CPT horizon, a cancellation withdraws only a still-Pending unit, `WorkReleased` v1 gains an optional `replenishment` block | Accepted |
 
 ## The template
 

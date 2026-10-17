@@ -126,7 +126,10 @@ info:
     whose `work_unit_id` names a work unit this context never planned (e.g.
     a PACK task fulfillment-execution created during rebin consolidation,
     which carries the order id) is a deliberate, INFO-logged skip: it is
-    marked processed and neither retried nor dead-lettered.
+    marked processed and neither retried nor dead-lettered. So is a
+    `TaskCompleted` with a NEW event id for a work unit that is already
+    completed (`TaskCompletedAlreadyCompleted`, ADR-0043): a stale fact,
+    marked processed, neither retried nor dead-lettered.
   contact:
     name: WES Work Planning Team
     url: https://warehouse-systems.internal/teams/wes-work-planning

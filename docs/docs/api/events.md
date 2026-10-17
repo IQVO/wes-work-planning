@@ -326,6 +326,12 @@ Consequences worth knowing:
   redelivery never surfaces the aggregate's `ErrAlreadyCompleted` as a
   spurious error or a retry loop. The aggregate would reject it anyway; that
   is defence in depth, not the only net.
+- A `TaskCompleted` carrying a **new** event id for a work unit that is
+  already completed is likewise not an error: it is the
+  `TaskCompletedAlreadyCompleted` skip — INFO-logged, marked processed,
+  neither retried nor dead-lettered
+  ([ADR-0043](../adr/0043-taskcompleted-already-completed-skip.md)). A second
+  task cannot complete a unit twice; the fact simply no longer applies.
 
 ## Smoke-testing by hand
 

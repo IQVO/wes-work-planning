@@ -116,14 +116,16 @@ it and never needs to.
 ### 3. `TaskCompleted` for an unknown work unit is a logged, processed skip
 
 `ApplyTaskCompleted` converts `ports.ErrNotFound` from `RecordCompletion`
-(and **only** that error) into `TaskCompletedUnknownWorkUnit`. The scope
+(and **only** that error — `workunit.ErrAlreadyCompleted` under a new event
+id was later classified the same way by
+[ADR-0043](./0043-taskcompleted-already-completed-skip.md)) into
+`TaskCompletedUnknownWorkUnit`. The scope
 commits, so the event **is** marked processed and redelivery stays cheap. The
 consumer logs it at INFO with `event_id`, `work_unit_id`, `task_id` and
 `task_type` (`task_type` is now read from fulfillment-execution's payload, where
 it is already published; it is used for logging only) and returns `nil`, so it
 is neither retried nor dead-lettered. Every other error, including domain errors
-such as `workunit.ErrAlreadyCompleted` under a new event id or
-`pathcatalog.ErrUnknownPath`, propagates, commits nothing, is retried, and is
+such as `pathcatalog.ErrUnknownPath`, propagates, commits nothing, is retried, and is
 dead-lettered once retries are exhausted.
 
 ### 4. The published contract is unchanged

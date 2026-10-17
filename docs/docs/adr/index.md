@@ -62,7 +62,7 @@ no scheduler).
 | [0025](./0025-horizontal-autoscaling-and-pgxpool-tuning.md) | Per-workload `HorizontalPodAutoscaler` (api/projector/reports/frontend, mcp excluded) and `pgxpool.MaxConns`/`statement_timeout` tuning, ported from order-management's reference PR #110 | Accepted |
 | [0026](./0026-migrations-direct-postgres-connection.md) | Run golang-migrate against a direct Postgres connection (`MIGRATIONS_DATABASE_URL`), not PgBouncer | Accepted |
 | [0027](./0027-cloudevents-mandatory-event-envelope.md) | CloudEvents 1.0 as the mandatory event envelope on every topic (no flat envelope, no dual mode) | Accepted |
-| [0028](./0028-processed-event-mark-atomic-with-handling.md) | The processed-event mark commits atomically with the handling it guards; `TaskCompleted` for an unknown work unit is a logged skip | Accepted |
+| [0028](./0028-processed-event-mark-atomic-with-handling.md) | The processed-event mark commits atomically with the handling it guards; `TaskCompleted` for an unknown work unit is a logged skip | Accepted — error enumeration amended by 0043 |
 | [0029](./0029-work-pool-optimistic-concurrency.md) | Optimistic concurrency (version column + retry) for the WorkPool aggregate; release heals entries left behind by a lost update | Accepted |
 | [0030](./0030-kafka-sourced-path-catalogue.md) | Kafka-sourced process-path catalogue (`PATH_CATALOGUE_SOURCE=kafka`) behind `ports.PathCatalogue`, and boot-time dial retry | Accepted |
 | [0031](./0031-order-allocated-choreography.md) | Consume `OrderAllocated`/`OrderPartiallyAllocated` by choreography, fire-and-forget, with deterministic work unit ids | Accepted |
@@ -76,6 +76,8 @@ no scheduler).
 | [0039](./0039-outbox-relay-attempt-cap.md) | Outbox relay attempt cap: a row is no longer claimed after `OUTBOX_MAX_ATTEMPTS` failed sends (default 20, `0` = unlimited), logged at ERROR and kept for re-arming; later same-key rows overtake it | Accepted |
 | [0040](./0040-slot-plan-relocation-work.md) | Consume slotting-optimization's `SlotPlanApproved` into one `RELOCATE` work unit per move: a move into a slot another move vacates waits for that move's completion, a newer plan cancels older not-yet-released units, `WorkReleased` v1 gains an optional `relocation` block | Accepted |
 | [0041](./0041-work-unit-created-origin.md) | `WorkUnitCreated` on the integration stream carries the optional `reference` (the order id for order work) and `line_no`, so order-management can confirm a release by matching attributes instead of parsing the work-unit id; additive, `v1` stays `v1`, analytics stream unchanged | Accepted |
+| [0042](./0042-pick-face-replenishment-work.md) | Consume pick-face-replenishment's `ReplenishmentRequested`/`ReplenishmentCancelled` (opt-in `REPLENISHMENT_MODE=kafka`) into ONE `REPLENISH` work unit per request id: URGENT gets the short CPT horizon, a cancellation withdraws only a still-Pending unit, `WorkReleased` v1 gains an optional `replenishment` block | Accepted |
+| [0043](./0043-taskcompleted-already-completed-skip.md) | A `TaskCompleted` carrying a NEW event id for a work unit that is already completed is a stale fact: `TaskCompletedAlreadyCompleted`, an INFO-logged, processed skip — never retried, never dead-lettered; amends 0028's error enumeration | Accepted |
 
 ## The template
 

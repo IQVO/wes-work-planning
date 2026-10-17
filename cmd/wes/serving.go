@@ -43,6 +43,10 @@ type serving struct {
 	// stopClassification is set while its ProductClassified consumer runs.
 	classification     classificationWiring
 	stopClassification func(ctx context.Context)
+	// replenishment is what REPLENISHMENT_MODE wired (ADR-0042);
+	// stopReplenishment is set while its consumer runs.
+	replenishment     replenishmentWiring
+	stopReplenishment func(ctx context.Context)
 }
 
 // servingDeps is everything run() has wired by the time it can build the
@@ -57,6 +61,7 @@ type servingDeps struct {
 	kafkaCatalogue          *kafkacatalog.Consumer
 	cancelCatalogueConsumer context.CancelFunc
 	classification          classificationWiring
+	replenishment           replenishmentWiring
 }
 
 // newServing builds the HTTP handlers, the server, and the serving group
@@ -88,6 +93,7 @@ func newServing(d servingDeps) *serving {
 		cancelCatalogueConsumer: d.cancelCatalogueConsumer,
 		kafkaCatalogue:          d.kafkaCatalogue,
 		classification:          d.classification,
+		replenishment:           d.replenishment,
 	}
 }
 
@@ -136,6 +142,11 @@ func (s *serving) run() error {
 	// classification copy; only wired in PRODUCT_CLASSIFICATION_MODE=kafka.
 	s.startClassificationConsumer()
 	defer s.stopClassificationConsumerBounded()
+
+	// The ReplenishmentRequested/Cancelled consumer (ADR-0042) plans
+	// REPLENISH work; only wired in REPLENISHMENT_MODE=kafka.
+	s.startReplenishmentConsumer()
+	defer s.stopReplenishmentConsumerBounded()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -244,6 +255,7 @@ func (s *serving) gracefulShutdown(cancelConsumer context.CancelFunc, consumer *
 		_ = consumer.Close()
 	}
 	s.stopClassificationConsumer(ctx)
+	s.stopReplenishmentConsumer(ctx)
 	s.cancelCatalogueConsumer()
 	if s.kafkaCatalogue != nil {
 		_ = s.kafkaCatalogue.Close()

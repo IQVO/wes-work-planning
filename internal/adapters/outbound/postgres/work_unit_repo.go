@@ -43,17 +43,21 @@ func lineNoFromColumn(lineNo *int) int {
 
 func (r *WorkUnitRepo) Save(ctx context.Context, unit *workunit.WorkUnit) error {
 	move, _ := unit.Relocation()
+	repl, _ := unit.Replenishment()
 	_, err := querierFrom(ctx, r.pool).Exec(ctx, `
 		INSERT INTO work_units (id, path_id, cpt, reference, sku, gift_wrap, transfer_ref, work_kind, site_id, quantity, state, released_at, completed_at, line_no,
-			relocation_plan_id, relocation_move_seq, relocation_kind, from_slot, to_slot, blocked_by, cancelled_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+			relocation_plan_id, relocation_move_seq, relocation_kind, from_slot, to_slot, blocked_by, cancelled_at,
+			replenishment_request_id, replenishment_from_bin, replenishment_to_bin, replenishment_priority)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
 		ON CONFLICT (id) DO UPDATE SET
 			path_id = $2, cpt = $3, reference = $4, sku = $5, gift_wrap = $6, transfer_ref = $7, work_kind = $8, site_id = $9, quantity = $10, state = $11, released_at = $12, completed_at = $13, line_no = $14,
-			relocation_plan_id = $15, relocation_move_seq = $16, relocation_kind = $17, from_slot = $18, to_slot = $19, blocked_by = $20, cancelled_at = $21
+			relocation_plan_id = $15, relocation_move_seq = $16, relocation_kind = $17, from_slot = $18, to_slot = $19, blocked_by = $20, cancelled_at = $21,
+			replenishment_request_id = $22, replenishment_from_bin = $23, replenishment_to_bin = $24, replenishment_priority = $25
 	`, unit.Id(), unit.PathId().String(), unit.CPT().Time(), unit.Reference(), unit.SKU(), unit.GiftWrap(),
 		unit.TransferRef(), unit.WorkKind().String(), unit.SiteId(), unit.Quantity(),
 		unit.State().String(), unit.ReleasedAt(), unit.CompletedAt(), lineNoToColumn(unit.LineNo()),
-		move.PlanId, move.MoveSeq, move.Kind.String(), move.FromSlot, move.ToSlot, unit.BlockedBy(), unit.CancelledAt())
+		move.PlanId, move.MoveSeq, move.Kind.String(), move.FromSlot, move.ToSlot, unit.BlockedBy(), unit.CancelledAt(),
+		repl.RequestId, repl.FromBin, repl.ToBin, repl.Priority.String())
 	return err
 }
 
@@ -61,7 +65,8 @@ func (r *WorkUnitRepo) Save(ctx context.Context, unit *workunit.WorkUnit) error 
 // scans it in the same order.
 const workUnitColumns = `id, path_id, cpt, reference, sku, gift_wrap, state, released_at, completed_at,
 	transfer_ref, work_kind, site_id, quantity, line_no,
-	relocation_plan_id, relocation_move_seq, relocation_kind, from_slot, to_slot, blocked_by, cancelled_at`
+	relocation_plan_id, relocation_move_seq, relocation_kind, from_slot, to_slot, blocked_by, cancelled_at,
+	replenishment_request_id, replenishment_from_bin, replenishment_to_bin, replenishment_priority`
 
 // workUnitRow is one work_units row as stored.
 type workUnitRow struct {
@@ -75,12 +80,17 @@ type workUnitRow struct {
 	relocationPlanId, relocationKind     string
 	relocationMoveSeq                    int
 	fromSlot, toSlot, blockedBy          string
+	// replenishment* are the ADR-0042 columns; replenishmentPriority is ""
+	// for every unit that is not REPLENISH work.
+	replenishmentRequestId, replenishmentFromBin string
+	replenishmentToBin, replenishmentPriority    string
 }
 
 func (w *workUnitRow) dest() []any {
 	return []any{&w.id, &w.pathId, &w.cpt, &w.reference, &w.sku, &w.giftWrap, &w.state, &w.releasedAt, &w.completedAt,
 		&w.transferRef, &w.workKind, &w.siteId, &w.quantity, &w.lineNo,
-		&w.relocationPlanId, &w.relocationMoveSeq, &w.relocationKind, &w.fromSlot, &w.toSlot, &w.blockedBy, &w.cancelledAt}
+		&w.relocationPlanId, &w.relocationMoveSeq, &w.relocationKind, &w.fromSlot, &w.toSlot, &w.blockedBy, &w.cancelledAt,
+		&w.replenishmentRequestId, &w.replenishmentFromBin, &w.replenishmentToBin, &w.replenishmentPriority}
 }
 
 // missingTimestamp reports a Released/Completed/Cancelled row whose
@@ -133,6 +143,14 @@ func applyDescriptiveColumns(unit *workunit.WorkUnit, row workUnitRow) error {
 	unit.SetQuantity(row.quantity)
 	unit.SetLineNo(lineNoFromColumn(row.lineNo))
 	unit.SetBlockedBy(row.blockedBy)
+	if err := applyRelocationColumns(unit, row); err != nil {
+		return err
+	}
+	return applyReplenishmentColumns(unit, row)
+}
+
+// applyRelocationColumns rehydrates the slot-plan move of a RELOCATE row.
+func applyRelocationColumns(unit *workunit.WorkUnit, row workUnitRow) error {
 	if row.relocationKind == "" {
 		return nil
 	}
@@ -141,6 +159,24 @@ func applyDescriptiveColumns(unit *workunit.WorkUnit, row workUnitRow) error {
 		return fmt.Errorf("rehydrate work unit %q: %w", row.id, err)
 	}
 	unit.SetRelocation(move)
+	return nil
+}
+
+// applyReplenishmentColumns rehydrates the pick-face replenishment of a
+// REPLENISH row (ADR-0042) from its own columns plus the unit's sku and
+// quantity; a corrupt priority or an incomplete move fails loud.
+func applyReplenishmentColumns(unit *workunit.WorkUnit, row workUnitRow) error {
+	if row.replenishmentPriority == "" {
+		if unit.WorkKind() == workunit.WorkKindReplenish {
+			return fmt.Errorf("rehydrate work unit %q: REPLENISH row without its replenishment columns: %w", row.id, workunit.ErrInvalidReplenishmentMove)
+		}
+		return nil
+	}
+	move, err := workunit.NewReplenishmentMove(row.replenishmentRequestId, row.sku, row.replenishmentFromBin, row.replenishmentToBin, row.quantity, row.replenishmentPriority)
+	if err != nil {
+		return fmt.Errorf("rehydrate work unit %q: %w", row.id, err)
+	}
+	unit.SetReplenishment(move)
 	return nil
 }
 

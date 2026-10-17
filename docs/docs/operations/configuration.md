@@ -55,6 +55,10 @@ API-key, token or scope variable to set.
 | Variable | Default | Required | Meaning | Read in |
 |---|---|---|---|---|
 | `RELOCATION_CPT_HORIZON` | `24h` | no | Go duration added to a slot plan's `approved_at` to give its RELOCATE work units their CPT ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)). A malformed or non-positive value falls back to `24h`. Chart value `config.relocationCptHorizon`. | `cmd/wes/config.go` |
+| `REPLENISHMENT_MODE` | `permissive` | no | `kafka` runs the `ReplenishmentRequested`/`ReplenishmentCancelled` consumer that plans REPLENISH work ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)); `permissive` (or unset) consumes nothing; any other value, or `kafka` without `REPLENISHMENT_CONSUMER_GROUP`, `KAFKA_BROKERS` or `DATABASE_URL` (Postgres; never the in-memory repositories), fails the boot. | `cmd/wes/replenishment.go` |
+| `REPLENISHMENT_CONSUMER_GROUP` | *(unset)* | with `REPLENISHMENT_MODE=kafka` | The STABLE consumer group every replica shares for `warehouse.pick-face-replenishment.events`. | `cmd/wes/replenishment.go` |
+| `REPLENISHMENT_CPT_HORIZON` | `8h` | no | Go duration added to a NORMAL request's `requested_at` to give its REPLENISH work unit its CPT. A malformed or non-positive value falls back to `8h`. | `cmd/wes/replenishment.go` |
+| `REPLENISHMENT_URGENT_CPT_HORIZON` | `1h` | no | Same for an URGENT request (the front band); capped at the normal horizon. A malformed or non-positive value falls back to `1h`. | `cmd/wes/replenishment.go` |
 
 ### Process-path catalogue
 

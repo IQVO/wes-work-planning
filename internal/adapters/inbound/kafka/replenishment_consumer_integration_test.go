@@ -5,6 +5,7 @@ package kafka_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -158,8 +159,18 @@ func (s replStack) send(t *testing.T, e replEnv, key string, withHeader bool, va
 	}
 	ctx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
 	defer cancel()
-	if err := w.WriteMessages(ctx, msgs...); err != nil {
-		t.Fatalf("publish to %s: %v", s.topic, err)
+	// A freshly created topic can still be unknown to the broker that serves
+	// the produce even after the partition listing shows it: retry that one
+	// error until the deadline, fail on anything else.
+	for {
+		err := w.WriteMessages(ctx, msgs...)
+		if err == nil {
+			return
+		}
+		if !errors.Is(err, kafkago.UnknownTopicOrPartition) || ctx.Err() != nil {
+			t.Fatalf("publish to %s: %v", s.topic, err)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 

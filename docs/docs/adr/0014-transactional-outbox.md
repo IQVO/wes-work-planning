@@ -10,7 +10,7 @@ description: ADR 0014 — why this service stopped publishing to Kafka from insi
 
 ## Status
 
-Accepted — implemented in the same change that introduced this record. Per-key ordering amended by [ADR-0039](./0039-outbox-relay-attempt-cap.md) (relay attempt cap).
+Accepted — implemented in the same change that introduced this record. Per-key ordering amended by [ADR-0039](./0039-outbox-relay-attempt-cap.md) (relay attempt cap). Amended by [ADR-0044](./0044-postgres-and-kafka-are-the-only-runtime.md): the in-memory, log and direct-to-Kafka paths no longer exist; the relay is always on.
 
 ## Context
 

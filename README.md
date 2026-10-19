@@ -70,46 +70,56 @@ an unknown path id is rejected with `400 unknown-path-id`):
 export PATH_CATALOGUE_FILE=../warehouse-infra/config/process-paths/sortable-fc.yaml
 ```
 
-### Option 1 — in-memory (no database)
+### Run it (real Postgres and real Kafka)
+
+Postgres and Kafka are the only runtime ([ADR-0044](docs/docs/adr/0044-postgres-and-kafka-are-the-only-runtime.md)):
+there is no in-memory mode, no log-only publisher and no optional consumer.
+`cmd/wes` exits at boot, naming the variable, when `DATABASE_URL`,
+`KAFKA_BROKERS`, `KAFKA_CONSUMER_GROUP`, `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`
+or `REPLENISHMENT_CONSUMER_GROUP` is missing. The in-memory adapters in
+`internal/adapters/outbound/memory` are test doubles only.
 
 ```sh
+docker compose up -d   # Postgres 16 + a single-node Kafka (KRaft) on localhost:9092
+
+DATABASE_URL="postgres://wes:***@localhost:5432/wes?sslmode=disable" \
+KAFKA_BROKERS=localhost:9092 \
+KAFKA_CONSUMER_GROUP=wes-work-planning-local \
+PRODUCT_CLASSIFICATION_CONSUMER_GROUP=wes-work-planning-product-classification-local \
+REPLENISHMENT_CONSUMER_GROUP=wes-work-planning-replenishment-local \
 go run ./cmd/wes
 ```
 
-The server starts on `:8080` using in-memory repositories (state is lost on
-restart) — good for trying the API without any infrastructure.
-
-### Option 2 — Postgres
-
-```sh
-docker compose up -d   # Postgres only
-
-DATABASE_URL="postgres://wes:wes@localhost:5432/wes?sslmode=disable" go run ./cmd/wes
-```
-
 `cmd/wes` applies the OLTP migrations in `MIGRATIONS_PATH` itself before it
-opens the pool, so there is no separate `migrate` step.
+opens the pool, so there is no separate `migrate` step. `GET /readyz` stays
+`503` until Postgres answers a ping and a Kafka broker answers a metadata
+request (it never requires a topic: the writers auto-create theirs);
+`GET /healthz` is liveness only. If the outbox relay or a consumer dies on its
+own the process exits non-zero, so the pod restarts.
 
 ### Config
 
 | Env var          | Default | Purpose                                                                 |
 |------------------|---------|--------------------------------------------------------------------------|
 | `HTTP_ADDR`      | `:8080` | Address the HTTP server listens on                                     |
-| `DATABASE_URL`   | (unset) | Postgres DSN; falls back to in-memory if unset                         |
+| `DATABASE_URL`   | **required** | Postgres DSN. Boot error `DATABASE_URL is required` when unset or blank |
 | `MIGRATIONS_DATABASE_URL` | `DATABASE_URL` | Direct (non-PgBouncer) Postgres DSN used only for the startup migration step; the request pool always uses `DATABASE_URL` ([ADR-0026](docs/docs/adr/0026-migrations-direct-postgres-connection.md)) |
-| `MIGRATIONS_PATH` | `migrations` | Directory of OLTP migrations applied on start when `DATABASE_URL` is set |
-| `EVENT_PUBLISHER`| `log`   | `log` (default) or `kafka` — where domain events get published. With `kafka` **and** `DATABASE_URL` set, events are written to the `outbox_events` table in the same transaction as the aggregate and relayed to both Kafka topics by an in-process relay (transactional outbox, [ADR-0014](docs/docs/adr/0014-transactional-outbox.md)); with `kafka` but no `DATABASE_URL` they are published directly |
-| `KAFKA_BROKERS`  | (unset) | Comma-separated Kafka brokers; required for `EVENT_PUBLISHER=kafka` and enables the inbound integration-event consumer whenever set |
-| `KAFKA_CONSUMER_GROUP` | `wes-work-planning` | Kafka consumer group id. Leave unset in a deployment so replicas share one group and split the partitions. Set a unique value for any process run alongside a deployed instance against the SAME broker (the e2e-tests harness, a local `go run`) — otherwise both join the same group, Kafka awards the single partition to one of them, and the other silently consumes nothing |
-| `OUTBOX_RELAY_INTERVAL` | `1s` | How long the outbox relay sleeps between passes that found nothing to publish (Go duration, e.g. `500ms`). Only used in outbox mode |
-| `HOUSEKEEPING_INTERVAL` | `1h` | Time between retention sweeps of `idempotency_keys` / `outbox_events` (Go duration). Only used with Postgres ([ADR-0032](docs/docs/adr/0032-housekeeping-retention-sweeper.md)) |
+| `MIGRATIONS_PATH` | `migrations` | Directory of OLTP migrations applied on start |
+| `EVENT_PUBLISHER`| `kafka` | Kept because the chart and warehouse-infra set it. `kafka` is the only value: events are written to the `outbox_events` table in the same transaction as the aggregate and relayed to both Kafka topics by the always-on in-process relay (transactional outbox, [ADR-0014](docs/docs/adr/0014-transactional-outbox.md)). `log` and any other value are a boot error |
+| `KAFKA_BROKERS`  | **required** | Comma-separated Kafka brokers. Boot error `KAFKA_BROKERS is required` when unset |
+| `KAFKA_CONSUMER_GROUP` | **required** | Kafka consumer group of the integration-event consumer (the chart renders `wes-work-planning`, the value the binary defaulted to before ADR-0044). Every replica of a deployment shares one group and splits the partitions. A process run alongside a deployed instance against the SAME broker (the e2e-tests harness, a local `go run`) must use a unique value — otherwise both join the same group, Kafka awards the single partition to one of them, and the other silently consumes nothing |
+| `OUTBOX_RELAY_INTERVAL` | `1s` | How long the outbox relay sleeps between passes that found nothing to publish (Go duration, e.g. `500ms`) |
+| `OUTBOX_MAX_ATTEMPTS` | `20` | Failed sends before the relay stops claiming an outbox row ([ADR-0039](docs/docs/adr/0039-outbox-relay-attempt-cap.md)); `0` = unlimited |
+| `HOUSEKEEPING_INTERVAL` | `1h` | Time between retention sweeps of `idempotency_keys` / `outbox_events` (Go duration) ([ADR-0032](docs/docs/adr/0032-housekeeping-retention-sweeper.md)) |
 | `IDEMPOTENCY_KEY_TTL` | `24h` | How long an `Idempotency-Key` row is kept before the sweeper deletes it; `0` disables that sweep |
 | `OUTBOX_RETENTION` | `168h` (7d) | How long a **published** `outbox_events` row is kept; unpublished rows are never deleted; `0` disables that sweep |
-| `PRODUCT_CLASSIFICATION_MODE` | `permissive` | `permissive` (default, no-op, always omits hazmat/fragile hints) or `kafka` — keep a local copy of product-master's `ProductClassified` events (`warehouse.product-master.events`, table `product_classification_copy`) and read a released unit's SKU classification from it ([ADR-0035](docs/docs/adr/0035-product-classification-local-copy.md)). `http` (the retired live lookup against inventory-storage) and any other value fail at boot |
-| `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | (unset) | Stable Kafka consumer group of the `ProductClassified` consumer; required (with `KAFKA_BROKERS`) when `PRODUCT_CLASSIFICATION_MODE=kafka`. Every replica shares it. For an in-memory run (no `DATABASE_URL`) use a fresh value per run so the copy is replayed |
-| `TRAVEL_DISTANCE_MODE` | `permissive` | `permissive` (default, no-op, always omits the travel-distance hint) or `http` — synchronous lookup of the real travel distance between two facility-layout LocationCodes at shift-plan-commit time (ADR-0017) |
+| `PRODUCT_CLASSIFICATION_MODE` | `kafka` | Unset or `kafka`: keep a local copy of product-master's `ProductClassified` events (`warehouse.product-master.events`, table `product_classification_copy`) and read a released unit's SKU classification from it ([ADR-0035](docs/docs/adr/0035-product-classification-local-copy.md)). `permissive`, `off`, `http` (the retired live lookup) and any other value fail at boot, naming the variable |
+| `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | **required** | Stable Kafka consumer group of the `ProductClassified` consumer (always on). Every replica shares it |
+| `REPLENISHMENT_MODE` | `kafka` | Unset or `kafka`: the `ReplenishmentRequested` / `ReplenishmentCancelled` consumer plans REPLENISH work ([ADR-0042](docs/docs/adr/0042-pick-face-replenishment-work.md)). `permissive`, `off` and any other value fail at boot, naming the variable |
+| `REPLENISHMENT_CONSUMER_GROUP` | **required** | Stable Kafka consumer group of the replenishment consumer (always on). Every replica shares it |
+| `TRAVEL_DISTANCE_MODE` | `permissive` | REST sync edge to facility-layout (out of scope of ADR-0044): `permissive` (default, no-op, always omits the travel-distance hint) or `http` — synchronous lookup of the real travel distance between two facility-layout LocationCodes at shift-plan-commit time (ADR-0017) |
 | `FACILITY_LAYOUT_BASE_URL` | (unset) | Base URL for facility-layout's REST API; required when `TRAVEL_DISTANCE_MODE=http` |
-| `PATH_CATALOGUE_SOURCE` | `file` | `file` (default) reads `PATH_CATALOGUE_FILE` once at boot; `kafka` (requires `KAFKA_BROKERS`) replays process-path-management's `warehouse.process-path-management.events` topic into an in-memory catalogue, blocks startup until the replay completes, then keeps it current live. The replay uses its own per-process consumer group, independent of `KAFKA_CONSUMER_GROUP` |
+| `PATH_CATALOGUE_SOURCE` | `file` | `file` (default) reads `PATH_CATALOGUE_FILE` once at boot; `kafka` replays process-path-management's `warehouse.process-path-management.events` topic into an in-memory catalogue (a read-only cache rebuilt from the topic, not state), blocks startup until the replay completes, then keeps it current live. The replay uses its own per-process consumer group, independent of `KAFKA_CONSUMER_GROUP` |
 | `PATH_CATALOGUE_FILE` | `/etc/wes-work-planning/process-paths.yaml` | Path to the declared process-path catalogue YAML (see `warehouse-infra`'s `config/process-paths/sortable-fc.yaml`, the same file `fulfillment-execution` reads). Used only when `PATH_CATALOGUE_SOURCE=file`; loaded once at startup, and a missing or invalid file is a fatal boot-time error — see [ADR-0012](docs/docs/adr/0012-process-path-catalogue-validation.md) |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:5183` | Comma-separated browser origins allowed by the REST CORS middleware |
 

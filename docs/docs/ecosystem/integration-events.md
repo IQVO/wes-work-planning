@@ -553,4 +553,4 @@ broker:
 go test -tags=integration ./internal/adapters/inbound/kafka/... ./internal/adapters/outbound/kafkacatalog/...
 ```
 
-For a manual smoke test, see [Running locally](../overview/running-locally.md#connecting-to-the-shared-kafka-broker).
+For a manual smoke test, see [Running locally](../overview/running-locally.md#pointing-at-another-broker).

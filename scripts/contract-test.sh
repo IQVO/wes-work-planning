@@ -157,4 +157,5 @@ st run apis/openapi.yaml \
   --max-examples "${MAX_EXAMPLES}" \
   --workers 4 \
   --generation-allow-x00 false \
-  --exclude-operation-id commitShiftPlan
+  --exclude-operation-id commitShiftPlan \
+  "$@"

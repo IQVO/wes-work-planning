@@ -2,6 +2,13 @@ package release
 
 import "github.com/claudioed/wes-work-planning/internal/domain/shared"
 
+// MaxWIPLimit is the largest WIP limit a pool accepts (2^31 - 1). The limit is
+// stored in a Postgres INTEGER column; a larger value used to be accepted by
+// the in-memory pool and answered 500 on the real runtime (found by the
+// Schemathesis contract run on real Postgres, ADR-0044). No pool has anywhere
+// near this many concurrent work units, so the bound loses nothing.
+const MaxWIPLimit = 1<<31 - 1
+
 // FeedMode distinguishes release-fed pools (WES controls admission volume via
 // a WIP limit) from flow-fed pools (priority only; backlog is watched against
 // an alarm threshold instead).
@@ -143,7 +150,8 @@ func (p *WorkPool) Enqueue(workUnitId string, cpt shared.CPT) error {
 // command, ADR-0034). It reports whether anything changed, so an identical
 // repeat is a no-op success (idempotent).
 //
-// The limit must be a positive integer and the mode a known FeedMode;
+// The limit must be a positive integer no greater than MaxWIPLimit and the mode
+// a known FeedMode;
 // otherwise the pool is left untouched. Configure NEVER evicts or cancels
 // work: entries are not touched at all. Lowering the limit below the
 // current WIP simply leaves the pool saturated -- Release/ReleaseNext
@@ -154,7 +162,7 @@ func (p *WorkPool) Configure(mode FeedMode, wipLimit int) (changed bool, err err
 	if mode != ReleaseFed && mode != FlowFed {
 		return false, ErrUnknownFeedMode
 	}
-	if wipLimit <= 0 {
+	if wipLimit <= 0 || wipLimit > MaxWIPLimit {
 		return false, ErrInvalidWIPLimit
 	}
 	if p.mode == mode && p.wipLimit == wipLimit {

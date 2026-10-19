@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,8 +16,8 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafkacatalog"
-	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
+	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/system"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 )
@@ -32,6 +33,7 @@ type serving struct {
 	repos                   repositories
 	catalogue               ports.PathCatalogue
 	kafkaBrokers            string
+	consumerGroup           string
 	recordCompletion        *usecases.RecordCompletion
 	enqueueWorkUnit         *usecases.EnqueueWorkUnit
 	cancelCatalogueConsumer context.CancelFunc
@@ -39,8 +41,13 @@ type serving struct {
 	housekeeper             *postgres.Housekeeper
 	publisher               ports.EventPublisher
 	clock                   ports.Clock
-	// classification is what PRODUCT_CLASSIFICATION_MODE wired (ADR-0035);
-	// stopClassification is set while its ProductClassified consumer runs.
+	// fatal receives the error of a relay or consumer that died on its own
+	// (not through a shutdown): run() returns it, the process exits non-zero
+	// and the pod restarts, instead of staying alive with dead consumers.
+	// nil in unit tests that start a single component.
+	fatal chan error
+	// classification is what the ProductClassified wiring selected (ADR-0035);
+	// stopClassification is set while its consumer runs.
 	classification     classificationWiring
 	stopClassification func(ctx context.Context)
 	// replenishment is what REPLENISHMENT_MODE wired (ADR-0042);
@@ -67,8 +74,8 @@ type servingDeps struct {
 // newServing builds the HTTP handlers, the server, and the serving group
 // over already-wired adapters.
 func newServing(d servingDeps) *serving {
-	clock := memory.SystemClock{}
-	handlers := newHandlers(d.repos, d.publisher, clock, d.catalogue, d.repos.travelDistanceLookup(d.logger))
+	clock := system.Clock{}
+	handlers := newHandlers(d.repos, d.publisher, clock, d.catalogue, d.repos.travelDistanceLookup(d.logger), d.cfg.kafkaBrokers)
 
 	server := &http.Server{
 		Addr:              d.cfg.httpAddr,
@@ -88,6 +95,7 @@ func newServing(d servingDeps) *serving {
 		repos:                   d.repos,
 		catalogue:               d.catalogue,
 		kafkaBrokers:            d.cfg.kafkaBrokers,
+		consumerGroup:           d.cfg.consumerGroup,
 		recordCompletion:        usecases.NewRecordCompletion(d.repos.workUnits, d.repos.pools, d.publisher, clock).WithUnitOfWork(d.repos.uow).WithRelocationWork(d.repos.relocations),
 		enqueueWorkUnit:         usecases.NewEnqueueWorkUnit(d.repos.workUnits, d.repos.pools, d.publisher, clock).WithUnitOfWork(d.repos.uow),
 		cancelCatalogueConsumer: d.cancelCatalogueConsumer,
@@ -119,12 +127,17 @@ func (s *serving) startHousekeeper() (stopAndWait func()) {
 
 // run serves until SIGINT/SIGTERM (or a component failure), then drains.
 func (s *serving) run() error {
-	errCh := make(chan error, 1)
+	// errCh carries the listener's failure, the relay's death and the
+	// death of any consumer (s.fatal): a component that dies on its own
+	// takes the process down so the pod restarts, rather than leaving a
+	// "healthy" process with dead consumers. Buffered so no reporter blocks.
+	errCh := make(chan error, 8)
+	s.fatal = errCh
 	s.startHTTP(errCh)
 
 	// The outbox relay (ADR-0014) runs alongside the HTTP server in the
 	// same process, draining outbox_events onto both Kafka topics. It is
-	// only wired when Postgres AND the kafka publisher are configured.
+	// always on (ADR-0044).
 	relayCtx, stopRelay := context.WithCancel(context.Background())
 	defer stopRelay()
 	relayDone := s.startRelay(relayCtx, errCh)
@@ -139,12 +152,12 @@ func (s *serving) run() error {
 	consumer, consumerDone := s.startConsumer(consumerCtx)
 
 	// The ProductClassified consumer (ADR-0035) feeds the local
-	// classification copy; only wired in PRODUCT_CLASSIFICATION_MODE=kafka.
+	// classification copy; always on (ADR-0044).
 	s.startClassificationConsumer()
 	defer s.stopClassificationConsumerBounded()
 
 	// The ReplenishmentRequested/Cancelled consumer (ADR-0042) plans
-	// REPLENISH work; only wired in REPLENISHMENT_MODE=kafka.
+	// REPLENISH work; always on (ADR-0044).
 	s.startReplenishmentConsumer()
 	defer s.stopReplenishmentConsumerBounded()
 
@@ -160,6 +173,37 @@ func (s *serving) run() error {
 	}
 }
 
+// reportFatal hands err to run() without blocking; a nil channel (a unit test
+// that started one component on its own) drops it.
+func (s *serving) reportFatal(err error) {
+	if s.fatal == nil {
+		return
+	}
+	select {
+	case s.fatal <- err:
+	default:
+	}
+}
+
+// consumerStopped is what every consumer goroutine does with the result of its
+// Run. A stop requested through ctx is the normal shutdown (an error other than
+// a cancellation is still logged). A Run that returns while ctx is live means
+// the consumer died on its own -- a commit or DLQ failure, a closed reader --
+// and is fatal: the process exits non-zero so the pod restarts.
+func (s *serving) consumerStopped(ctx context.Context, name string, err error) {
+	if ctx.Err() != nil {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			s.logger.Error(name+" stopped", "error", err)
+		}
+		return
+	}
+	if err == nil {
+		err = errors.New("returned without being asked to stop")
+	}
+	s.logger.Error(name+" stopped on its own", "error", err)
+	s.reportFatal(fmt.Errorf("%s stopped on its own: %w", name, err))
+}
+
 // startHTTP serves the HTTP listener in the background; a listener failure
 // (other than a clean shutdown) is reported on errCh.
 func (s *serving) startHTTP(errCh chan<- error) {
@@ -171,8 +215,9 @@ func (s *serving) startHTTP(errCh chan<- error) {
 	}()
 }
 
-// startRelay runs the outbox relay (if wired) and returns a channel that
-// closes when it has returned (immediately when no relay is wired).
+// startRelay runs the outbox relay and returns a channel that closes when it
+// has returned. The relay is always wired by run(); a nil relay (a unit-test
+// fixture) closes the channel at once.
 func (s *serving) startRelay(ctx context.Context, errCh chan<- error) <-chan struct{} {
 	relayDone := make(chan struct{})
 	if s.relay == nil {
@@ -182,33 +227,30 @@ func (s *serving) startRelay(ctx context.Context, errCh chan<- error) <-chan str
 	go func() {
 		defer close(relayDone)
 		s.logger.Info("outbox relay running", "topics", []string{cloudevents.TopicWorkPlanningEvents, outboundkafka.AnalyticsTopic})
-		if err := s.relay.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		err := s.relay.Run(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
+			return
+		}
+		if ctx.Err() == nil {
+			errCh <- errors.New("outbox relay stopped on its own")
 		}
 	}()
 	return relayDone
 }
 
-// startConsumer starts the inbound Kafka consumer when brokers are
-// configured. The returned channel closes when consumer.Run has returned
-// (or immediately if no consumer is wired), so the shutdown can wait for
-// in-flight handling to finish BEFORE closing the dependencies it uses
+// startConsumer starts the inbound integration-event Kafka consumer. The
+// returned channel closes when consumer.Run has returned, so the shutdown can
+// wait for in-flight handling to finish BEFORE closing the dependencies it uses
 // (ADR-0023 §8.3).
 func (s *serving) startConsumer(ctx context.Context) (*inboundkafka.Consumer, <-chan struct{}) {
 	consumerDone := make(chan struct{})
-	if s.kafkaBrokers == "" {
-		close(consumerDone)
-		return nil, consumerDone
-	}
 	s.logger.Info("consuming integration events", "brokers", s.kafkaBrokers)
-	groupID := consumerGroupID(os.Getenv("KAFKA_CONSUMER_GROUP"))
-	s.logger.Info("kafka consumer group", "group_id", groupID)
-	consumer := s.newInboundConsumer(groupID)
+	s.logger.Info("kafka consumer group", "group_id", s.consumerGroup)
+	consumer := s.newInboundConsumer(s.consumerGroup)
 	go func() {
 		defer close(consumerDone)
-		if err := consumer.Run(ctx); err != nil {
-			s.logger.Error("kafka consumer stopped", "error", err)
-		}
+		s.consumerStopped(ctx, "kafka consumer", consumer.Run(ctx))
 	}()
 	return consumer, consumerDone
 }

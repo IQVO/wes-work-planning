@@ -14,7 +14,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 )
 
-// Environment of the pick-face replenishment stream (ADR-0042).
+// Environment of the pick-face replenishment stream (ADR-0042, ADR-0044).
 const (
 	replenishmentModeEnv        = "REPLENISHMENT_MODE"
 	replenishmentGroupEnv       = "REPLENISHMENT_CONSUMER_GROUP"
@@ -22,68 +22,62 @@ const (
 	replenishmentUrgentCPTHzEnv = "REPLENISHMENT_URGENT_CPT_HORIZON"
 )
 
-// Replenishment modes: permissive (the default) consumes nothing, so a
-// deployment that has not opted in plans no REPLENISH work; kafka consumes
-// warehouse.pick-face-replenishment.events.
-const (
-	replenishmentModePermissive = "permissive"
-	replenishmentModeKafka      = "kafka"
-)
+// replenishmentModeKafka is the only REPLENISHMENT_MODE a binary runs in: the
+// consumer of warehouse.pick-face-replenishment.events is always on (ADR-0044).
+// The variable keeps its name because infra sets it; unset means kafka, and
+// permissive/off are boot errors.
+const replenishmentModeKafka = "kafka"
 
-// replenishmentConfig is the environment that opts this process into
-// planning REPLENISH work.
+// replenishmentConfig is the environment of the REPLENISH-work consumer.
 type replenishmentConfig struct {
-	// mode is REPLENISHMENT_MODE: kafka | permissive (default).
+	// mode is REPLENISHMENT_MODE: unset or kafka.
 	mode string
 	// groupID is REPLENISHMENT_CONSUMER_GROUP: the STABLE consumer group
 	// every replica shares (the planned work is shared state in Postgres).
+	// Mandatory.
 	groupID      string
 	kafkaBrokers string
-	// hasDatabase is true when Postgres is wired (DATABASE_URL set): the
-	// consumer's effect is shared state, so kafka mode refuses to run on the
-	// in-memory repositories.
-	hasDatabase bool
 }
 
-func loadReplenishmentConfig(kafkaBrokers string, hasDatabase bool) replenishmentConfig {
+func loadReplenishmentConfig(kafkaBrokers string) replenishmentConfig {
 	return replenishmentConfig{
 		mode:         os.Getenv(replenishmentModeEnv),
 		groupID:      os.Getenv(replenishmentGroupEnv),
 		kafkaBrokers: kafkaBrokers,
-		hasDatabase:  hasDatabase,
 	}
 }
 
-// replenishmentWiring is what the mode selected; enabled is false in
-// permissive mode.
+// replenishmentWiring is what the config selected; enabled is always true for
+// a validated config and false only for a zero value (a unit-test fixture).
 type replenishmentWiring struct {
 	enabled bool
 	groupID string
 }
 
-// buildReplenishment resolves REPLENISHMENT_MODE (ADR-0042):
-//
-//   - permissive (or unset): no consumer.
-//   - kafka: the consumer runs. Requires REPLENISHMENT_CONSUMER_GROUP and
-//     KAFKA_BROKERS; without either it is a boot error.
-//   - anything else: a boot error.
+// validate is the boot check of REPLENISHMENT_MODE / REPLENISHMENT_CONSUMER_GROUP
+// (ADR-0044); every error names the variable. run() calls it before any dial.
+func (c replenishmentConfig) validate() error {
+	mode := strings.ToLower(strings.TrimSpace(c.mode))
+	if mode == "permissive" || mode == "off" {
+		return fmt.Errorf("%s=%s is not supported: this context runs on real Kafka (ADR-0044); unset it or set %s", replenishmentModeEnv, mode, replenishmentModeKafka)
+	}
+	if mode != "" && mode != replenishmentModeKafka {
+		return fmt.Errorf("%s=%q is not supported: this context runs on real Kafka, the only value is %s (ADR-0044)", replenishmentModeEnv, c.mode, replenishmentModeKafka)
+	}
+	if strings.TrimSpace(c.groupID) == "" {
+		return errors.New("REPLENISHMENT_CONSUMER_GROUP is required: the replenishment consumer is always on (a stable consumer group shared by every replica)")
+	}
+	if strings.TrimSpace(c.kafkaBrokers) == "" {
+		return errors.New("KAFKA_BROKERS is required by the replenishment consumer")
+	}
+	return nil
+}
+
+// buildReplenishment resolves REPLENISHMENT_MODE (ADR-0042, ADR-0044): the
+// consumer always runs. A config that cannot run on real Kafka is a boot error.
 func buildReplenishment(cfg replenishmentConfig, logger *slog.Logger) (replenishmentWiring, error) {
-	mode := strings.ToLower(strings.TrimSpace(cfg.mode))
-	if mode == "" || mode == replenishmentModePermissive {
-		logger.Info("replenishment planning configured", "mode", replenishmentModePermissive)
-		return replenishmentWiring{}, nil
-	}
-	if mode != replenishmentModeKafka {
-		return replenishmentWiring{}, fmt.Errorf("%s=%q is not one of %s, %s", replenishmentModeEnv, cfg.mode, replenishmentModeKafka, replenishmentModePermissive)
-	}
-	if strings.TrimSpace(cfg.groupID) == "" {
-		return replenishmentWiring{}, errors.New("REPLENISHMENT_MODE=kafka requires REPLENISHMENT_CONSUMER_GROUP (a stable consumer group shared by every replica)")
-	}
-	if strings.TrimSpace(cfg.kafkaBrokers) == "" {
-		return replenishmentWiring{}, errors.New("REPLENISHMENT_MODE=kafka requires KAFKA_BROKERS to be set")
-	}
-	if !cfg.hasDatabase {
-		return replenishmentWiring{}, errors.New("REPLENISHMENT_MODE=kafka requires DATABASE_URL to be set (Postgres): the planned work is shared state and is never kept in memory")
+	if err := cfg.validate(); err != nil {
+		return replenishmentWiring{}, err
 	}
 	logger.Info("replenishment planning configured", "mode", replenishmentModeKafka, "topic", cloudevents.TopicPickFaceReplenishmentEvents, "group_id", cfg.groupID)
 	return replenishmentWiring{enabled: true, groupID: cfg.groupID}, nil
@@ -99,8 +93,8 @@ func replenishmentCPTHorizons() (normal, urgent time.Duration) {
 }
 
 // startReplenishmentConsumer starts the ReplenishmentRequested /
-// ReplenishmentCancelled consumer when REPLENISHMENT_MODE=kafka, and records
-// how to stop it. A no-op otherwise.
+// ReplenishmentCancelled consumer and records how to stop it. A no-op only for
+// a zero-value wiring (a unit-test fixture): run() always enables it.
 func (s *serving) startReplenishmentConsumer() {
 	if !s.replenishment.enabled {
 		return
@@ -114,9 +108,7 @@ func (s *serving) startReplenishmentConsumer() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := consumer.Run(ctx); err != nil {
-			s.logger.Error("replenishment consumer stopped", "error", err)
-		}
+		s.consumerStopped(ctx, "replenishment consumer", consumer.Run(ctx))
 	}()
 	s.logger.Info("consuming replenishment requests", "topic", cloudevents.TopicPickFaceReplenishmentEvents, "group_id", s.replenishment.groupID)
 	s.stopReplenishment = func(waitCtx context.Context) {

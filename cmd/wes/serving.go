@@ -126,7 +126,7 @@ func (s *serving) startHousekeeper() (stopAndWait func()) {
 }
 
 // run serves until SIGINT/SIGTERM (or a component failure), then drains.
-func (s *serving) run() error {
+func (s *serving) run(ctx context.Context) error {
 	// errCh carries the listener's failure, the relay's death and the
 	// death of any consumer (s.fatal): a component that dies on its own
 	// takes the process down so the pod restarts, rather than leaving a
@@ -163,10 +163,14 @@ func (s *serving) run() error {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 
 	select {
 	case err := <-errCh:
 		return err
+	case <-ctx.Done():
+		s.logger.Info("shutting down (context cancelled)")
+		return s.gracefulShutdown(cancelConsumer, consumer, consumerDone, stopRelay, relayDone)
 	case <-sigCh:
 		s.logger.Info("shutting down")
 		return s.gracefulShutdown(cancelConsumer, consumer, consumerDone, stopRelay, relayDone)

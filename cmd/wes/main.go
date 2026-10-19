@@ -27,13 +27,16 @@ import (
 const serviceName = "wes-work-planning"
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(context.Background()); err != nil {
 		slog.Error("service exited with error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run boots the service and serves until SIGINT/SIGTERM, a component failure
+// or the cancellation of ctx (what an in-process integration test uses to stop
+// the real entry point), then drains.
+func run(ctx context.Context) error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
 
@@ -98,7 +101,7 @@ func run() error {
 		cancelCatalogueConsumer: cancelCatalogueConsumer,
 		classification:          classification,
 		replenishment:           replenishment,
-	}).run()
+	}).run(ctx)
 }
 
 // validateBootConfig runs every environment check of the real-wiring rule

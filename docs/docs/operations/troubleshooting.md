@@ -44,7 +44,7 @@ problem `type` it produces. Problem types are relative to
 
 | Symptom | Cause | Check | Fix |
 |---|---|---|---|
-| Upstream events never reach the read models; no `consuming integration events` log | the pod never got past boot (every consumer starts unconditionally), or a second process shares the group | boot logs; `kafka-consumer-groups.sh --describe --group wes-work-planning` | fix the boot error; see the next row |
+| Upstream events never reach the read models; no `kafka consumer group` / `consuming product classifications` boot log | the pod never got past boot (every consumer starts unconditionally), or a second process shares the group | boot logs; `kafka-consumer-groups.sh --describe --group wes-work-planning` | fix the boot error; see the next row |
 | A second process (local `go run`, e2e harness) consumes nothing while the deployed pod works, or vice versa | both share `KAFKA_CONSUMER_GROUP=wes-work-planning`; with one partition only one member gets it | `kafka-consumer-groups.sh --describe --group wes-work-planning` | give the extra process a unique `KAFKA_CONSUMER_GROUP` |
 | Lag grows on every consumed topic; log `kafka consumer stopped on its own` and the pod restarts | the loop exits when a DLQ publish or an offset commit fails (on purpose: the offset is not committed, nothing is lost) and the process exits non-zero | ERROR lines before it, e.g. `publish to dead-letter topic` | fix the broker; the restarted pod continues |
 | `<topic>.dlq` grows; `invalid CloudEvent, sending to dead-letter topic` | the producer sent something that is not CloudEvents 1.0 (e.g. the retired flat envelope) | `x-dlq-error` header | fix the producer; the message is never retried |

@@ -76,6 +76,11 @@ Kafka broker answers a metadata request; `GET /healthz` is liveness only.
 If the outbox relay or a consumer dies on its own, the process exits non-zero.
 Stop the stack with `docker compose down -v`.
 
+The warehouse kind cluster maps its own Kafka to `localhost:9092`. If that is
+running, start the compose Kafka on another port and point `KAFKA_BROKERS` at it:
+`KAFKA_HOST_PORT=19092 docker compose up -d --wait`, then
+`KAFKA_BROKERS=localhost:19092`.
+
 ## Configuration
 
 | Env var | Default | Purpose |

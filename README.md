@@ -90,6 +90,10 @@ REPLENISHMENT_CONSUMER_GROUP=wes-work-planning-replenishment-local \
 go run ./cmd/wes
 ```
 
+If another broker already owns `localhost:9092` (the warehouse kind cluster does),
+start the compose Kafka on a free port: `KAFKA_HOST_PORT=19092 docker compose up -d`
+and use `KAFKA_BROKERS=localhost:19092`.
+
 `cmd/wes` applies the OLTP migrations in `MIGRATIONS_PATH` itself before it
 opens the pool, so there is no separate `migrate` step. `GET /readyz` stays
 `503` until Postgres answers a ping and a Kafka broker answers a metadata

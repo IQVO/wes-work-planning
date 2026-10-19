@@ -12,3 +12,6 @@ coverage.out
 
 # Spectral/AsyncAPI lint tooling dependencies (installed by `npm ci` in apis/tooling).
 apis/tooling/node_modules/
+
+__pycache__/
+*.pyc

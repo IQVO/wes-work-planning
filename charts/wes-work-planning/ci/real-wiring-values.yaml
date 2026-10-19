@@ -1,0 +1,4 @@
+# chart-testing (ct lint) values: Postgres is mandatory (ADR-0044), so the chart
+# refuses to render with its defaults alone. A dummy DSN, no password.
+database:
+  url: postgres://u@example.invalid:5432/db

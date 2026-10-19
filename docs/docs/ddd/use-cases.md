@@ -10,9 +10,9 @@ description: Every use case in internal/application/usecases — what triggers i
 `internal/application/usecases` holds one struct per use case. Each is wired
 in a composition root (`cmd/wes/handlers.go`, `cmd/wes/serving.go`,
 `cmd/mcp/main.go`) and runs its saves and publishes inside one
-`UnitOfWork` when Postgres is configured — the outbox rows commit with the
-state change ([ADR-0014](../adr/0014-transactional-outbox.md)). With the
-in-memory adapters the same steps run back to back.
+`UnitOfWork` — the outbox rows commit with the
+state change ([ADR-0014](../adr/0014-transactional-outbox.md)). Unit tests that
+use the in-memory doubles run the same steps back to back.
 
 ```mermaid
 flowchart LR

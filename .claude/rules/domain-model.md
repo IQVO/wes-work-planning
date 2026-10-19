@@ -34,8 +34,8 @@ paths:
   `WorkReleased` publisher reads a released WorkUnit's SKU classification (via
   `ports.ProductClassificationLookup`, backed since ADR-0035 by a local
   Postgres copy of product-master's `ProductClassified` events, fed by a
-  Kafka consumer; `PRODUCT_CLASSIFICATION_MODE=kafka|permissive`,
-  permissive-by-default, `http` rejected at boot) and
+  Kafka consumer; `PRODUCT_CLASSIFICATION_MODE` defaults to `kafka`,
+  `permissive`/`off`/`http` rejected at boot, ADR-0044) and
   stamps derived `required_capabilities: ["hazmat"]` / `fragile: true` onto
   the outbound `WorkReleased` event's `data` payload when applicable. Both
   fields are OPTIONAL and OMITTED (not defaulted false/empty) when the SKU
@@ -51,7 +51,7 @@ paths:
   `fromLocationCode`/`toLocationCode` pair; when both are set it reads the
   distance once from facility-layout's `GET /distance` (via
   `ports.TravelDistanceLookup`, `TRAVEL_DISTANCE_MODE=http|permissive`,
-  permissive by default, fail-open) and stamps it on the `PathPlan`
+  permissive by default, fail-open; a REST sync edge, outside ADR-0044) and stamps it on the `PathPlan`
   (`TravelDistanceM`/`TravelDistanceKnown`/estimated flag), surfaced as
   optional `travelDistanceM`/`travelDistanceEstimated` in the response
   (ADR-0017). Omitted, never zero-filled, when unknown.
@@ -100,10 +100,10 @@ ADR-0019).
 `time.Now()` inside the domain — event-timing assertions in tests are exact,
 not approximate.
 
-Kafka publication is opt-in at runtime via `EVENT_PUBLISHER=kafka`; the
-default `EVENT_PUBLISHER=log` writes to the log publisher instead. "Declared
-in the catalogue" is not the same claim as "flowing in your environment
-right now" — check the actual env var.
+Every event is written to the transactional outbox and relayed to Kafka (ADR-0044:
+`EVENT_PUBLISHER` accepts only `kafka`; there is no log-only publisher).
+"Declared in the catalogue" is still not the same claim as "has a consumer
+today" — check the consumers.
 
 Two events are actually **consumed** by another service today:
 `WorkReleased`, by `fulfillment-execution`, which turns it into a `Task`, and

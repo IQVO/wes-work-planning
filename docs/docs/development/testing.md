@@ -59,7 +59,9 @@ Neither needs a database.
 131 `_test.go` files. The domain (`internal/domain/**`) and use cases
 (`internal/application/usecases`) carry most of them because they have no I/O
 to fake; in-memory adapters (`internal/adapters/outbound/memory`) stand in for
-repositories. The inbound HTTP adapter is tested with `httptest` (status
+repositories (test doubles only: the architecture test
+`TestRuntimeBinaryHasNoInMemoryAdapters` fails if a non-test file under `cmd/**`
+imports them, [ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)). The inbound HTTP adapter is tested with `httptest` (status
 mapping, problem types, idempotency errors, logging, otelchi telemetry), the
 Kafka adapters with fake readers/writers (retry-then-DLQ decisions, DLQ
 auto-create, CloudEvents golden files under
@@ -81,7 +83,7 @@ harness `repo_lint` rule R11 (coverage-scope) forbids a workflow passing
 
 `features_test.go` / `features_wave2_test.go` define `TestFeatures`, which
 runs every file under `features/` with `Strict: true` (an undefined or
-pending step fails) against the real use cases wired to in-memory adapters.
+pending step fails) against the real use cases wired to in-memory test doubles.
 
 | Feature file | Scenario headings | Executed scenarios |
 |---|---|---|
@@ -147,10 +149,15 @@ go test -tags=integration ./internal/adapters/outbound/postgres/... -run Outbox 
 
 `scripts/contract-test.sh` builds `cmd/wes`, writes a throw-away
 `sortable-fc` catalogue (`pick`, `pack`, `rebin`, `slam` prefixes), boots the
-service **in memory** on `127.0.0.1:18086` (`CONTRACT_PORT`), waits for
-`/healthz`, then runs
-`st run apis/openapi.yaml --max-examples 100 --workers 4 --exclude-operation-id commitShiftPlan`
-(`CONTRACT_MAX_EXAMPLES` overrides 100). `commitShiftPlan` is excluded because
+service against a **real Postgres (`DATABASE_URL`) and a real Kafka
+(`KAFKA_BROKERS`)** on `127.0.0.1:18086` (`CONTRACT_PORT`), waits for
+`/readyz`, then runs
+`st run apis/openapi.yaml --max-examples 100 --workers 4 --exclude-operation-id commitShiftPlan --generation-allow-x00 false`
+with the `scripts/contract_hooks.py` hook that gives every request a fresh
+`Idempotency-Key` (`CONTRACT_MAX_EXAMPLES` overrides 100). The CI `contract`
+job provides `postgres:16` and `confluentinc/confluent-local:7.6.1` service
+containers (the Kafka one advertises `PLAINTEXT_HOST://localhost:<port>`);
+locally start disposable ones (the commands are in the script header). `commitShiftPlan` is excluded because
 its `plannedHeads <= installedStations` invariant cannot be expressed in
 OpenAPI 3.0.3; it is covered by BDD and unit tests instead. The
 `/reports/*` routes of `cmd/wes-reports` are specified separately in

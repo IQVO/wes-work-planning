@@ -7,7 +7,7 @@ import "github.com/claudioed/wes-work-planning/internal/domain/shared"
 // the in-memory pool and answered 500 on the real runtime (found by the
 // Schemathesis contract run on real Postgres, ADR-0044). No pool has anywhere
 // near this many concurrent work units, so the bound loses nothing.
-const MaxWIPLimit = 1<<31 - 1
+const MaxWIPLimit = 2147483647
 
 // FeedMode distinguishes release-fed pools (WES controls admission volume via
 // a WIP limit) from flow-fed pools (priority only; backlog is watched against

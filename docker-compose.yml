@@ -15,5 +15,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # A real single-node Kafka (KRaft) for local runs: the service has no
+  # in-memory mode and refuses to boot without KAFKA_BROKERS (ADR-0044). The
+  # broker advertises localhost:${KAFKA_HOST_PORT:-9092} to the host, so
+  # KAFKA_BROKERS=localhost:9092 works from the host. If another broker already
+  # owns 9092 (the warehouse kind cluster maps it), pick a free port:
+  #   KAFKA_HOST_PORT=19092 docker compose up -d --wait
+  #   KAFKA_BROKERS=localhost:19092 ...
+  # The broker auto-creates topics on first write, like the cluster.
+  kafka:
+    image: confluentinc/confluent-local:7.6.1
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:29092,PLAINTEXT_HOST://localhost:${KAFKA_HOST_PORT:-9092}"
+    ports:
+      - "${KAFKA_HOST_PORT:-9092}:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+
 volumes:
   wes_postgres_data:

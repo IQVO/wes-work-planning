@@ -151,16 +151,15 @@ The work-unit id is unchanged (`{order_id}-line-{line_no}`). An inbound
 not rejected: the unit is still enqueued under the id built from the number as
 sent, with its stored line left unknown, so `WorkReleased` omits `line_no`.
 
-Publication is opt-in at runtime: with the default `EVENT_PUBLISHER=log` these
-events are written to the log publisher instead of Kafka. Set
-`EVENT_PUBLISHER=kafka` and `KAFKA_BROKERS` to publish.
+Publication always goes through the transactional outbox to Kafka
+(`KAFKA_BROKERS` is mandatory, `EVENT_PUBLISHER` accepts only `kafka`; there is
+no log-only publisher, [ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)).
 
 ## Events consumed
 
 These belong to **other** bounded contexts and are documented in their
-services' own specs; they are listed here for orientation. Consumption starts
-automatically whenever `KAFKA_BROKERS` is set, independent of
-`EVENT_PUBLISHER`.
+services' own specs; they are listed here for orientation. Every consumer is
+always on (`KAFKA_BROKERS` and each consumer group are mandatory, [ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)).
 
 Every consumer decodes with `cloudevents.Decode` and dispatches on the
 **full** `type` string below (never a short name or suffix match); unknown
@@ -237,9 +236,9 @@ ADR 0034) and that endpoint is being retired.
 |---|---|---|
 | `com.warehouse.wms.product-master.product.ProductClassified` | `sku`, `handling_tags`, `temperature_class`?, `dot_hazard_class`?, `classification_source`, `version` | Upserts `product_classification_copy` for the SKU **only when `version` is newer** than the stored row; other product-master types are ignored |
 
-- `PRODUCT_CLASSIFICATION_MODE=kafka|permissive` (default `permissive`, a
-  no-op that always reports `Known=false`). `http` is rejected at boot.
-- With `kafka`, `cmd/wes` runs a dedicated consumer
+- `PRODUCT_CLASSIFICATION_MODE` defaults to `kafka`; `permissive`, `off` and
+  `http` are rejected at boot ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)).
+- `cmd/wes` always runs a dedicated consumer
   (`internal/adapters/inbound/kafka/product_classification_consumer.go`)
   under the stable group `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`. It claims
   the CloudEvents `id` and upserts in one transaction
@@ -258,7 +257,7 @@ ADR 0034) and that endpoint is being retired.
   (bool, `true` when the SKU carries the `Fragile` tag). Both fields are
   **omitted** — not defaulted to an explicit empty array / `false` — when
   the SKU is unclassified, not yet in the copy, has no SKU at all, or the
-  copy is unreadable (permissive mode or a read error).
+  copy is unreadable (a read error).
 - **Fail-open, not fail-closed.** Unlike inventory-storage's own
   `StowStock` placement check, a classification problem here must never
   block or delay releasing work — it can only omit an optional enrichment.
@@ -311,7 +310,7 @@ process-path-management's `cptId` string.
 
 Kafka is at-least-once, so **every** consumer path here is idempotent. Before
 applying an event's effect, its CloudEvents `id` is inserted into `processed_events`
-(Postgres) or a thread-safe set (in-memory). A primary-key collision means
+(Postgres; the in-memory set is a unit-test double only). A primary-key collision means
 "already processed": the effect is skipped and the message is acked anyway.
 The insert runs in the **same transaction** as the effect
 ([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)). If the

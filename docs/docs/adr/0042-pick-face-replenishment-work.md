@@ -10,7 +10,7 @@ description: ADR 0042 — wes-work-planning consumes pick-face-replenishment's R
 
 ## Status
 
-Accepted.
+Accepted. Amended by [ADR-0044](./0044-postgres-and-kafka-are-the-only-runtime.md): `REPLENISHMENT_MODE` defaults to `kafka` and `permissive`/`off` are boot errors; the consumer is always on.
 
 Mirrors the RELOCATE chain of [ADR-0040](./0040-slot-plan-relocation-work.md)
 for the second floor-work demand source of the pick-face replenishment design

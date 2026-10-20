@@ -40,8 +40,8 @@ flowchart TB
 
     subgraph outbound["Outbound adapters (driven)"]
         PG["adapters/outbound/postgres<br/>pgx/v5 repositories"]
-        MEM["adapters/outbound/memory<br/>in-memory repositories"]
-        EV["adapters/outbound/events<br/>log publisher"]
+        MEM["adapters/outbound/memory<br/>in-memory repositories (test doubles only)"]
+        EV["adapters/outbound/events<br/>log publisher (test double only)"]
         KOUT["adapters/outbound/kafka<br/>Kafka publishers"]
         CAT["adapters/outbound/filecatalog · kafkacatalog<br/>process-path catalogue"]
         LOOK["adapters/outbound/productclassificationcopy · traveldistance<br/>local classification copy · sibling REST lookup"]
@@ -117,8 +117,9 @@ Source: `cmd/wes/serving.go`, `cmd/wes/publisher.go`, `cmd/mcp/main.go`,
   `work_pool_entries`, `work_units`, `processed_events`, `labor_plan_view`,
   `usable_inventory_view`, `outbox_events`, `idempotency_keys`,
   `product_classification_copy` (and an unused `events` table from
-  `0001_init`). Without `DATABASE_URL` both `cmd/wes` and `cmd/mcp` fall back
-  to **separate** in-memory stores.
+  `0001_init`). `DATABASE_URL` is mandatory for both `cmd/wes` and `cmd/mcp`
+  ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)); they
+  share this one database.
 - **Analytical Postgres** (`ANALYTICS_DATABASE_URL`, a separate database
   migrated by the projector from `migrations/analytics/`):
   `analytics_processed_events`, `analytics_consumed_events`,
@@ -158,8 +159,9 @@ internal/
     inbound/kafka/              integration-event consumer (5 topics), ProductClassified consumer (ADR-0035) + analytics consumer
     inbound/mcp/                MCP tools, resources, prompts (ADR-0008)
     outbound/postgres/          pgxpool repositories, UnitOfWork, outbox + relay (ADR-0014)
-    outbound/memory/            thread-safe in-memory repositories
-    outbound/events/            log EventPublisher + MultiPublisher
+    outbound/memory/            thread-safe in-memory repositories (test doubles only)
+    outbound/events/            log EventPublisher + MultiPublisher (test doubles only)
+    outbound/system/            production wall clock (ports.Clock)
     outbound/kafka/             integration + analytics publishers, outbox encoders, RelaySink
     outbound/filecatalog/       process-path catalogue from YAML (PATH_CATALOGUE_SOURCE=file)
     outbound/kafkacatalog/      process-path catalogue from Kafka (PATH_CATALOGUE_SOURCE=kafka)
@@ -185,12 +187,12 @@ so the domain never learns that Postgres or Kafka exist:
 | `PlanRepo` | persist/retrieve `ShiftPlan`, one per path |
 | `WorkPoolRepo` | persist/retrieve `WorkPool`, one per path |
 | `WorkUnitRepo` | persist/retrieve `WorkUnit` by id and by path |
-| `EventPublisher` | publish domain events (`log` or `kafka` implementation) |
+| `EventPublisher` | publish domain events (the Kafka outbox encoders in production; a log/multi publisher in unit tests only) |
 | `Clock` | abstract "now" so use cases and tests are deterministic |
 | `LaborPlanViewRepo` | persist the `LaborPlanObserved` projection, one per path |
 | `InventoryViewRepo` | atomically apply a delta to `UsableInventoryObserved`, keyed by SKU |
 | `ProcessedEventRepo` | record consumed CloudEvents `id`s so redelivery is a no-op |
-| `ProcessedEventReleaser` | optional: undo a non-transactional (in-memory) mark when the effect fails (ADR-0028) |
+| `ProcessedEventReleaser` | optional: undo a non-transactional (in-memory test double) mark when the effect fails (ADR-0028) |
 | `UnitOfWork` | run a use case's save + publish in one Postgres transaction (ADR-0014) |
 | `ReleaseMetrics` | record the `wes.work_units.released` business counter (ADR-0013) |
 | `PathCatalogue` | look up a `pathId` in the declared process-path catalogue (ADR-0012) |
@@ -198,10 +200,11 @@ so the domain never learns that Postgres or Kafka exist:
 | `ProductClassificationCopyRepo` | apply a `ProductClassified` to that copy, version-guarded (ADR-0035) |
 | `TravelDistanceLookup` | read a travel distance from facility-layout (ADR-0017) |
 
-The composition root picks each implementation from environment variables:
-in-memory vs Postgres (`DATABASE_URL`), log vs Kafka (`EVENT_PUBLISHER`),
-file vs Kafka catalogue (`PATH_CATALOGUE_SOURCE`), permissive vs HTTP lookups
-(`*_MODE`).
+The composition root wires Postgres (`DATABASE_URL`) and Kafka
+(`KAFKA_BROKERS`) unconditionally ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md));
+the only choices left in environment variables are file vs Kafka catalogue
+(`PATH_CATALOGUE_SOURCE`) and the permissive vs HTTP travel-distance lookup
+(`TRAVEL_DISTANCE_MODE`, a REST sync edge).
 
 ## Why this shape
 

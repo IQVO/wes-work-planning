@@ -479,9 +479,9 @@ flowchart LR
 
 Source: `internal/application/ports/*.go`, `internal/adapters/**`,
 `cmd/wes/main.go`, `cmd/mcp/main.go`, `cmd/wes-projector/main.go`,
-`cmd/wes-reports/main.go`. Omits: `Clock` (`memory.SystemClock`), the
-`ProcessedEventReleaser` optional port, the permissive / no-op variants of the
-two REST lookups, `events.MultiPublisher`, and `cmd/wes-reports` (serves
+`cmd/wes-reports/main.go`. Omits: `Clock` (`system.Clock`), the
+`ProcessedEventReleaser` optional port, the permissive / no-op variant of the
+REST travel-distance lookup, and `cmd/wes-reports` (serves
 `GET /reports/throughput` from `analyticsstore.PostgresReport`). The MCP
 server calls the use cases in-process through its own composition root,
 not over REST.

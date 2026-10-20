@@ -56,7 +56,7 @@ func TestWorkPool_Configure_IsIdempotent(t *testing.T) {
 }
 
 func TestWorkPool_Configure_RejectsNonPositiveLimit(t *testing.T) {
-	for _, limit := range []int{0, -1} {
+	for _, limit := range []int{0, -1, MaxWIPLimit + 1, 9223372036854775806} {
 		pool := configPool(t, ReleaseFed, 10)
 		changed, err := pool.Configure(FlowFed, limit)
 		if !errors.Is(err, ErrInvalidWIPLimit) {
@@ -75,6 +75,17 @@ func TestWorkPool_Configure_AcceptsLimitOfOne(t *testing.T) {
 	pool := configPool(t, ReleaseFed, 10)
 	if _, err := pool.Configure(ReleaseFed, 1); err != nil {
 		t.Fatalf("limit 1 must be valid: %v", err)
+	}
+}
+
+// The largest limit the Postgres INTEGER column holds is still valid.
+func TestWorkPool_Configure_AcceptsTheMaximumLimit(t *testing.T) {
+	pool := configPool(t, ReleaseFed, 10)
+	if _, err := pool.Configure(ReleaseFed, MaxWIPLimit); err != nil {
+		t.Fatalf("limit %d must be valid: %v", MaxWIPLimit, err)
+	}
+	if pool.WIPLimit() != 2147483647 {
+		t.Fatalf("limit = %d, want 2147483647", pool.WIPLimit())
 	}
 }
 

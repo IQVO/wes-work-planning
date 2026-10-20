@@ -18,12 +18,14 @@ import (
 )
 
 // classificationConfig is the environment that selects how this process
-// learns product classifications (ADR-0035).
+// learns product classifications (ADR-0035, ADR-0044).
 type classificationConfig struct {
-	// mode is PRODUCT_CLASSIFICATION_MODE: kafka | permissive (default).
+	// mode is PRODUCT_CLASSIFICATION_MODE: unset or kafka; permissive/off are
+	// boot errors.
 	mode string
 	// groupID is PRODUCT_CLASSIFICATION_CONSUMER_GROUP: the STABLE consumer
 	// group every replica shares (the copy is shared state in Postgres).
+	// Mandatory.
 	groupID      string
 	kafkaBrokers string
 }
@@ -36,11 +38,26 @@ func loadClassificationConfig(kafkaBrokers string) classificationConfig {
 	}
 }
 
+// validate rejects every configuration that would not run on real Kafka, with
+// an error that names the variable. run() calls it before any dial.
+func (c classificationConfig) validate() (productclassificationcopy.Mode, error) {
+	mode, err := productclassificationcopy.ParseMode(c.mode)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(c.groupID) == "" {
+		return "", errors.New("PRODUCT_CLASSIFICATION_CONSUMER_GROUP is required: the ProductClassified consumer is always on (a stable consumer group shared by every replica)")
+	}
+	if strings.TrimSpace(c.kafkaBrokers) == "" {
+		return "", errors.New("KAFKA_BROKERS is required by the ProductClassified consumer (PRODUCT_CLASSIFICATION_MODE=kafka)")
+	}
+	return mode, nil
+}
+
 // classificationWiring is what the mode selected: the lookup the WorkReleased
-// encoder reads and, in kafka mode, the copy the consumer writes.
+// encoder reads and the copy the consumer writes (the same Postgres store).
 type classificationWiring struct {
-	lookup ports.ProductClassificationLookup
-	// copies is nil unless the ProductClassified consumer must run.
+	lookup  ports.ProductClassificationLookup
 	copies  ports.ProductClassificationCopyRepo
 	groupID string
 }
@@ -51,41 +68,27 @@ type copyStore interface {
 	ports.ProductClassificationCopyRepo
 }
 
-// buildClassification resolves PRODUCT_CLASSIFICATION_MODE (ADR-0035):
-//
-//   - permissive (or unset): the no-op lookup, no consumer.
-//   - kafka: the local copy (Postgres over pool, in memory when pool is nil)
-//     as the lookup, plus the consumer that feeds it. Requires
-//     PRODUCT_CLASSIFICATION_CONSUMER_GROUP and KAFKA_BROKERS.
-//   - anything else, including the retired http: a boot error.
+// buildClassification resolves PRODUCT_CLASSIFICATION_MODE (ADR-0035,
+// ADR-0044): kafka is the only mode. The local copy is the Postgres store over
+// pool (a nil pool is a boot error), read by the WorkReleased encoder and fed
+// by the ProductClassified consumer. Requires
+// PRODUCT_CLASSIFICATION_CONSUMER_GROUP and KAFKA_BROKERS.
 func buildClassification(cfg classificationConfig, pool *pgxpool.Pool, logger *slog.Logger) (classificationWiring, error) {
-	mode, err := productclassificationcopy.ParseMode(cfg.mode)
+	mode, err := cfg.validate()
 	if err != nil {
 		return classificationWiring{}, err
 	}
-	if mode == productclassificationcopy.ModePermissive {
-		logger.Info("product classification lookup configured", "mode", string(mode))
-		return classificationWiring{lookup: productclassificationcopy.NewPermissiveLookup()}, nil
+	if pool == nil {
+		return classificationWiring{}, errors.New("PRODUCT_CLASSIFICATION_MODE=kafka requires DATABASE_URL (Postgres): the classification copy is shared state and is never kept in memory")
 	}
-	if strings.TrimSpace(cfg.groupID) == "" {
-		return classificationWiring{}, errors.New("PRODUCT_CLASSIFICATION_MODE=kafka requires PRODUCT_CLASSIFICATION_CONSUMER_GROUP (a stable consumer group shared by every replica)")
-	}
-	if strings.TrimSpace(cfg.kafkaBrokers) == "" {
-		return classificationWiring{}, errors.New("PRODUCT_CLASSIFICATION_MODE=kafka requires KAFKA_BROKERS to be set")
-	}
-	var store copyStore
-	if pool != nil {
-		store = productclassificationcopy.NewStore(pool, logger)
-	} else {
-		logger.Warn("PRODUCT_CLASSIFICATION_MODE=kafka without DATABASE_URL: the classification copy is in memory and lost on restart; use a fresh PRODUCT_CLASSIFICATION_CONSUMER_GROUP per run to replay it")
-		store = productclassificationcopy.NewMemoryStore()
-	}
-	logger.Info("product classification lookup configured", "mode", string(mode), "topic", cloudevents.TopicProductMasterEvents, "group_id", cfg.groupID, "postgres", pool != nil)
+	var store copyStore = productclassificationcopy.NewStore(pool, logger)
+	logger.Info("product classification lookup configured", "mode", string(mode), "topic", cloudevents.TopicProductMasterEvents, "group_id", cfg.groupID)
 	return classificationWiring{lookup: store, copies: store, groupID: cfg.groupID}, nil
 }
 
-// startClassificationConsumer starts the ProductClassified consumer when the
-// kafka mode wired a copy, and records how to stop it. A no-op otherwise.
+// startClassificationConsumer starts the ProductClassified consumer when a
+// copy was wired, and records how to stop it. run() always wires one; the no-op
+// is only for a zero-value fixture in unit tests.
 func (s *serving) startClassificationConsumer() {
 	if s.classification.copies == nil {
 		return
@@ -96,9 +99,7 @@ func (s *serving) startClassificationConsumer() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := consumer.Run(ctx); err != nil {
-			s.logger.Error("product classification consumer stopped", "error", err)
-		}
+		s.consumerStopped(ctx, "product classification consumer", consumer.Run(ctx))
 	}()
 	s.logger.Info("consuming product classifications", "topic", cloudevents.TopicProductMasterEvents, "group_id", s.classification.groupID)
 	s.stopClassification = func(waitCtx context.Context) {

@@ -1,3 +1,8 @@
+{{- include "wes-work-planning.requireDatabase" . -}}
+{{- include "wes-work-planning.requireKafka" . -}}
+{{- include "wes-work-planning.requireEventPublisher" . -}}
+{{- include "wes-work-planning.requireGracePeriod" . -}}
+{{- include "wes-work-planning.requireKafkaEnv" (dict "env" .Values.extraEnv "where" "extraEnv") -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -70,6 +75,29 @@ spec:
               value: {{ .Values.config.logLevel | quote }}
             - name: OUTBOX_MAX_ATTEMPTS
               value: {{ .Values.config.outboxMaxAttempts | quote }}
+            # KAFKA_BROKERS is always set and required: Postgres and Kafka are
+            # the only runtime (ADR-0044), so the render fails when it is empty.
+            - name: KAFKA_BROKERS
+              value: {{ .Values.kafka.brokers | quote }}
+            # One stable consumer group per Kafka consumer; a missing one is a
+            # boot error. extraEnv wins: warehouse-infra sets the
+            # classification and replenishment groups there and a duplicate env
+            # entry breaks ArgoCD's diff, so the chart default is rendered only
+            # when extraEnv does not name the variable.
+            {{- $extra := dict }}
+            {{- range .Values.extraEnv }}
+            {{- $_ := set $extra .name true }}
+            {{- end }}
+            - name: KAFKA_CONSUMER_GROUP
+              value: {{ required "config.consumerGroup is required (KAFKA_CONSUMER_GROUP): the stable group of the integration-event consumer" .Values.config.consumerGroup | quote }}
+            {{- if not (hasKey $extra "PRODUCT_CLASSIFICATION_CONSUMER_GROUP") }}
+            - name: PRODUCT_CLASSIFICATION_CONSUMER_GROUP
+              value: {{ required "config.productClassificationConsumerGroup is required (PRODUCT_CLASSIFICATION_CONSUMER_GROUP): the ProductClassified consumer is always on" .Values.config.productClassificationConsumerGroup | quote }}
+            {{- end }}
+            {{- if not (hasKey $extra "REPLENISHMENT_CONSUMER_GROUP") }}
+            - name: REPLENISHMENT_CONSUMER_GROUP
+              value: {{ required "config.replenishmentConsumerGroup is required (REPLENISHMENT_CONSUMER_GROUP): the replenishment consumer is always on" .Values.config.replenishmentConsumerGroup | quote }}
+            {{- end }}
             {{- if .Values.otel.enabled }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.otel.endpoint | quote }}
@@ -80,7 +108,6 @@ spec:
             - name: ENVIRONMENT
               value: {{ .Values.environment | quote }}
             {{- end }}
-            {{- if or .Values.database.url .Values.database.existingSecret }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -100,11 +127,6 @@ spec:
                   name: {{ include "wes-work-planning.databaseSecretName" . }}
                   key: {{ .Values.database.migrationsExistingSecretKey }}
                   optional: true
-            {{- end }}
-            {{- end }}
-            {{- if .Values.kafka.enabled }}
-            - name: KAFKA_BROKERS
-              value: {{ .Values.kafka.brokers | quote }}
             {{- end }}
             {{- if .Values.pathCatalogue.enabled }}
             - name: PATH_CATALOGUE_FILE

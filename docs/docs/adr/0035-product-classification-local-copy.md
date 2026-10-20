@@ -17,6 +17,7 @@ model"); ADR-0009 §3–§5 (SKU on `WorkUnit`, the stamp in the outbound Kafka
 adapter, fail-open) stay in force. Also retires the product-classification
 breaker of [ADR-0023](./0023-resilience-circuit-breakers-retry-dlq-shutdown.md)
 (the travel-distance breaker is unchanged).
+Amended by [ADR-0044](./0044-postgres-and-kafka-are-the-only-runtime.md): `permissive` and the in-memory copy no longer exist; the mode defaults to `kafka`.
 
 Companion decisions: product-master ADR 0001 (product-master owns SKU-level
 product master data) and ADR 0003 stage D (downstream readers move to local

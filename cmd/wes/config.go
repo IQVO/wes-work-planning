@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -41,22 +42,56 @@ type appConfig struct {
 	migrationsDatabaseURL string
 	migrationsPath        string
 	kafkaBrokers          string
-	eventPublisherKind    string
-	otelServiceName       string
+	// consumerGroup is KAFKA_CONSUMER_GROUP: the group of the integration-
+	// event consumer (the chart renders wes-work-planning). Mandatory.
+	consumerGroup      string
+	eventPublisherKind string
+	otelServiceName    string
 }
+
+// Environment variables the binary refuses to boot without (ADR-0044): the
+// real-wiring rule is that this context runs only on real Postgres and real
+// Kafka, so none of them has a default.
+const (
+	databaseURLEnv    = "DATABASE_URL"
+	kafkaBrokersEnv   = "KAFKA_BROKERS"
+	consumerGroupEnv  = "KAFKA_CONSUMER_GROUP"
+	eventPublisherEnv = "EVENT_PUBLISHER"
+)
 
 // loadConfig reads the process-level environment.
 func loadConfig() appConfig {
-	databaseURL := os.Getenv("DATABASE_URL")
+	databaseURL := os.Getenv(databaseURLEnv)
 	return appConfig{
 		httpAddr:              getenv("HTTP_ADDR", ":8080"),
 		databaseURL:           databaseURL,
 		migrationsDatabaseURL: getenv("MIGRATIONS_DATABASE_URL", databaseURL),
 		migrationsPath:        getenv("MIGRATIONS_PATH", "migrations"),
-		kafkaBrokers:          os.Getenv("KAFKA_BROKERS"),
-		eventPublisherKind:    getenv("EVENT_PUBLISHER", "log"),
+		kafkaBrokers:          os.Getenv(kafkaBrokersEnv),
+		consumerGroup:         os.Getenv(consumerGroupEnv),
+		eventPublisherKind:    getenv(eventPublisherEnv, "kafka"),
 		otelServiceName:       getenv("OTEL_SERVICE_NAME", serviceName),
 	}
+}
+
+// validate is the first thing run() does, before any dial and before the
+// listener binds: every variable that wires a real dependency must be set, and
+// the error names it. EVENT_PUBLISHER is kept because infra sets it, but kafka
+// is the only value (the log sink is gone).
+func (c appConfig) validate() error {
+	if strings.TrimSpace(c.databaseURL) == "" {
+		return errors.New("DATABASE_URL is required: this context runs only on a real Postgres (ADR-0044), there is no in-memory mode")
+	}
+	if len(brokerList(c.kafkaBrokers)) == 0 {
+		return errors.New("KAFKA_BROKERS is required: this context runs only on a real Kafka (ADR-0044), there is no log sink and no optional relay")
+	}
+	if strings.TrimSpace(c.consumerGroup) == "" {
+		return errors.New("KAFKA_CONSUMER_GROUP is required: the stable consumer group of the integration-event consumer (every replica shares it; the chart renders wes-work-planning)")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.eventPublisherKind), "kafka") {
+		return fmt.Errorf("EVENT_PUBLISHER=%q is not supported: this context publishes through the outbox to real Kafka, the only value is kafka (ADR-0044)", c.eventPublisherKind)
+	}
+	return nil
 }
 
 // newLogger builds the process-wide structured logger: JSON to stdout, at
@@ -100,32 +135,20 @@ func newEventID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// defaultConsumerGroup is the group id every deployed instance of this
-// service shares, so they cooperatively split the partitions of the topics
-// below -- the normal, intended behaviour for a horizontally scaled service.
-const defaultConsumerGroup = "wes-work-planning"
-
-// consumerGroupID resolves the Kafka consumer group id, allowing
-// KAFKA_CONSUMER_GROUP to override the default.
+// KAFKA_CONSUMER_GROUP (appConfig.consumerGroup) is the group id every
+// deployed instance of this service shares, so they cooperatively split the
+// partitions of the integration topics -- the normal, intended behaviour for a
+// horizontally scaled service. The chart renders wes-work-planning.
 //
-// This override exists for a specific, real failure: consumer-group offsets
-// are shared infrastructure state, not per-process state. This fleet runs ONE
-// Kafka broker platform-wide, so a second process started against it -- the
+// It has no default in the binary (ADR-0044): consumer-group offsets are shared
+// infrastructure state, not per-process state, and this fleet runs ONE Kafka
+// broker platform-wide, so a second process started against it -- the
 // e2e-tests harness's local binary, or a developer's `go run` -- joins the
 // SAME group as the deployed Deployment when the id is fixed. With one
 // partition per topic, Kafka's rebalance protocol awards that partition to
 // exactly one member and the other silently consumes nothing, having been
-// told it is healthy.
-//
-// Setting a unique id (e.g. wes-work-planning-e2e-$$) isolates such a process
-// so it replays the topics itself instead of competing for them. Leaving it
-// unset preserves the shared-group behaviour deployments rely on.
-func consumerGroupID(override string) string {
-	if strings.TrimSpace(override) != "" {
-		return override
-	}
-	return defaultConsumerGroup
-}
+// told it is healthy. A process run alongside a deployed instance must set a
+// unique id (e.g. wes-work-planning-e2e-$$) so it replays the topics itself.
 
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

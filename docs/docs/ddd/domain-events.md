@@ -64,14 +64,14 @@ rule ([ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md) defers
 it), is not emitted today, and is not removed (removing a declared message would
 be a contract removal).
 
-Kafka publication is **opt-in at runtime** via `EVENT_PUBLISHER=kafka`. With
-the default `EVENT_PUBLISHER=log`, every event above goes to the log
-publisher instead.
+Every event above is written to the transactional outbox and published to Kafka
+by the always-on relay; `EVENT_PUBLISHER` accepts only `kafka`, there is no
+log-only publisher ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)).
 :::
 
 ## Consumed
 
-Consumer group `wes-work-planning` (override with `KAFKA_CONSUMER_GROUP`),
+Consumer group `KAFKA_CONSUMER_GROUP` (mandatory; the chart renders `wes-work-planning`),
 dispatching on the **full** `type`; unknown types are ignored; a non-CloudEvents
 message goes straight to `<topic>.dlq`; a handler error is tried 3 times in
 total (exponential backoff) and then dead-lettered. Each handler marks the CloudEvents `id` in

@@ -90,7 +90,7 @@ func TestProductClassificationFromKafkaReachesWorkReleased(t *testing.T) {
 	}
 
 	// Release work through the real outbox publisher and use cases.
-	publisher, _, stopPublisher, err := wireEventPublisher(logger, "kafka", brokerCSV, repos.workUnits, classification.lookup, repos.pgPool)
+	publisher, _, stopPublisher, err := wireEventPublisher(logger, brokerCSV, repos.workUnits, classification.lookup, repos.pgPool)
 	if err != nil {
 		t.Fatalf("wireEventPublisher: %v", err)
 	}

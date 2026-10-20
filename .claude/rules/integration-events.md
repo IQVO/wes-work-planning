@@ -111,7 +111,7 @@ Topic `warehouse.work-planning.events`:
 
 Topic `warehouse.wes.analytics` (separate, additive — see
 `.claude/rules/architecture.md`'s Analytics section): every domain event,
-fanned out alongside the integration topic when `EVENT_PUBLISHER=kafka`,
+fanned out alongside the integration topic through the same outbox,
 consumed only by `cmd/wes-projector`.
 
 ### Consumed
@@ -150,16 +150,18 @@ never parsed as a legacy shape.
    `com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased`
    → `ApplyWorkDemandReleased` (one transfer work unit per demand, ADR-0033).
 
-All five run under one consumer group, `KAFKA_CONSUMER_GROUP` (default
-`wes-work-planning`, resolved by `consumerGroupID` in `cmd/wes/config.go`).
+All five run under one consumer group, `KAFKA_CONSUMER_GROUP` (mandatory,
+no default in the binary; the chart renders `wes-work-planning`; read in
+`cmd/wes/config.go`).
 Any second process on the shared broker (a local `go run`, the e2e harness)
 must set a unique value, or the rebalance gives the single partition to one
 member and the other silently consumes nothing.
 
-Separately, with `PRODUCT_CLASSIFICATION_MODE=kafka` (ADR-0035),
+Separately, the `ProductClassified` consumer (ADR-0035) is always on
+(`PRODUCT_CLASSIFICATION_MODE` defaults to `kafka`; `permissive`/`off` are boot errors, ADR-0044):
 `internal/adapters/inbound/kafka/product_classification_consumer.go` reads
 `warehouse.product-master.events` under its own STABLE group
-`PRODUCT_CLASSIFICATION_CONSUMER_GROUP` (unset = boot error), acts only on
+`PRODUCT_CLASSIFICATION_CONSUMER_GROUP` (unset = boot error naming the variable), acts only on
 `com.warehouse.wms.product-master.product.ProductClassified`, and feeds
 `ObserveProductClassification`: CloudEvents `id` claim + version-guarded
 upsert into `product_classification_copy` in one UnitOfWork. Invalid
@@ -167,16 +169,16 @@ CloudEvents/payloads are WARN-skipped; transient errors retry the same
 message; the offset is committed after success. The WorkReleased encoder
 reads that copy through `ports.ProductClassificationLookup` (fail-open).
 `PRODUCT_CLASSIFICATION_MODE=http` (the old live lookup against
-inventory-storage) is rejected at boot. `cmd/mcp` never consumes: in kafka
-mode it reads the same table read-only (permissive without a database).
+inventory-storage) is rejected at boot. `cmd/mcp` never consumes: it reads the same
+table read-only (and needs `DATABASE_URL`, no permissive fallback).
 
 Separately, with `PATH_CATALOGUE_SOURCE=kafka`,
 `internal/adapters/outbound/kafkacatalog` replays
 `warehouse.process-path-management.events`
 (`com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` /
 `...ProcessPathUpdated` / `...ProcessPathDeactivated`; invalid CloudEvents are
-WARN-logged and skipped) into the in-memory
-`pathcatalog.Catalogue` (ADR-0012) under its own per-process consumer group
+WARN-logged and skipped) into the read-only in-memory
+`pathcatalog.Catalogue` cache (ADR-0012) under its own per-process consumer group
 (NOT `KAFKA_CONSUMER_GROUP`) — startup blocks until the replay catches up,
 then it follows live. Default `PATH_CATALOGUE_SOURCE=file` reads
 `PATH_CATALOGUE_FILE` instead.
@@ -185,7 +187,7 @@ then it follows live. Default `PATH_CATALOGUE_SOURCE=file` reads
 
 Every consumer path is idempotent under Kafka's at-least-once delivery via a
 `processed_events (event_id TEXT PRIMARY KEY, processed_at TIMESTAMPTZ)`
-table (Postgres) or a thread-safe map (in-memory adapter): insert the
+table (Postgres; the thread-safe map of the in-memory adapter is a unit-test double only): insert the
 CloudEvents `id` (into the `event_id` column) before applying an effect; skip
 if already present.
 `RecordCompletion` additionally rejects double-complete at the domain level
@@ -206,12 +208,12 @@ propagates.
 
 ### Transactional outbox (ADR-0014)
 
-With `EVENT_PUBLISHER=kafka` **and** `DATABASE_URL` set, events are written
-to the `outbox_events` table in the same transaction as the aggregate change
+Events are always written (ADR-0044: `DATABASE_URL`, `KAFKA_BROKERS` mandatory,
+`EVENT_PUBLISHER` accepts only `kafka`) to the `outbox_events` table in the same transaction as the aggregate change
 and relayed to both Kafka topics by an in-process relay
 (`internal/adapters/outbound/postgres/` UnitOfWork +
 `internal/adapters/outbound/kafka/` RelaySink) — not published directly
-in-request. Without `DATABASE_URL`, events publish directly (no outbox).
+in-request. There is no direct-publish or log-only path.
 
 ## AsyncAPI contract
 

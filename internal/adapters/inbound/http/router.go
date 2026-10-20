@@ -33,7 +33,9 @@ func NewRouter(h *Handlers, serviceName string, logger *slog.Logger) *chi.Mux {
 	}
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware())
-
+	// A NUL (U+0000) in a path, query or body is a client error: Postgres
+	// text cannot hold it. Before any route-scoped idempotency middleware.
+	r.Use(rejectNUL)
 	r.Get("/healthz", healthz)
 	r.Get("/readyz", h.handleReadyz)
 

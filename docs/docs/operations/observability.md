@@ -34,7 +34,7 @@ suffixes — for example `wes.work_units.released` is queried as
 | Instrument | Type | Unit | Attributes | Emitted by | Source |
 |---|---|---|---|---|---|
 | `wes.work_units.released` | Int64 counter | `{work_unit}` | `path.id` | `cmd/wes` and `cmd/mcp`, once per work unit actually released by `ReleaseNextWork` (recorded in the use case after the commit, not in the handler) ([ADR-0013](../adr/0013-standard-metrics-convention.md)) | `internal/adapters/outbound/telemetry/release_metrics.go` |
-| `wes.outbox.lag_seconds` | Float64 observable gauge | `s` | — | `cmd/wes`, only with `EVENT_PUBLISHER=kafka` and `DATABASE_URL`. Age of the oldest unpublished `outbox_events` row, 0 when drained; sampled by a query at each collection | `internal/adapters/outbound/postgres/outbox_metrics.go` |
+| `wes.outbox.lag_seconds` | Float64 observable gauge | `s` | — | `cmd/wes` (the relay is always on). Age of the oldest unpublished `outbox_events` row, 0 when drained; sampled by a query at each collection | `internal/adapters/outbound/postgres/outbox_metrics.go` |
 | `circuit_breaker.state` | Int64 gauge | `{state}` | `dependency` (`facility-layout`) | `cmd/wes` with `TRAVEL_DISTANCE_MODE=http`. `0` closed, `1` half-open, `2` open. Recorded **only on a state transition**, so no series exists until the breaker first changes state | `internal/adapters/outbound/telemetry/circuit_breaker_metrics.go`, `internal/adapters/outbound/traveldistance/breaker.go` |
 
 ### Library instruments
@@ -93,8 +93,8 @@ The per-request access log (`internal/adapters/inbound/http/logging.go`,
 ```
 
 `path` has CR/LF stripped (log-injection guard); `request_id` comes from
-chi's `RequestID` middleware. With `EVENT_PUBLISHER=log` every domain event is
-logged as `domain event published` with `event` and `occurred_at`.
+chi's `RequestID` middleware. Events are published through the outbox; there is no log-only publisher, so
+`domain event published` lines no longer exist ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)).
 
 Messages worth alerting or searching on:
 

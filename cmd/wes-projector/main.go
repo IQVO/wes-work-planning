@@ -32,6 +32,20 @@ import (
 // without it.
 var errMissingAnalyticsURL = errors.New("ANALYTICS_DATABASE_URL is required")
 
+// errMissingBrokers is returned when KAFKA_BROKERS is unset or blank: the
+// projector consumes the analytics topic from a real Kafka (ADR-0044), and
+// there is no localhost:9092 default any more.
+var errMissingBrokers = errors.New("KAFKA_BROKERS is required: the projector consumes the analytics topic from a real Kafka (ADR-0044)")
+
+// requireBrokers parses KAFKA_BROKERS and refuses an empty list.
+func requireBrokers(raw string) ([]string, error) {
+	brokers := brokerList(raw)
+	if len(brokers) == 0 {
+		return nil, errMissingBrokers
+	}
+	return brokers, nil
+}
+
 // serviceName is this process's identity in OTel resource attributes;
 // OTEL_SERVICE_NAME can override it.
 const serviceName = "wes-projector"
@@ -71,7 +85,10 @@ func run() error {
 	if analyticsURL == "" {
 		return errMissingAnalyticsURL
 	}
-	kafkaBrokers := brokerList(getenv("KAFKA_BROKERS", "localhost:9092"))
+	kafkaBrokers, err := requireBrokers(os.Getenv("KAFKA_BROKERS"))
+	if err != nil {
+		return err
+	}
 	migrationsPath := getenv("ANALYTICS_MIGRATIONS_PATH", "migrations/analytics")
 
 	pool, err := connectAnalyticsStore(rootCtx, logger, analyticsURL, migrationsPath)

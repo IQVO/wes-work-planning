@@ -10,12 +10,13 @@ description: The final Postgres schema after migrations 0001 to 0010 and the sep
 
 The schema below is the **final state** after applying `migrations/0001` to
 `migrations/0010` in order (golang-migrate, run on start-up by
-`cmd/wes` when `DATABASE_URL` is set, over `MIGRATIONS_DATABASE_URL` if given —
+`cmd/wes` (`DATABASE_URL` is mandatory), over `MIGRATIONS_DATABASE_URL` if given —
 [ADR-0026](../adr/0026-migrations-direct-postgres-connection.md)), plus the
 separate **analytical** database built from `migrations/analytics/`.
 
-Without `DATABASE_URL` the service runs on in-memory repositories
-(`internal/adapters/outbound/memory`) and none of these tables exist.
+There is no database-less mode: `DATABASE_URL` is a boot requirement ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)). The
+in-memory repositories (`internal/adapters/outbound/memory`) are unit-test
+doubles only.
 
 ## OLTP database
 

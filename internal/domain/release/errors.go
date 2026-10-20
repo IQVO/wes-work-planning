@@ -12,7 +12,7 @@ var (
 	ErrWIPLimitReached = errors.New("release-fed pool WIP limit reached")
 	ErrEmptyPool       = errors.New("no pending work in this pool")
 
-	ErrInvalidWIPLimit = errors.New("work pool WIP limit must be a positive integer")
+	ErrInvalidWIPLimit = errors.New("work pool WIP limit must be a positive integer no greater than 2147483647")
 
 	ErrUnknownFeedMode   = errors.New("unknown work pool feed mode")
 	ErrUnknownEntryState = errors.New("unknown work pool entry state")

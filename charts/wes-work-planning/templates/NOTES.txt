@@ -15,16 +15,8 @@ To reach it locally:
   curl http://localhost:8080/healthz
 {{- end }}
 
-{{- if not (or .Values.database.url .Values.database.existingSecret) }}
-
-NOTE: no database.url / database.existingSecret was set — this deployment is
-running with IN-MEMORY adapters (state is lost on pod restart), the same
-fallback behaviour as running the binary locally with DATABASE_URL unset.
-{{- end }}
-
-{{- if not .Values.kafka.enabled }}
-NOTE: kafka.enabled is false — this deployment publishes domain events to its
-own log only (EVENT_PUBLISHER=log) and does not participate in the
-cross-service Kafka integration (WorkReleased / TaskCompleted / read-model
-projections). Set kafka.enabled=true and kafka.brokers to join the bus.
-{{- end }}
+NOTE: this service runs only on a real Postgres and a real Kafka. The pods
+refuse to start without DATABASE_URL, KAFKA_BROKERS ({{ .Values.kafka.brokers }}) and a
+consumer group per Kafka consumer, and GET /readyz stays 503 until Postgres
+answers a ping and a Kafka broker answers a metadata request (it never checks
+a topic: the writers auto-create theirs).

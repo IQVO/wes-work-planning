@@ -43,15 +43,16 @@ internal/
                               (ADR-0035, own group PRODUCT_CLASSIFICATION_CONSUMER_GROUP)
     inbound/mcp/             MCP tool registrations (ADR-0008)
     outbound/postgres/       repository impls (pgx), transactional outbox + relay (ADR-0014)
-    outbound/memory/         in-memory repo impls for tests/local
-    outbound/events/         log-based publisher + MultiPublisher (fan-out when no Postgres)
+    outbound/memory/         in-memory repo impls: unit-test doubles only (ADR-0044)
+    outbound/events/         log-based publisher + MultiPublisher: unit-test doubles only
+    outbound/system/         production wall clock (ports.Clock)
     outbound/kafka/          integration + analytics Kafka publishers, outbox Encoders, RelaySink
     outbound/kafkacatalog/   Kafka-sourced path-catalogue adapter (PATH_CATALOGUE_SOURCE=kafka;
                               replays warehouse.process-path-management.events, own consumer group)
     outbound/filecatalog/    file-sourced path-catalogue adapter (default; PATH_CATALOGUE_FILE)
     outbound/productclassificationcopy/  local copy of product-master's classification (Postgres
-                              Store, MemoryStore, PermissiveLookup; PRODUCT_CLASSIFICATION_MODE=
-                              kafka|permissive, ADR-0035) — no live lookup to inventory-storage
+                              Store; MemoryStore/PermissiveLookup are test doubles; PRODUCT_CLASSIFICATION_MODE=
+                              kafka (default), ADR-0035, ADR-0044) — no live lookup to inventory-storage
     outbound/traveldistance/ synchronous HTTP client to facility-layout GET /distance (ADR-0017)
     outbound/analyticsstore/ analytics Postgres reader/writer
     outbound/telemetry/      OpenTelemetry wiring / metrics adapters
@@ -75,9 +76,9 @@ store (the arch-test above enforces this).
 
 - Events are fanned to a SEPARATE topic `warehouse.wes.analytics` by
   `internal/adapters/outbound/kafka/analytics_publisher.go`; the integration
-  topic/publisher (`warehouse.work-planning.events`) are untouched. Selected
-  by `EVENT_PUBLISHER=kafka` (fan-out alongside the integration publisher via
-  `MultiPublisher`).
+  topic/publisher (`warehouse.work-planning.events`) are untouched. Both
+  topics are written through the same transactional outbox (one row per event
+  per topic, ADR-0014).
 - Separate analytical Postgres (`ANALYTICS_DATABASE_URL`), own migrations
   (`migrations/analytics/`), intended as a read-only reader role for
   `cmd/wes-reports`.

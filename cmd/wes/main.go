@@ -1,6 +1,12 @@
 // Command wes is the composition root: it wires config from env into
 // adapters, use cases, and the HTTP router, then serves.
 //
+// It runs ONLY on a real Postgres and a real Kafka (ADR-0044): DATABASE_URL,
+// KAFKA_BROKERS, KAFKA_CONSUMER_GROUP, PRODUCT_CLASSIFICATION_CONSUMER_GROUP and
+// REPLENISHMENT_CONSUMER_GROUP are mandatory and a missing one is a boot error
+// that names it, before the listener binds. There is no in-memory mode, no log
+// sink, no optional relay and no consumer that is off by default.
+//
 // The package is split by concern: config.go (env + logger helpers),
 // catalogue.go, repositories.go, publisher.go, handlers.go, housekeeper.go
 // and serving.go (server lifecycle + graceful shutdown). main.go only
@@ -21,17 +27,27 @@ import (
 const serviceName = "wes-work-planning"
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(context.Background()); err != nil {
 		slog.Error("service exited with error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run boots the service and serves until SIGINT/SIGTERM, a component failure
+// or the cancellation of ctx (what an in-process integration test uses to stop
+// the real entry point), then drains.
+func run(ctx context.Context) error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
 
 	cfg := loadConfig()
+	// Every mandatory variable is checked BEFORE anything dials or binds, so a
+	// misconfigured pod fails at once with an error naming the variable.
+	classificationCfg := loadClassificationConfig(cfg.kafkaBrokers)
+	replenishmentCfg := loadReplenishmentConfig(cfg.kafkaBrokers)
+	if err := validateBootConfig(cfg, classificationCfg, replenishmentCfg); err != nil {
+		return err
+	}
 
 	// catalogueConsumerCtx/cancelCatalogueConsumer are declared here
 	// because the Kafka catalogue source needs its own Run goroutine
@@ -56,21 +72,19 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if repos.pgPool != nil {
-		defer repos.pgPool.Close()
-	}
+	defer repos.pgPool.Close()
 
-	classification, err := buildClassification(loadClassificationConfig(cfg.kafkaBrokers), repos.pgPool, logger)
+	classification, err := buildClassification(classificationCfg, repos.pgPool, logger)
 	if err != nil {
 		return err
 	}
 
-	replenishment, err := buildReplenishment(loadReplenishmentConfig(cfg.kafkaBrokers, repos.pgPool != nil), logger)
+	replenishment, err := buildReplenishment(replenishmentCfg, logger)
 	if err != nil {
 		return err
 	}
 
-	publisher, relay, stopPublisher, err := wireEventPublisher(logger, cfg.eventPublisherKind, cfg.kafkaBrokers, repos.workUnits, classification.lookup, repos.pgPool)
+	publisher, relay, stopPublisher, err := wireEventPublisher(logger, cfg.kafkaBrokers, repos.workUnits, classification.lookup, repos.pgPool)
 	if err != nil {
 		return err
 	}
@@ -87,7 +101,19 @@ func run() error {
 		cancelCatalogueConsumer: cancelCatalogueConsumer,
 		classification:          classification,
 		replenishment:           replenishment,
-	}).run()
+	}).run(ctx)
+}
+
+// validateBootConfig runs every environment check of the real-wiring rule
+// (ADR-0044) and returns the first error, which names the offending variable.
+func validateBootConfig(cfg appConfig, classification classificationConfig, replenishment replenishmentConfig) error {
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+	if _, err := classification.validate(); err != nil {
+		return err
+	}
+	return replenishment.validate()
 }
 
 // setupTelemetry starts the OTel pipeline and returns the func that

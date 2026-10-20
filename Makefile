@@ -38,8 +38,9 @@ help: ## Print the available targets
 	@echo "  integration  go test -tags=integration ./... -race -count=1 (testcontainers; needs only Docker)"
 	@echo "  bdd          go test ./... -run TestFeatures -v (godog acceptance tests)"
 	@echo "  contract     scripts/contract-test.sh — Schemathesis vs apis/openapi.yaml"
-	@echo "               (boots the service in-memory; needs st: pip install"
-	@echo "                'schemathesis==4.28.0')"
+	@echo "               (boots the real service against Postgres + Kafka: export"
+	@echo "                DATABASE_URL and KAFKA_BROKERS, see the script header;"
+	@echo "                needs st: pip install 'schemathesis==4.28.0')"
 	@echo "  arch-test    go test ./internal/architecture/... -v (hexagonal fitness tests)"
 	@echo "  chart-test   Helm chart render + Service selector tests (helm + PyYAML)"
 	@echo "  mutation     gremlins on $(MUTATION_PKG) — the fast blocking subset CI runs"
@@ -104,7 +105,7 @@ bdd: ## godog/Gherkin acceptance tests
 # Property-based contract tests against apis/openapi.yaml — mirrors the
 # `contract` CI job. Not part of check/check-all (needs Python tooling
 # installed); CI runs it as its own job on every push and PR.
-contract: ## Schemathesis contract tests (boots the service in-memory)
+contract: ## Schemathesis contract tests (boots the real service on Postgres + Kafka)
 	./scripts/contract-test.sh
 
 arch-test: ## Architecture fitness tests

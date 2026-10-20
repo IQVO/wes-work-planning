@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -9,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/traveldistance"
@@ -18,10 +18,9 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/resilience"
 )
 
-// repositories groups the environment-selected persistence adapters.
-// pgPool and uow are nil in the in-memory configuration. A nil
-// UnitOfWork makes every use case run Save + Publish back to back
-// (ADR-0014); with Postgres they run in one transaction.
+// repositories groups the Postgres persistence adapters. pgPool and uow are
+// always set (DATABASE_URL is mandatory, ADR-0044): every use case runs Save +
+// Publish in one transaction with the outbox rows (ADR-0014).
 type repositories struct {
 	charges        ports.ChargeRepo
 	plans          ports.PlanRepo
@@ -48,7 +47,8 @@ func (r repositories) travelDistanceLookup(logger *slog.Logger) ports.TravelDist
 	return buildTravelDistanceLookup(getenv("TRAVEL_DISTANCE_MODE", "permissive"), os.Getenv("FACILITY_LAYOUT_BASE_URL"), breakerMetrics, logger)
 }
 
-// wireRepositories selects the in-memory or Postgres outbound side.
+// wireRepositories opens the Postgres outbound side; DATABASE_URL is
+// mandatory and there is no in-memory fallback (ADR-0044).
 //
 // The OLTP schema is a precondition this process enforces itself, rather
 // than assuming an out-of-band golang-migrate CLI step ran. That
@@ -84,26 +84,10 @@ func (r repositories) travelDistanceLookup(logger *slog.Logger) ports.TravelDist
 // (local dev, CI integration tests) — byte-identical to this function's
 // behavior before this parameter existed in that case.
 func wireRepositories(databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (repositories, error) {
-	if databaseURL == "" {
-		logger.Info("database url not configured; using in-memory adapters")
-		return memoryRepositories(), nil
+	if strings.TrimSpace(databaseURL) == "" {
+		return repositories{}, errors.New("DATABASE_URL is required: this context runs only on a real Postgres (ADR-0044), there is no in-memory mode")
 	}
 	return postgresRepositories(databaseURL, migrationsDatabaseURL, migrationsPath, logger)
-}
-
-func memoryRepositories() repositories {
-	workUnits := memory.NewWorkUnitRepo()
-	return repositories{
-		charges:        memory.NewChargeRepo(),
-		plans:          memory.NewPlanRepo(),
-		pools:          memory.NewWorkPoolRepo(),
-		workUnits:      workUnits,
-		laborPlanViews: memory.NewLaborPlanViewRepo(),
-		inventoryViews: memory.NewInventoryViewRepo(),
-		processedEvts:  memory.NewProcessedEventRepo(),
-		relocations:    workUnits,
-		slotPlans:      memory.NewSlotPlanRepo(),
-	}
 }
 
 // postgresRepositories migrates the schema, opens the pool and wraps it in

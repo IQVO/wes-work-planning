@@ -9,6 +9,7 @@ data:
   EVENT_PUBLISHER: {{ .Values.config.eventPublisher | quote }}
   OUTBOX_MAX_ATTEMPTS: {{ .Values.config.outboxMaxAttempts | quote }}
   RELOCATION_CPT_HORIZON: {{ .Values.config.relocationCptHorizon | quote }}
-  {{- if .Values.kafka.enabled }}
-  KAFKA_BROKERS: {{ .Values.kafka.brokers | quote }}
-  {{- end }}
+  # Postgres and Kafka are the only runtime (ADR-0044): KAFKA_BROKERS is always
+  # rendered and the render fails when kafka.brokers is empty.
+  KAFKA_BROKERS: {{ required "kafka.brokers is required (KAFKA_BROKERS): every binary of this chart runs on a real Kafka (ADR-0044)" .Values.kafka.brokers | quote }}
+

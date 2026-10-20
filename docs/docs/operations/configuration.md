@@ -17,8 +17,11 @@ Conventions used below:
 - **Default** is what the binary uses when the variable is unset *or empty*
   (every reader uses a `getenv(key, fallback)` helper that treats `""` as
   unset).
-- **Required** means the process refuses to start without it. "Conditional"
-  means it is required only in the mode named in the meaning column.
+- **Required** means the process refuses to start without it and the error
+  names the variable. "Conditional" means it is required only in the mode
+  named in the meaning column. Postgres and Kafka are the only runtime
+  ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)): no
+  binary has an in-memory, log-only or optional-consumer mode.
 - Durations are Go `time.ParseDuration` strings (`500ms`, `30s`, `1h`,
   `168h`).
 - Test-only variables (the `*_TEST_*` family read by integration tests) are
@@ -36,7 +39,7 @@ API-key, token or scope variable to set.
 |---|---|---|---|---|
 | `HTTP_ADDR` | `:8080` | no | Listen address of the REST API (and `/healthz`, `/readyz`). | `cmd/wes/config.go:50` |
 | `LOG_LEVEL` | `info` | no | `debug`, `info`, `warn` or `error` (case-insensitive; anything else is `info`). JSON to stdout. | `cmd/wes/main.go:31` |
-| `DATABASE_URL` | *(unset)* | no | OLTP Postgres DSN. **Unset selects the in-memory adapters** (state lost on restart, no idempotency middleware, no outbox, no housekeeper). Set, the process migrates the schema, opens a pgxpool (`MaxConns=10`, `statement_timeout=5s`) and wires the Postgres adapters and `UnitOfWork`. | `cmd/wes/config.go:48` |
+| `DATABASE_URL` | *(none)* | **yes** | OLTP Postgres DSN. Unset or blank is the boot error `DATABASE_URL is required`: there is no in-memory mode. The process migrates the schema, opens a pgxpool (`MaxConns=10`, `statement_timeout=5s`) and wires the Postgres adapters and `UnitOfWork`. | `cmd/wes/config.go` |
 | `MIGRATIONS_DATABASE_URL` | value of `DATABASE_URL` | no | DSN used **only** for the golang-migrate startup step. Point it at a direct (non-PgBouncer) connection: golang-migrate takes a session-scoped `pg_advisory_lock`, which PgBouncer's transaction pooling breaks ([ADR-0026](../adr/0026-migrations-direct-postgres-connection.md)). The runtime pool always uses `DATABASE_URL`. | `cmd/wes/config.go:52` |
 | `MIGRATIONS_PATH` | `migrations` | no | Directory of the OLTP `*.up.sql` files applied on start (relative to the working directory; the image's working directory is `/app`, which contains `migrations/`). | `cmd/wes/config.go:53` |
 
@@ -44,10 +47,10 @@ API-key, token or scope variable to set.
 
 | Variable | Default | Required | Meaning | Read in |
 |---|---|---|---|---|
-| `EVENT_PUBLISHER` | `log` | no | `log` writes every domain event to the log only. `kafka` publishes to `warehouse.work-planning.events` **and** `warehouse.wes.analytics`: through the transactional outbox and its in-process relay when `DATABASE_URL` is set ([ADR-0014](../adr/0014-transactional-outbox.md)), directly to both topics otherwise. Any value other than `kafka` behaves like `log`. | `cmd/wes/config.go:55` |
-| `KAFKA_BROKERS` | *(unset)* | conditional | Comma-separated broker list (`localhost:9092` from the host against the fleet's single broker). **Setting it starts the inbound integration-event consumer** on six topics (including `warehouse.slotting-optimization.events`, [ADR-0040](../adr/0040-slot-plan-relocation-work.md)), independently of `EVENT_PUBLISHER`. Required by `EVENT_PUBLISHER=kafka`, `PATH_CATALOGUE_SOURCE=kafka` and `PRODUCT_CLASSIFICATION_MODE=kafka` (each fails the boot with a named error when it is missing). | `cmd/wes/config.go:54` |
-| `KAFKA_CONSUMER_GROUP` | `wes-work-planning` | no | Group id of the integration-event consumer, shared by every replica. Give any *second* process against the shared broker (a developer's `go run`, the e2e harness) a unique value, or the rebalance hands the partition to one member and the other silently consumes nothing. | `cmd/wes/serving.go:193` |
-| `OUTBOX_RELAY_INTERVAL` | `1s` | no | Sleep between relay passes that found nothing to publish (a pass that drained a full batch of 100 loops immediately). Only used with `EVENT_PUBLISHER=kafka` **and** `DATABASE_URL`. A malformed or non-positive value falls back to `1s`. | `cmd/wes/publisher.go:74` |
+| `EVENT_PUBLISHER` | `kafka` | no | Kept because the chart and warehouse-infra set it. `kafka` (or unset) is the only value: events are written to the outbox in the same transaction as the state change and an always-on in-process relay publishes them to `warehouse.work-planning.events` **and** `warehouse.wes.analytics` ([ADR-0014](../adr/0014-transactional-outbox.md)). `log` and any other value are the boot error `EVENT_PUBLISHER=... is not supported`. | `cmd/wes/config.go` |
+| `KAFKA_BROKERS` | *(none)* | **yes** | Comma-separated broker list (`localhost:9092` from the host with `docker compose up`). Unset or blank is the boot error `KAFKA_BROKERS is required`. The inbound integration-event consumer on six topics (including `warehouse.slotting-optimization.events`, [ADR-0040](../adr/0040-slot-plan-relocation-work.md)) is always on. | `cmd/wes/config.go` |
+| `KAFKA_CONSUMER_GROUP` | *(none)* | **yes** | Group id of the integration-event consumer, shared by every replica (the chart renders `wes-work-planning`). Unset or blank is the boot error `KAFKA_CONSUMER_GROUP is required`. Give any *second* process against the shared broker (a developer's `go run`, the e2e harness) a unique value, or the rebalance hands the partition to one member and the other silently consumes nothing. | `cmd/wes/config.go` |
+| `OUTBOX_RELAY_INTERVAL` | `1s` | no | Sleep between relay passes that found nothing to publish (a pass that drained a full batch of 100 loops immediately). The relay is always on. A malformed or non-positive value falls back to `1s`. | `cmd/wes/publisher.go` |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | no | Outbox relay attempt cap ([ADR-0039](../adr/0039-outbox-relay-attempt-cap.md)): a row that has failed this many sends is no longer claimed, logged once at ERROR (`outbox relay: row reached the attempt cap and is no longer claimed`) and left in `outbox_events` for inspection; later rows, including rows with the same key, overtake it. `0` = unlimited (one poison row blocks the relay forever). A malformed or negative value falls back to `20`. Re-arm a row with `UPDATE outbox_events SET attempts = 0 WHERE id = ...` ([Runbook](./runbook.md#re-arm-an-outbox-row-that-hit-the-attempt-cap)). Chart value `config.outboxMaxAttempts`. | `cmd/wes/publisher.go:72` |
 
 ### Slot-plan relocation
@@ -55,8 +58,8 @@ API-key, token or scope variable to set.
 | Variable | Default | Required | Meaning | Read in |
 |---|---|---|---|---|
 | `RELOCATION_CPT_HORIZON` | `24h` | no | Go duration added to a slot plan's `approved_at` to give its RELOCATE work units their CPT ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)). A malformed or non-positive value falls back to `24h`. Chart value `config.relocationCptHorizon`. | `cmd/wes/config.go` |
-| `REPLENISHMENT_MODE` | `permissive` | no | `kafka` runs the `ReplenishmentRequested`/`ReplenishmentCancelled` consumer that plans REPLENISH work ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)); `permissive` (or unset) consumes nothing; any other value, or `kafka` without `REPLENISHMENT_CONSUMER_GROUP`, `KAFKA_BROKERS` or `DATABASE_URL` (Postgres; never the in-memory repositories), fails the boot. | `cmd/wes/replenishment.go` |
-| `REPLENISHMENT_CONSUMER_GROUP` | *(unset)* | with `REPLENISHMENT_MODE=kafka` | The STABLE consumer group every replica shares for `warehouse.pick-face-replenishment.events`. | `cmd/wes/replenishment.go` |
+| `REPLENISHMENT_MODE` | `kafka` | no | Unset or `kafka`: the `ReplenishmentRequested`/`ReplenishmentCancelled` consumer that plans REPLENISH work always runs ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)). `permissive`, `off` and any other value fail the boot with `REPLENISHMENT_MODE=... is not supported`. | `cmd/wes/replenishment.go` |
+| `REPLENISHMENT_CONSUMER_GROUP` | *(none)* | **yes** | The STABLE consumer group every replica shares for `warehouse.pick-face-replenishment.events`. Missing is the boot error `REPLENISHMENT_CONSUMER_GROUP is required`. | `cmd/wes/replenishment.go` |
 | `REPLENISHMENT_CPT_HORIZON` | `8h` | no | Go duration added to a NORMAL request's `requested_at` to give its REPLENISH work unit its CPT. A malformed or non-positive value falls back to `8h`. | `cmd/wes/replenishment.go` |
 | `REPLENISHMENT_URGENT_CPT_HORIZON` | `1h` | no | Same for an URGENT request (the front band); capped at the normal horizon. A malformed or non-positive value falls back to `1h`. | `cmd/wes/replenishment.go` |
 
@@ -71,15 +74,15 @@ API-key, token or scope variable to set.
 
 | Variable | Default | Required | Meaning | Read in |
 |---|---|---|---|---|
-| `PRODUCT_CLASSIFICATION_MODE` | `permissive` | no | `permissive` (or empty): `WorkReleased` carries no hazmat/fragile hints. `kafka`: consume product-master's `ProductClassified` into the local `product_classification_copy` table (in memory without `DATABASE_URL`) and read hints from it. `http` — the retired live lookup — and every other value **fail the boot** ([ADR-0035](../adr/0035-product-classification-local-copy.md)). | `cmd/wes/classification.go:33` |
-| `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | *(unset)* | yes, in `kafka` mode | Stable consumer group of the `ProductClassified` consumer, shared by every replica (the copy is shared state). warehouse-infra sets `wes-work-planning-product-classification`. | `cmd/wes/classification.go:34` |
-| `TRAVEL_DISTANCE_MODE` | `permissive` | no | `http` (case-insensitive) enables the facility-layout travel-distance lookup on `POST /paths/{pathId}/plan`, wrapped in a circuit breaker plus a 3-attempt jittered retry ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md), [ADR-0023](../adr/0023-resilience-circuit-breakers-retry-dlq-shutdown.md)). Anything else is the no-op lookup. | `cmd/wes/repositories.go:44` |
+| `PRODUCT_CLASSIFICATION_MODE` | `kafka` | no | Unset or `kafka`: product-master's `ProductClassified` is consumed into the Postgres `product_classification_copy` table and the hazmat/fragile hints are read from it ([ADR-0035](../adr/0035-product-classification-local-copy.md)). `permissive`, `off`, `http` (the retired live lookup) and every other value **fail the boot**, naming the variable ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)). | `cmd/wes/classification.go` |
+| `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | *(none)* | **yes** | Stable consumer group of the `ProductClassified` consumer, shared by every replica (the copy is shared state). Missing is the boot error `PRODUCT_CLASSIFICATION_CONSUMER_GROUP is required`. warehouse-infra sets `wes-work-planning-product-classification`. | `cmd/wes/classification.go` |
+| `TRAVEL_DISTANCE_MODE` | `permissive` | no | REST sync edge, outside ADR-0044 (still `permissive` by default): `http` (case-insensitive) enables the facility-layout travel-distance lookup on `POST /paths/{pathId}/plan`, wrapped in a circuit breaker plus a 3-attempt jittered retry ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md), [ADR-0023](../adr/0023-resilience-circuit-breakers-retry-dlq-shutdown.md)). Anything else is the no-op lookup. | `cmd/wes/repositories.go:44` |
 | `FACILITY_LAYOUT_BASE_URL` | *(unset)* | yes, in `http` mode | Base URL of facility-layout; the client calls `GET <base>/distance?from=&to=`. Not validated at boot: an empty value makes every lookup fail, which is fail-open (the plan commits without a travel-distance hint). | `cmd/wes/repositories.go:44` |
 
-### Housekeeping (Postgres only)
+### Housekeeping
 
 The retention sweeper ([ADR-0032](../adr/0032-housekeeping-retention-sweeper.md))
-runs only when `DATABASE_URL` is set.
+runs in every process, because `DATABASE_URL` is mandatory.
 
 | Variable | Default | Required | Meaning | Read in |
 |---|---|---|---|---|
@@ -102,7 +105,7 @@ runs only when `DATABASE_URL` is set.
 `cmd/mcp` runs the same `SampleBacklog`, `RebalanceDecision` and
 `ReleaseNextWork` use cases as the REST API over the same OLTP database
 ([ADR-0008](../adr/0008-mcp-inbound-adapter.md)). It never runs migrations,
-never starts a Kafka consumer, never runs the outbox relay (the relay in
+requires the same real Postgres and Kafka as `cmd/wes` (boot errors name the variable), never starts a Kafka consumer, never runs the outbox relay (the relay in
 `cmd/wes` drains every outbox row, whichever process wrote it) and never
 writes the classification copy. See [MCP tools](../mcp/tools.md).
 
@@ -110,10 +113,10 @@ writes the classification copy. See [MCP tools](../mcp/tools.md).
 |---|---|---|---|---|
 | `MCP_ADDR` | `:8090` | no | Listen address. The MCP endpoint is mounted at both `/` and `/mcp`; `GET /healthz` answers `{"status":"ok"}`. | `cmd/mcp/main.go:93` |
 | `LOG_LEVEL` | `info` | no | As for `cmd/wes`. | `cmd/mcp/main.go:49` |
-| `DATABASE_URL` | *(unset)* | no | OLTP Postgres DSN (the same database as `cmd/wes`, which must have migrated it). Unset selects **its own** in-memory work-pool and work-unit stores — they are not shared with a `cmd/wes` process, so tools then see an empty world. | `cmd/mcp/main.go:73` |
-| `EVENT_PUBLISHER` | `log` | no | Same contract as `cmd/wes`: `kafka` + `DATABASE_URL` writes outbox rows; `kafka` without a database publishes directly to both topics. | `cmd/mcp/main.go:84` |
-| `KAFKA_BROKERS` | *(unset)* | conditional | Required by `EVENT_PUBLISHER=kafka`. Opens writers only; no consumer. | `cmd/mcp/main.go:84` |
-| `PRODUCT_CLASSIFICATION_MODE` | `permissive` | no | `kafka` with `DATABASE_URL` reads the `product_classification_copy` table `cmd/wes` maintains (read-only); `kafka` without a database falls back to permissive; `http` and unknown values fail the boot. | `cmd/mcp/main.go:79` |
+| `DATABASE_URL` | *(none)* | **yes** | OLTP Postgres DSN (the same database as `cmd/wes`, which must have migrated it). Unset or blank is the boot error `DATABASE_URL is required`; the MCP server has no stores of its own. | `cmd/mcp/main.go`, `cmd/mcp/config.go` |
+| `EVENT_PUBLISHER` | `kafka` | no | Same contract as `cmd/wes`: `kafka` (or unset) writes outbox rows that the `cmd/wes` relay drains; `log` and any other value are a boot error. | `cmd/mcp/config.go` |
+| `KAFKA_BROKERS` | *(none)* | **yes** | Unset or blank is the boot error `KAFKA_BROKERS is required`. Opens writers only for the event encoders; no consumer. | `cmd/mcp/config.go` |
+| `PRODUCT_CLASSIFICATION_MODE` | `kafka` | no | Unset or `kafka`: reads the `product_classification_copy` table `cmd/wes` maintains (read-only). `permissive`, `off`, `http` and unknown values fail the boot. | `cmd/mcp/main.go`, `cmd/mcp/config.go` |
 | `REPORTS_BASE_URL` | *(unset)* | no | Base URL of `cmd/wes-reports`. Set, the `get_release_throughput_report` tool is registered (10 s HTTP client timeout); unset, the tool does not exist. The chart points it at the release's reports Service when `analytics.enabled=true`. | `cmd/mcp/main.go:237` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | As for `cmd/wes`. | `cmd/mcp/main.go:60` |
 | `OTEL_SERVICE_NAME` | `wes-work-planning-mcp` | no | `service.name`. | `cmd/mcp/main.go:55` |
@@ -130,7 +133,7 @@ projects into the analytical database it owns
 |---|---|---|---|---|
 | `ANALYTICS_DATABASE_URL` | *(unset)* | **yes** | Read-write DSN of the analytical database. Missing it exits with `ANALYTICS_DATABASE_URL is required`. Pool: `MaxConns=5`, `statement_timeout=10s`. | `cmd/wes-projector/main.go:70` |
 | `ANALYTICS_MIGRATIONS_PATH` | `migrations/analytics` | no | Directory of the analytical `*.up.sql` files, applied at start and recorded in `schema_migrations_analytics`. | `cmd/wes-projector/main.go:75` |
-| `KAFKA_BROKERS` | `localhost:9092` | no | Broker list. Note the default: unlike `cmd/wes`, the projector always consumes. | `cmd/wes-projector/main.go:74` |
+| `KAFKA_BROKERS` | *(none)* | **yes** | Broker list. Unset or blank exits with `KAFKA_BROKERS is required` (there is no `localhost:9092` default any more; [ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)). The projector always consumes. | `cmd/wes-projector/main.go` |
 | `ADMIN_ADDR` | `:8091` | no | Admin listener serving only `GET /healthz`. | `cmd/wes-projector/main.go:69` |
 | `LOG_LEVEL` | `info` | no | Also accepts `warning` as a synonym of `warn`. | `cmd/wes-projector/main.go:47` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | As above. | `cmd/wes-projector/main.go:56` |
@@ -159,8 +162,7 @@ read-only (see [Release throughput report](../analytics/release-throughput-repor
 reaches a container through `extraEnv` (api) or `mcp.extraEnv` (MCP).
 
 The chart's env ConfigMap (`templates/configmap.yaml`: `HTTP_ADDR`,
-`EVENT_PUBLISHER`, `OUTBOX_MAX_ATTEMPTS`, and `KAFKA_BROKERS` when
-`kafka.enabled`) is mounted into the **api** Deployment with
+`EVENT_PUBLISHER`, `OUTBOX_MAX_ATTEMPTS` and `KAFKA_BROKERS`, always) is mounted into the **api** Deployment with
 `envFrom: configMapRef` (gap fix D14; explicit `env` entries win for the same
 key). The MCP, projector and reports Deployments do not mount it: they set
 their own env explicitly, and the ConfigMap's `HTTP_ADDR` is the api's listen
@@ -169,19 +171,20 @@ address. `charts/wes-work-planning/tests/render_test.sh` (CI job
 
 | Chart value | Env var(s) | Container |
 |---|---|---|
-| `config.httpAddr`, `config.eventPublisher`, `config.logLevel` | `HTTP_ADDR`, `EVENT_PUBLISHER`, `LOG_LEVEL` | api (`EVENT_PUBLISHER`/`LOG_LEVEL` also MCP) |
+| `config.httpAddr`, `config.eventPublisher`, `config.logLevel` | `HTTP_ADDR`, `EVENT_PUBLISHER` (only `kafka`), `LOG_LEVEL` | api (`EVENT_PUBLISHER`/`LOG_LEVEL` also MCP) |
+| `config.consumerGroup`, `config.productClassificationConsumerGroup`, `config.replenishmentConsumerGroup` (all required, defaults `wes-work-planning`, `wes-work-planning-product-classification`, `wes-work-planning-replenishment`; the last two are skipped when `extraEnv` already names the variable) | `KAFKA_CONSUMER_GROUP`, `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`, `REPLENISHMENT_CONSUMER_GROUP` (explicit env entries of the api Deployment) | api |
 | `config.outboxMaxAttempts` (default `20`) | `OUTBOX_MAX_ATTEMPTS` | api |
 | `config.relocationCptHorizon` (default `24h`) | `RELOCATION_CPT_HORIZON` | api |
-| `database.url` / `database.existingSecret` + `existingSecretKey` | `DATABASE_URL` | api, MCP |
+| `database.url` / `database.existingSecret` + `existingSecretKey` (one is required; the render fails naming the value) | `DATABASE_URL` | api, MCP |
 | `database.migrationsExistingSecretKey` (`optional: true`) | `MIGRATIONS_DATABASE_URL` | api |
-| `kafka.enabled` + `kafka.brokers` | `KAFKA_BROKERS` | api, MCP; the projector always gets `kafka.brokers` |
+| `kafka.brokers` (required; `kafka.enabled: false` fails the render) | `KAFKA_BROKERS` | api, MCP, projector |
 | `pathCatalogue.enabled` + `pathCatalogue.mountPath` | `PATH_CATALOGUE_FILE` | api |
 | `otel.enabled`, `otel.endpoint`, `otel.serviceName`, `environment`, image tag | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `ENVIRONMENT`, `SERVICE_VERSION` | all four (service names fixed per Deployment) |
 | `mcp.httpAddr`, `mcp.eventPublisher`, `mcp.reportsBaseUrl` | `MCP_ADDR`, `EVENT_PUBLISHER`, `REPORTS_BASE_URL` | MCP |
 | `analytics.projector.adminAddr`, `analytics.migrationsPath` | `ADMIN_ADDR`, `ANALYTICS_MIGRATIONS_PATH` | projector |
 | `analytics.reports.httpAddr` | `HTTP_ADDR` | reports |
 | `analytics.database.*` (secret keys `ANALYTICS_DATABASE_URL`, `ANALYTICS_READER_DATABASE_URL`) | `ANALYTICS_DATABASE_URL` | projector (writer key), reports (reader key) |
-| `extraEnv` | everything else (`PATH_CATALOGUE_SOURCE`, `PRODUCT_CLASSIFICATION_*`, `TRAVEL_DISTANCE_MODE`, `FACILITY_LAYOUT_BASE_URL`, `KAFKA_CONSUMER_GROUP`, `OUTBOX_RELAY_INTERVAL`, housekeeping, `CORS_ALLOWED_ORIGINS`) | api |
+| `extraEnv` | everything else (`PATH_CATALOGUE_SOURCE`, `TRAVEL_DISTANCE_MODE`, `FACILITY_LAYOUT_BASE_URL`, `OUTBOX_RELAY_INTERVAL`, housekeeping, `CORS_ALLOWED_ORIGINS`) | api |
 
 In the kind cluster, warehouse-infra's `terraform/locals.tf` adds
 `PRODUCT_CLASSIFICATION_MODE=kafka`,

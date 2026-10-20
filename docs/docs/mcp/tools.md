@@ -58,8 +58,8 @@ Behaviour worth knowing:
   pool is at its WIP limit. The domain error text is returned as the tool
   error (`not found`, `no pending work in this pool`,
   `release-fed pool WIP limit reached`). `WorkReleased` goes through
-  the same publisher contract as REST (outbox rows with `DATABASE_URL` +
-  `EVENT_PUBLISHER=kafka`, drained by `cmd/wes`), and the
+  the same publisher contract as REST (outbox rows in Postgres,
+  drained to Kafka by the `cmd/wes` relay), and the
   `wes.work_units.released` counter is incremented.
 - An empty `pathId` is rejected before any use case runs:
   `invalid pathId "": must be a non-empty process path id`.
@@ -86,7 +86,9 @@ The server is plain JSON-RPC over HTTP: `initialize`, then reuse the
 returned `Mcp-Session-Id` header.
 
 ```sh
-go run ./cmd/mcp     # in-memory, :8090
+# needs the same Postgres (already migrated by cmd/wes) and Kafka as cmd/wes
+DATABASE_URL="postgres://wes:***@localhost:5432/wes?sslmode=disable" \
+KAFKA_BROKERS=localhost:9092 go run ./cmd/mcp     # :8090
 
 curl -si localhost:8090/mcp \
   -H 'Content-Type: application/json' \
@@ -103,10 +105,10 @@ curl -s localhost:8090/mcp -H 'Mcp-Session-Id: <id>' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 ```
 
-Without `DATABASE_URL`, `cmd/mcp` uses **its own** in-memory stores — they
-are not shared with a `cmd/wes` you started separately, so
-`get_backlog_telemetry` answers `not found` until work exists in *that*
-process. Point both binaries at the same Postgres to see the same pools.
+`cmd/mcp` has no stores of its own: `DATABASE_URL` and `KAFKA_BROKERS` are
+mandatory (boot errors that name the variable, [ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)), and it reads and writes
+the same Postgres as `cmd/wes`. `get_backlog_telemetry` answers `not found`
+until the path has a pool in that database.
 
 ## Deployment notes
 

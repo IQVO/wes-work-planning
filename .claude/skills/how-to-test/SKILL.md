@@ -15,8 +15,9 @@ tests can assert nothing.
 
 1. **Unit tests** (`make test` / `go test ./... -race`) — prove the code
    runs without panicking and returns SOMETHING. Table-driven, in-memory
-   adapters only (`internal/adapters/outbound/memory/`), never a real
-   network/DB call.
+   test doubles only (`internal/adapters/outbound/memory/`), never a real
+   network/DB call (the real-wiring end-to-end test lives in
+   `cmd/wes/e2e_integration_test.go`, ADR-0044).
 2. **Coverage** (`make coverage`, 90% gate on
    `./internal/domain/...,./internal/application/...` — see `COVERPKG`/
    `COVERAGE_THRESHOLD` in this repo's `Makefile`) — proves lines executed.

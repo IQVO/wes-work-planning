@@ -236,7 +236,7 @@ shared library, so no service can force another to redeploy:
 - The same CloudEvents 1.0 envelope and `type` naming convention
   ([ADR-0027](../adr/0027-cloudevents-mandatory-event-envelope.md)), with the
   cross-service `type` strings duplicated by agreement, never imported
-- The same `EVENT_PUBLISHER=kafka|log` / `KAFKA_BROKERS` configuration switches
+- The same real-wiring rule: `DATABASE_URL` and `KAFKA_BROKERS` are mandatory, no in-memory or log-only mode ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md))
 - RFC 7807 problem details, an `apis/openapi.yaml` linted by Spectral in CI,
   and a Helm chart
 

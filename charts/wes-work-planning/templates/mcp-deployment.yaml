@@ -1,4 +1,8 @@
 {{- if .Values.mcp.enabled }}
+{{- include "wes-work-planning.requireDatabase" . -}}
+{{- include "wes-work-planning.requireKafka" . -}}
+{{- include "wes-work-planning.requireEventPublisher" . -}}
+{{- include "wes-work-planning.requireKafkaEnv" (dict "env" .Values.mcp.extraEnv "where" "mcp.extraEnv") }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -43,23 +47,20 @@ spec:
               value: {{ .Values.config.logLevel | quote }}
             # The MCP binary runs the SAME use cases as cmd/wes over the same
             # OLTP database (ADR-0008); it reuses the OLTP DATABASE_URL secret.
-            {{- if or .Values.database.url .Values.database.existingSecret }}
+            # DATABASE_URL and KAFKA_BROKERS are mandatory (ADR-0044): the
+            # render fails without them.
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "wes-work-planning.databaseSecretName" . }}
                   key: {{ .Values.database.existingSecretKey }}
-            {{- end }}
-            # release_next_work raises WorkReleased: the MCP binary publishes it
-            # through the SAME EVENT_PUBLISHER / DATABASE_URL / KAFKA_BROKERS
-            # contract as cmd/wes (ADR-0008, ADR-0014). With Postgres + kafka it
-            # writes outbox_events rows; the relay stays in the api Deployment.
+            # release_next_work raises WorkReleased: the MCP binary writes it
+            # to outbox_events in the same transaction (ADR-0008, ADR-0014);
+            # the relay stays in the api Deployment.
             - name: EVENT_PUBLISHER
               value: {{ .Values.mcp.eventPublisher | default .Values.config.eventPublisher | quote }}
-            {{- if .Values.kafka.enabled }}
             - name: KAFKA_BROKERS
               value: {{ .Values.kafka.brokers | quote }}
-            {{- end }}
             {{- if .Values.mcp.reportsBaseUrl }}
             - name: REPORTS_BASE_URL
               value: {{ .Values.mcp.reportsBaseUrl | quote }}

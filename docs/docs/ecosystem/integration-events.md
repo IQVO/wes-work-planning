@@ -92,21 +92,22 @@ no WIP limit provisioned. See [ADR-0018](../adr/0018-path-capacity-changed.md).
 The other nine domain events (including `PathPlanDriftDetected`, ADR-0019)
 are also written to this topic by the outbound adapter with a
 `{"path_id": ...}`-shaped payload, but nothing consumes them
-today. (Separately, whenever `EVENT_PUBLISHER=kafka` a second publisher also writes
+today. (Separately, a second publisher also writes
 every domain event to `warehouse.wes.analytics` for the analytics data product
 — same CloudEvents `type`, `dataschema` `urn:warehouse:wes-work-planning:analytics:<EventName>:v1` — see [ADR-0011](../adr/0011-analytical-data-product.md).) See the [full catalogue](../api/events.md#events-published).
 
-Set `EVENT_PUBLISHER=kafka` (with `KAFKA_BROKERS`) to publish here; the default
-`log` publisher writes the same events to the log instead. Both implement the
-same `ports.EventPublisher` interface, so the use cases cannot tell which is
-wired.
+Events leave only through the transactional outbox and its always-on relay;
+`KAFKA_BROKERS` is mandatory and there is no log-only publisher
+([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)). The
+`ports.EventPublisher` interface stays so the use cases do not know the outbox
+exists; the memory double is used by unit tests only.
 
 ## Consumed
 
-Setting `KAFKA_BROKERS` starts the consumer automatically, **independent of
-`EVENT_PUBLISHER`**. It reads five topics concurrently, one goroutine each,
-under the consumer group `KAFKA_CONSUMER_GROUP` (default `wes-work-planning`,
-shared by every deployed replica). A second process against the shared broker
+The consumer is always on (`KAFKA_BROKERS` and `KAFKA_CONSUMER_GROUP` are
+mandatory). It reads five topics concurrently, one goroutine each,
+under the consumer group `KAFKA_CONSUMER_GROUP` (the chart renders
+`wes-work-planning`, shared by every deployed replica). A second process against the shared broker
 — a developer's `go run`, the e2e harness — must set a unique value, or the
 rebalance hands the single partition to one member and the other consumes
 nothing while reporting healthy. A brand-new group starts at the **earliest**
@@ -349,8 +350,8 @@ which admits the moves waiting on it.
 }
 ```
 
-[ADR-0042](../adr/0042-pick-face-replenishment-work.md): consumed only when
-`REPLENISHMENT_MODE=kafka`, under the stable group
+[ADR-0042](../adr/0042-pick-face-replenishment-work.md): consumed always
+(`REPLENISHMENT_MODE` is `kafka` or unset; `permissive`/`off` are boot errors), under the stable group
 `REPLENISHMENT_CONSUMER_GROUP` shared by every replica. `ApplyReplenishmentRequested`
 plans **one REPLENISH work unit per request id** (id `replenish-<request_id>`,
 reference = `request_id`, path `REPLENISH`; `source_bin` becomes `from_bin`,
@@ -453,7 +454,8 @@ turned the retry into a silent "already processed" success and lost the event.
   TIMESTAMPTZ)`, added by its own migration; the `event_id` column holds the
   CloudEvents `id`. The primary-key violation *is* the
   duplicate check — no read-then-write race.
-- **In-memory**: a mutex-guarded `map[string]struct{}` with the same semantics.
+- **In-memory**: a mutex-guarded `map[string]struct{}` with the same semantics, a
+  test double only (no binary wires it, [ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)).
 
 Both sit behind one port, `ProcessedEventRepo.TryMarkProcessed(ctx, eventId,
 at) (alreadyProcessed bool, err error)`.
@@ -486,12 +488,13 @@ the REST complete endpoint.
 
 | Env var | Default | Effect |
 |---|---|---|
-| `KAFKA_BROKERS` | *(unset)* | Comma-separated brokers. **Setting it starts the inbound consumer.** |
-| `KAFKA_CONSUMER_GROUP` | `wes-work-planning` | Consumer group of the integration-event consumer; set a unique value for any second process on the shared broker. |
-| `EVENT_PUBLISHER` | `log` | `kafka` switches the outbound publisher; requires `KAFKA_BROKERS`. |
+| `KAFKA_BROKERS` | **required** | Comma-separated brokers. The inbound consumer is always on. |
+| `KAFKA_CONSUMER_GROUP` | **required** | Consumer group of the integration-event consumer (the chart renders `wes-work-planning`); set a unique value for any second process on the shared broker. |
+| `EVENT_PUBLISHER` | `kafka` | Kept for the chart and infra; `kafka` is the only value (`log` is a boot error). |
 | `PATH_CATALOGUE_SOURCE` | `file` | `kafka` replays `warehouse.process-path-management.events` into the catalogue; requires `KAFKA_BROKERS`. |
-| `PRODUCT_CLASSIFICATION_MODE` / `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | `permissive` / *(unset)* | `kafka` starts the `ProductClassified` consumer under that (required) group; requires `KAFKA_BROKERS`. |
-| `OUTBOX_RELAY_INTERVAL` | `1s` | Idle sleep of the outbox relay (Kafka + Postgres only). |
+| `PRODUCT_CLASSIFICATION_MODE` / `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | `kafka` / **required** | The `ProductClassified` consumer always runs under that group; `permissive`/`off` are boot errors. |
+| `REPLENISHMENT_MODE` / `REPLENISHMENT_CONSUMER_GROUP` | `kafka` / **required** | The replenishment consumer always runs under that group; `permissive`/`off` are boot errors. |
+| `OUTBOX_RELAY_INTERVAL` | `1s` | Idle sleep of the outbox relay (always on). |
 
 Every variable of every binary is on [Configuration](../operations/configuration.md).
 
@@ -550,4 +553,4 @@ broker:
 go test -tags=integration ./internal/adapters/inbound/kafka/... ./internal/adapters/outbound/kafkacatalog/...
 ```
 
-For a manual smoke test, see [Running locally](../overview/running-locally.md#connecting-to-the-shared-kafka-broker).
+For a manual smoke test, see [Running locally](../overview/running-locally.md#pointing-at-another-broker).

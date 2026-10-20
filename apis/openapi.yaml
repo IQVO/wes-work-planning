@@ -33,7 +33,7 @@ info:
     url: https://github.com/IQVO/wes-work-planning
 servers:
   - url: http://localhost:8080
-    description: Local development (in-memory or Postgres adapters, see README)
+    description: Local development (needs a real Postgres and a real Kafka, see README)
 
 tags:
   - name: Charge Forecast
@@ -112,11 +112,17 @@ paths:
       summary: Readiness check
       description: >
         Readiness probe for the service. Returns 200 `{"status":"ready"}`
-        while the process accepts traffic, and 503 `{"status":"not_ready"}`
-        once graceful shutdown has begun (readiness is flipped first so a
-        Kubernetes readinessProbe stops routing new requests during the
-        drain window). Separate from `/healthz`, which is liveness and is
-        never flipped by shutdown. Does not check downstream dependencies.
+        while the process accepts traffic AND Postgres answers a ping AND a
+        Kafka broker answers a metadata request (reachability only: topics
+        are never required, the service's writers auto-create them). The
+        dependency verdict is cached for a few seconds. Returns 503
+        `{"status":"not_ready"}` once graceful shutdown has begun (readiness
+        is flipped first so a Kubernetes readinessProbe stops routing new
+        requests during the drain window), and a 503 problem+json of type
+        `dependency-unavailable` (the detail names the failing dependencies)
+        while Postgres or Kafka is not reachable. Separate from `/healthz`,
+        which is liveness and is never flipped by shutdown or by a
+        dependency.
       tags: [Health]
       responses:
         "200":
@@ -133,7 +139,9 @@ paths:
               example:
                 status: ready
         "503":
-          description: Service is shutting down and no longer ready.
+          description: >-
+            The service is draining, or Postgres or Kafka is not reachable,
+            and must not receive new traffic.
           content:
             application/json:
               schema:
@@ -145,6 +153,9 @@ paths:
                 required: [status]
               example:
                 status: not_ready
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /paths/{pathId}/charge:
     post:
@@ -941,21 +952,15 @@ components:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
-      # Declared optional in the schema because enforcement is
-      # deployment-dependent: with Postgres (every real deployment) a missing
-      # key is 400 idempotency-key-required; the in-memory development /
-      # contract-test configuration has no idempotency store and ignores the
-      # header. Clients MUST always send it.
-      required: false
+      required: true
       description: >
         Caller-supplied key that makes a retried resource-creating POST safe
-        (ADR-0022). **Clients must always send a non-empty key**: a
-        Postgres-backed deployment rejects a missing key with `400
-        idempotency-key-required` (the in-memory development configuration
-        has no idempotency store and ignores the header). Generate a fresh
-        unique value (e.g. a UUID) per logical action and reuse it only to
-        retry that same request with the same body. Reusing a key with a
-        different body is `422 idempotency-key-reused`.
+        (ADR-0022). **Clients must always send a non-empty key**: a missing
+        key is rejected with `400 idempotency-key-required` (Postgres is the
+        only runtime, ADR-0044, so the check is on in every deployment).
+        Generate a fresh unique value (e.g. a UUID) per logical action and
+        reuse it only to retry that same request with the same body. Reusing
+        a key with a different body is `422 idempotency-key-reused`.
       schema:
         type: string
       example: 6f1c9a52-8f6e-4a0b-9d44-2c1b0f7a3e55
@@ -986,7 +991,9 @@ components:
         field value (e.g. negative quantity, empty path id), a `pathId`
         outside the deployment's declared process-path families
         (`unknown-path-id`), or a malformed query parameter (e.g. empty or
-        non-RFC3339 `cutoffAt`).
+        non-RFC3339 `cutoffAt`), or a NUL character (U+0000) in the body or
+        the query string (`malformed-request-body`: Postgres text cannot hold
+        it, ADR-0044).
       content:
         application/problem+json:
           schema:
@@ -998,7 +1005,9 @@ components:
             detail: "quantity must be non-negative"
             instance: /paths/pick-a/charge
     NotFound:
-      description: No resource exists at this path/id.
+      description: >-
+        No resource exists at this path/id (a NUL character, U+0000, in the
+        path never names a resource and answers the same 404).
       content:
         application/problem+json:
           schema:
@@ -1410,8 +1419,11 @@ components:
           type: integer
           format: int64
           minimum: 1
+          maximum: 2147483647
           description: >
-            The pool's WIP limit: a positive integer. Enforced as a hard
+            The pool's WIP limit: a positive integer no greater than
+            2147483647 (it is stored in a Postgres INTEGER; a larger value
+            is `400 invalid-wip-limit`). Enforced as a hard
             invariant on `ReleaseFed` pools, stored but only informative on
             `FlowFed` pools. May be set below the current WIP: nothing is
             evicted, releases pause until WIP drops below it.

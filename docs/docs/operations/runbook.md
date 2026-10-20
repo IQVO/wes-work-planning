@@ -44,9 +44,15 @@ MCP are unauthenticated ([ADR-0016](../adr/0016-remove-rest-mcp-static-bearer-au
 ## Boot sequence of `cmd/wes` and what readiness waits for
 
 `cmd/wes` does all of its waiting **before** it opens the HTTP listener, so
-the startup probe (60 s budget) is what covers boot; `/readyz` only flips
-during shutdown.
+the startup probe (60 s budget) is what covers boot. Once the listener is up,
+`/readyz` follows the real dependencies (below).
 
+0. **Environment** (`cmd/wes/main.go`). `DATABASE_URL`, `KAFKA_BROKERS`,
+   `KAFKA_CONSUMER_GROUP`, `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` and
+   `REPLENISHMENT_CONSUMER_GROUP` are mandatory, `EVENT_PUBLISHER`,
+   `PRODUCT_CLASSIFICATION_MODE` and `REPLENISHMENT_MODE` accept only `kafka`
+   (or nothing): the first problem exits with an error that names the variable,
+   before anything is dialled or bound ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)).
 1. **Catalogue** (`cmd/wes/catalogue.go`). `file` mode reads
    `PATH_CATALOGUE_FILE` and exits on any error. `kafka` mode dials
    `warehouse.process-path-management.events` with the boot retry (5
@@ -54,20 +60,24 @@ during shutdown.
    every partition reached the high-water mark it saw at start, for at most
    60 s.
 2. **Telemetry** setup — never blocks (exporters dial lazily).
-3. **Repositories** (`cmd/wes/repositories.go`). With `DATABASE_URL`: run
-   golang-migrate against `MIGRATIONS_DATABASE_URL` (boot retry inside a 60 s
-   context), open the pgxpool against `DATABASE_URL`, then ping it (boot
-   retry). Without it: in-memory adapters.
-4. **Classification** mode is validated (`kafka` needs a group and brokers).
-5. **Event publisher** (`log`, Kafka direct, or Kafka outbox + relay).
+3. **Repositories** (`cmd/wes/repositories.go`): run golang-migrate against
+   `MIGRATIONS_DATABASE_URL` (boot retry inside a 60 s context), open the
+   pgxpool against `DATABASE_URL`, then ping it (boot retry).
+4. **Classification** and **replenishment** wiring (both consumers are always
+   on; each needs its group).
+5. **Event publisher**: the Kafka outbox encoders plus the relay.
 6. **Serve**: HTTP listener, outbox relay goroutine, housekeeper goroutine,
-   integration consumer (when `KAFKA_BROKERS` is set) and the
-   `ProductClassified` consumer (when `PRODUCT_CLASSIFICATION_MODE=kafka`).
+   integration consumer, `ProductClassified` consumer and replenishment
+   consumer. A relay or consumer that dies on its own ends the process with a
+   non-zero exit so the pod restarts.
 
-`GET /healthz` always answers `200 {"status":"ok"}`. `GET /readyz` answers
-`200 {"status":"ready"}` from the moment the listener is up and
-`503 {"status":"not_ready"}` once SIGTERM is received; it does **not** check
-Postgres or Kafka at request time. Both routes are in `apis/openapi.yaml`
+`GET /healthz` always answers `200 {"status":"ok"}` (liveness only).
+`GET /readyz` answers `200 {"status":"ready"}` while Postgres answers a ping
+and a Kafka broker answers a metadata request (checked at request time, cached
+3 s, 2 s bound per probe; a missing topic is not a failure because the writers
+auto-create theirs). It answers `503 {"status":"not_ready"}` once SIGTERM is
+received, and `503` `application/problem+json` of type `dependency-unavailable`
+(`detail: "not ready: postgres"` and/or `kafka`) while a dependency is down. Both routes are in `apis/openapi.yaml`
 (operations `health-check` and `readiness-check`).
 
 ### Graceful shutdown (SIGTERM/SIGINT)
@@ -118,7 +128,7 @@ no code reads or writes. Analytical tables: `analytics_processed_events`,
 ## Kafka
 
 The fleet runs **one** broker (in-cluster Bitnami release; `localhost:9092`
-from the host). Topics are auto-created on first write
+from the host; locally `docker compose up` starts a single-node one). Topics are auto-created on first write
 (`AllowAutoTopicCreation` on every writer). Every message is a CloudEvents 1.0
 structured-mode event ([ADR-0027](../adr/0027-cloudevents-mandatory-event-envelope.md)).
 
@@ -126,7 +136,7 @@ structured-mode event ([ADR-0027](../adr/0027-cloudevents-mandatory-event-envelo
 
 | Topic | Producer | Content | Key |
 |---|---|---|---|
-| `warehouse.work-planning.events` | `cmd/wes`, `cmd/mcp` (`EVENT_PUBLISHER=kafka`) | all 11 domain events, `dataschema urn:warehouse:wes-work-planning:events:<Event>:v1` | aggregate id (work-unit id or path id), `Hash` balancer ([ADR-0024](../adr/0024-kafka-hash-balancer-partition-affinity.md)) |
+| `warehouse.work-planning.events` | `cmd/wes` (relay), `cmd/mcp` (outbox rows) | all 11 domain events, `dataschema urn:warehouse:wes-work-planning:events:<Event>:v1` | aggregate id (work-unit id or path id), `Hash` balancer ([ADR-0024](../adr/0024-kafka-hash-balancer-partition-affinity.md)) |
 | `warehouse.wes.analytics` | same | the same 11 events, analytics payloads ([ADR-0011](../adr/0011-analytical-data-product.md)) | aggregate id |
 | `<consumed-topic>.dlq` | `cmd/wes` integration consumer | raw poison message + `x-dlq-source-topic`, `x-dlq-error`, `x-dlq-failed-at` headers | original key |
 
@@ -136,14 +146,14 @@ Writers use `RequiredAcks=all` and a 10 ms `BatchTimeout`.
 
 | Topic | Event types handled | Process | Consumer group | Start offset for a new group | Failure handling |
 |---|---|---|---|---|---|
-| `warehouse.workforce.events` | `ShiftPlanCommitted` | `cmd/wes` | `KAFKA_CONSUMER_GROUP` (default `wes-work-planning`) | earliest (kafka-go default) | 3 attempts (100 ms → 2 s jittered), then `.dlq`; invalid CloudEvent → `.dlq` at once |
+| `warehouse.workforce.events` | `ShiftPlanCommitted` | `cmd/wes` | `KAFKA_CONSUMER_GROUP` (chart: `wes-work-planning`) | earliest (kafka-go default) | 3 attempts (100 ms → 2 s jittered), then `.dlq`; invalid CloudEvent → `.dlq` at once |
 | `warehouse.inventory.events` | `StockReserved`, `ReservationRevoked` | `cmd/wes` | same | earliest | same |
 | `warehouse.fulfillment.events` | `TaskCompleted` | `cmd/wes` | same | earliest | same; unknown work unit = INFO skip |
 | `warehouse.order-management.events` | `OrderAllocated`, `OrderPartiallyAllocated` | `cmd/wes` | same | earliest | same |
 | `warehouse.network-inventory-planning.events` | `WorkDemandReleased` | `cmd/wes` | same | earliest | same |
 | `warehouse.slotting-optimization.events` | `SlotPlanApproved` (`SlotPlanGenerated`/`SlotPlanRejected` ignored) | `cmd/wes` | same | earliest | same; a malformed plan, unknown move kind or a RELOCATE intake without `SLOT_RELOCATION` → `.dlq` after the retries ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) |
-| `warehouse.pick-face-replenishment.events` | `ReplenishmentRequested`, `ReplenishmentCancelled` (`ReplenishmentCompleted` ignored) | `cmd/wes` (`REPLENISHMENT_MODE=kafka`) | `REPLENISHMENT_CONSUMER_GROUP` | earliest | invalid CloudEvent → WARN + commit past; a broken request (blank bin, quantity < 1, equal bins, unknown priority, missing `site_id`/`requested_at`) → `.dlq` at once; any other failure → retried, then `.dlq`; an unknown `REPLENISH` path → `.dlq` ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) |
-| `warehouse.product-master.events` | `ProductClassified` | `cmd/wes` (`PRODUCT_CLASSIFICATION_MODE=kafka`) | `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | earliest | invalid → WARN + commit past; transient → retried forever (200 ms → 5 s), never committed until applied |
+| `warehouse.pick-face-replenishment.events` | `ReplenishmentRequested`, `ReplenishmentCancelled` (`ReplenishmentCompleted` ignored) | `cmd/wes` (always on) | `REPLENISHMENT_CONSUMER_GROUP` | earliest | invalid CloudEvent → WARN + commit past; a broken request (blank bin, quantity < 1, equal bins, unknown priority, missing `site_id`/`requested_at`) → `.dlq` at once; any other failure → retried, then `.dlq`; an unknown `REPLENISH` path → `.dlq` ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) |
+| `warehouse.product-master.events` | `ProductClassified` | `cmd/wes` (always on) | `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | earliest | invalid → WARN + commit past; transient → retried forever (200 ms → 5 s), never committed until applied |
 | `warehouse.process-path-management.events` | `ProcessPathCreated`, `ProcessPathUpdated`, `ProcessPathDeactivated` | `cmd/wes` (`PATH_CATALOGUE_SOURCE=kafka`) | per-process `wes-work-planning-process-path-catalogue-<host>-<pid>-<nanos>` | earliest (full replay every boot) | WARN + skip |
 | `warehouse.wes.analytics` | `WorkReleased`, `WorkUnitCompleted`, `BacklogThresholdBreached`, `PathThrottled`, `RateDeviationDetected` (others acknowledged) | `cmd/wes-projector` | `wes-analytics` | earliest | `ReadMessage` commits first; an invalid CloudEvent is WARN-skipped, a handling error is logged at ERROR and the loop moves on |
 
@@ -152,11 +162,12 @@ Each `cmd/wes` integration handler records the CloudEvents `id` in
 ([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)), so a
 redelivery is a no-op and a failed attempt leaves no mark. A DLQ publish
 failure (or an offset commit failure) stops the consume loop for the whole
-consumer — the offset is deliberately not committed, so nothing is lost.
+consumer — the offset is deliberately not committed, so nothing is lost — and
+the process exits non-zero so the pod restarts.
 
 ## Transactional outbox and relay
 
-With `EVENT_PUBLISHER=kafka` **and** `DATABASE_URL`, every use case writes
+Every use case writes
 one `outbox_events` row per event per topic inside its own transaction
 ([ADR-0014](../adr/0014-transactional-outbox.md)). The relay
 (`internal/adapters/outbound/postgres/outbox_relay.go`) runs **only in

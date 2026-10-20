@@ -1,5 +1,7 @@
 # Project: WES — Work Planning & Release (Core Bounded Context)
 
+<!-- harness-template: v4 -->
+
 Core domain of a Warehouse Execution System: turns a shift's **charge** (volume
 due by each deadline) into a **plan** (rate × heads per process path),
 **releases work continuously** (waveless), and does **flow balancing** from live

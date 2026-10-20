@@ -165,6 +165,7 @@ const sidebars: SidebarsConfig = {
         'adr/0041-work-unit-created-origin',
         'adr/0042-pick-face-replenishment-work',
         'adr/0043-taskcompleted-already-completed-skip',
+        'adr/0044-postgres-and-kafka-are-the-only-runtime',
       ],
     },
   ],

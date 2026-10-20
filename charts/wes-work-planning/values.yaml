@@ -112,14 +112,15 @@ autoscaling:
   # fleet's own lesson about never sharing that kind of group is exactly
   # why it's already unique here. The only STABLE shared consumer group
   # this binary owns is the inbound integration-event consumer
-  # (defaultConsumerGroup = "wes-work-planning", KAFKA_CONSUMER_GROUP
-  # override) — the fleet's normal horizontally-scalable pattern, N
+  # (config.consumerGroup, KAFKA_CONSUMER_GROUP, default "wes-work-planning")
+  # -- the fleet's normal horizontally-scalable pattern, N
   # replicas share partitions via ordinary Kafka group rebalancing.
-  # With PRODUCT_CLASSIFICATION_MODE=kafka (ADR-0035; not set by this
-  # chart, so the default stays permissive) a second STABLE shared group,
-  # PRODUCT_CLASSIFICATION_CONSUMER_GROUP, feeds the Postgres
-  # product_classification_copy table — shared state, so every replica
-  # MUST use the same value; the version-guarded upsert makes N>1 safe.
+  # The ProductClassified consumer (ADR-0035, always on since ADR-0044) uses a
+  # second STABLE shared group, PRODUCT_CLASSIFICATION_CONSUMER_GROUP, and feeds
+  # the Postgres product_classification_copy table -- shared state, so every
+  # replica MUST use the same value; the version-guarded upsert makes N>1 safe.
+  # The replenishment consumer (ADR-0042) does the same with
+  # REPLENISHMENT_CONSUMER_GROUP.
   # Nothing here breaks at N>1. max 4 / target 70% CPU, matching
   # order-management's identical api treatment.
   api:
@@ -192,10 +193,12 @@ autoscaling:
 # the SDK wiring adopts Stateless mode or an external session store.
 
 # --- application configuration ---
-# The service falls back to in-memory adapters and a log-only event publisher
-# when database.url / kafka.enabled are left empty, exactly like running the
-# binary locally with no env vars set. Set database.url (or database.existingSecret)
-# for a durable deployment.
+# Postgres and Kafka are the only runtime (ADR-0044): the chart refuses to
+# render without database.url / database.existingSecret, kafka.brokers and one
+# consumer group per Kafka consumer, and it refuses a non-kafka publisher,
+# kafka.enabled=false, a PRODUCT_CLASSIFICATION_MODE / REPLENISHMENT_MODE /
+# EVENT_PUBLISHER other than kafka in extraEnv or mcp.extraEnv, and a
+# terminationGracePeriodSeconds under 20.
 #
 # Every key below except logLevel is rendered into templates/configmap.yaml
 # and reaches cmd/wes through the api Deployment's `envFrom: configMapRef`
@@ -203,8 +206,17 @@ autoscaling:
 # api Deployment mounts it (its HTTP_ADDR is the API's listen address).
 config:
   httpAddr: ":8080"
-  eventPublisher: "log"   # "log" or "kafka"
+  # Kept because warehouse-infra sets it; "kafka" is the only value.
+  eventPublisher: "kafka"
   logLevel: "info"        # debug | info | warn (or warning) | error
+  # Stable Kafka consumer groups, shared by every replica; the binary exits at
+  # boot without each of them. KAFKA_CONSUMER_GROUP is the integration-event
+  # consumer (the value the binary defaulted to before ADR-0044). The two others
+  # are skipped when extraEnv already names the variable (warehouse-infra sets
+  # them there and a duplicate env entry breaks ArgoCD's diff).
+  consumerGroup: "wes-work-planning"
+  productClassificationConsumerGroup: "wes-work-planning-product-classification"
+  replenishmentConsumerGroup: "wes-work-planning-replenishment"
   # Outbox relay attempt cap (ADR-0039); OUTBOX_MAX_ATTEMPTS. A row that has
   # failed this many sends is excluded from the relay's claims and logged at
   # ERROR (it stays in outbox_events; re-arm it with attempts = 0, see the
@@ -218,6 +230,7 @@ config:
   relocationCptHorizon: "24h"
 
 database:
+  # REQUIRED (one of url / existingSecret): DATABASE_URL is mandatory.
   # Plaintext URL (fine for local/dev clusters). Prefer existingSecret for
   # anything shared or long-lived.
   url: ""
@@ -240,7 +253,9 @@ database:
   migrationsExistingSecretKey: "MIGRATIONS_DATABASE_URL"
 
 kafka:
-  enabled: false
+  # REQUIRED: KAFKA_BROKERS is mandatory on every binary. There is no
+  # kafka.enabled switch any more; `enabled: true` in an older values file is
+  # tolerated, `enabled: false` fails the render.
   brokers: "kafka:9092"
 
 # Deployment environment, exported as the deployment.environment.name OTel
@@ -310,7 +325,8 @@ readinessProbe:
 # pod (ADR-0023): the HTTP Shutdown budget (5s, cmd/wes/main.go) plus
 # the Kafka consumer/outbox-relay stop budget (5s, same file) plus
 # margin for the readinessProbe's periodSeconds=5 to have observed the
-# not-ready flip before traffic fully stops arriving.
+# not-ready flip before traffic fully stops arriving. The chart refuses
+# a value under 20 (ADR-0044).
 terminationGracePeriodSeconds: 30
 
 nodeSelector: {}
@@ -383,9 +399,9 @@ mcp:
   replicaCount: 1
   httpAddr: ":8090"
   # Event publisher for events raised by MCP tools (release_next_work ...).
-  # Empty inherits config.eventPublisher. "kafka" + a database writes outbox
-  # rows that the api Deployment's relay drains (ADR-0008, ADR-0014); set the
-  # same value as the api so WorkReleased reaches fulfillment-execution.
+  # Empty inherits config.eventPublisher; "kafka" is the only value. The tool
+  # writes outbox rows in Postgres that the api Deployment's relay drains
+  # (ADR-0008, ADR-0014, ADR-0044), so WorkReleased reaches fulfillment-execution.
   eventPublisher: ""
   service:
     type: ClusterIP

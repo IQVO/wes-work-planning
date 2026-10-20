@@ -7,33 +7,37 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	inboundhttp "github.com/claudioed/wes-work-planning/internal/adapters/inbound/http"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/productclassificationcopy"
 )
 
-func TestBuildClassification_PermissiveByDefault(t *testing.T) {
-	for _, mode := range []string{"", "permissive"} {
-		w, err := buildClassification(classificationConfig{mode: mode}, nil, quietLogger())
-		if err != nil {
-			t.Fatalf("mode %q: %v", mode, err)
-		}
-		if _, ok := w.lookup.(*productclassificationcopy.PermissiveLookup); !ok || w.copies != nil {
-			t.Fatalf("mode %q: lookup=%T copies=%v, want permissive and no consumer", mode, w.lookup, w.copies)
-		}
+// lazyPool is a pgx pool that never dials (pgxpool.New is lazy), so the wiring
+// can be asserted without a database.
+func lazyPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool, err := pgxpool.New(context.Background(), "postgres://u:p@127.0.0.1:1/db?sslmode=disable")
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
 	}
+	t.Cleanup(pool.Close)
+	return pool
 }
 
-func TestBuildClassification_KafkaWiresTheCopyAndTheConsumer(t *testing.T) {
-	w, err := buildClassification(classificationConfig{mode: "kafka", groupID: "wes-work-planning-product-classification", kafkaBrokers: "kafka:9092"}, nil, quietLogger())
-	if err != nil {
-		t.Fatalf("buildClassification: %v", err)
-	}
-	store, ok := w.lookup.(*productclassificationcopy.MemoryStore)
-	if !ok || w.copies == nil || w.groupID != "wes-work-planning-product-classification" {
-		t.Fatalf("wiring = %+v, want the in-memory copy (no DATABASE_URL) as lookup and copy, with the group", w)
-	}
-	if any(w.copies) != any(store) {
-		t.Fatal("the consumer must write the same copy the lookup reads")
+func TestBuildClassification_KafkaIsTheDefaultAndWiresThePostgresCopy(t *testing.T) {
+	for _, mode := range []string{"", "kafka", " KAFKA "} {
+		w, err := buildClassification(classificationConfig{mode: mode, groupID: "wes-work-planning-product-classification", kafkaBrokers: "kafka:9092"}, lazyPool(t), quietLogger())
+		if err != nil {
+			t.Fatalf("mode %q: buildClassification: %v", mode, err)
+		}
+		store, ok := w.lookup.(*productclassificationcopy.Store)
+		if !ok || w.copies == nil || w.groupID != "wes-work-planning-product-classification" {
+			t.Fatalf("mode %q: wiring = %+v, want the Postgres copy as lookup and copy, with the group", mode, w)
+		}
+		if any(w.copies) != any(store) {
+			t.Fatal("the consumer must write the same copy the lookup reads")
+		}
 	}
 }
 
@@ -42,15 +46,17 @@ func TestBuildClassification_RejectsAtBoot(t *testing.T) {
 		cfg     classificationConfig
 		wantErr string
 	}{
-		"http is removed":          {classificationConfig{mode: "http"}, "http was removed"},
-		"unknown mode":             {classificationConfig{mode: "rest"}, "not supported"},
-		"kafka without the group":  {classificationConfig{mode: "kafka", kafkaBrokers: "kafka:9092"}, "PRODUCT_CLASSIFICATION_CONSUMER_GROUP"},
-		"kafka with a blank group": {classificationConfig{mode: "kafka", groupID: "  ", kafkaBrokers: "kafka:9092"}, "PRODUCT_CLASSIFICATION_CONSUMER_GROUP"},
-		"kafka without brokers":    {classificationConfig{mode: "kafka", groupID: "g"}, "KAFKA_BROKERS"},
+		"permissive is rejected": {classificationConfig{mode: "permissive", groupID: "g", kafkaBrokers: "kafka:9092"}, "PRODUCT_CLASSIFICATION_MODE=permissive is not supported"},
+		"off is rejected":        {classificationConfig{mode: "off", groupID: "g", kafkaBrokers: "kafka:9092"}, "PRODUCT_CLASSIFICATION_MODE=off is not supported"},
+		"http is removed":        {classificationConfig{mode: "http"}, "http was removed"},
+		"unknown mode":           {classificationConfig{mode: "rest"}, "not supported"},
+		"without the group":      {classificationConfig{kafkaBrokers: "kafka:9092"}, "PRODUCT_CLASSIFICATION_CONSUMER_GROUP"},
+		"with a blank group":     {classificationConfig{mode: "kafka", groupID: "  ", kafkaBrokers: "kafka:9092"}, "PRODUCT_CLASSIFICATION_CONSUMER_GROUP"},
+		"without brokers":        {classificationConfig{mode: "kafka", groupID: "g"}, "KAFKA_BROKERS"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := buildClassification(c.cfg, nil, quietLogger())
+			_, err := buildClassification(c.cfg, lazyPool(t), quietLogger())
 			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
 				t.Fatalf("err = %v, want one mentioning %q", err, c.wantErr)
 			}
@@ -71,16 +77,15 @@ func TestStartClassificationConsumer_NoOpWithoutACopy(t *testing.T) {
 	s := &serving{logger: quietLogger()}
 	s.startClassificationConsumer()
 	if s.stopClassification != nil {
-		t.Fatal("permissive mode must not start a consumer")
+		t.Fatal("a zero-value wiring must not start a consumer")
 	}
 	s.stopClassificationConsumer(context.Background()) // safe when never started
 }
 
 func TestStartClassificationConsumer_StartsAndStops(t *testing.T) {
-	w, err := buildClassification(classificationConfig{mode: "kafka", groupID: "g", kafkaBrokers: "127.0.0.1:1"}, nil, quietLogger())
-	if err != nil {
-		t.Fatalf("buildClassification: %v", err)
-	}
+	// The wiring is built by hand over the in-memory double: this test is
+	// about the consumer lifecycle, not about the store.
+	w := classificationWiring{copies: productclassificationcopy.NewMemoryStore(), groupID: "g"}
 	s := &serving{logger: quietLogger(), kafkaBrokers: "127.0.0.1:1", classification: w, repos: memoryRepositories()}
 	s.startClassificationConsumer()
 	if s.stopClassification == nil {

@@ -24,7 +24,12 @@ from pathlib import Path
 
 CHART_DIR = Path(__file__).resolve().parents[1]
 
+# Postgres is mandatory (ADR-0044): the chart refuses to render without a
+# database source. A dummy DSN, no password.
+BASE = ["--set", "database.url=postgres://u@example.invalid:5432/db"]
+
 ENABLE_EVERYTHING = [
+    *BASE,
     "--set", "frontend.enabled=true",
     "--set", "analytics.enabled=true",
     "--set", "mcp.enabled=true",
@@ -96,7 +101,7 @@ def main() -> int:
     # Default values must not deploy the frontend at all.
     stray = [
         d["metadata"]["name"]
-        for d in render([])
+        for d in render(BASE)
         if d.get("metadata", {}).get("name", "").endswith("-frontend")
     ]
     if stray:

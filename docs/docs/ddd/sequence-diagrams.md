@@ -15,9 +15,9 @@ application service (use case) → aggregate → repository / outbox → broker.
 
 Conventions used throughout:
 
-- **Postgres mode** is drawn (`DATABASE_URL` set). In in-memory mode
-  `UnitOfWork` is nil, `atomically` just calls the function, and there is no
-  outbox — the `EventPublisher` is the log or Kafka publisher directly.
+- The runtime is Postgres + Kafka only ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)), so that is what is drawn. (In
+  unit tests the in-memory doubles leave `UnitOfWork` nil, `atomically` just
+  calls the function and there is no outbox; no binary runs like that.)
 - `atomically(...)` is one Postgres transaction: aggregate rows **and** the
   outbox rows commit or roll back together
   ([ADR-0014](../adr/0014-transactional-outbox.md)). Each domain event becomes
@@ -83,8 +83,8 @@ Source: `internal/adapters/inbound/http/router.go`,
 `internal/adapters/inbound/http/handlers.go` (`postWorkUnit`),
 `internal/application/usecases/enqueue_work_unit.go`,
 `internal/application/usecases/pool_retry.go`,
-`internal/adapters/outbound/postgres/work_pool_repo.go`. Omits: the
-in-memory route (no middleware), the 400 `malformed-request-body` and
+`internal/adapters/outbound/postgres/work_pool_repo.go`. Omits: the NUL guard
+(`404`/`400 malformed-request-body` before the key is recorded), the 400 `malformed-request-body` and
 `unknown-path-id` branches before the middleware, and a handler panic (rolls
 back, never cached).
 
@@ -196,8 +196,8 @@ directly, without the processed-event mark.
 Source: `internal/adapters/inbound/kafka/consumer.go`,
 `internal/application/usecases/apply_task_completed.go`,
 `internal/application/usecases/apply_integration_event.go`,
-`internal/application/usecases/record_completion.go`. Omits: the in-memory
-`ReleaseProcessed` path that undoes the mark on failure when there is no
+`internal/application/usecases/record_completion.go`. Omits: the
+`ReleaseProcessed` path (a unit-test double) that undoes the mark on failure when there is no
 transaction.
 
 ## 3a. Plan an approved slot plan as RELOCATE work (`SlotPlanApproved`)

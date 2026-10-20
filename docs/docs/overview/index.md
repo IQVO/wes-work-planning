@@ -57,8 +57,8 @@ it decides *when* work enters the floor and *in what order*.
 - **Binaries**: `cmd/wes` (OLTP REST + Kafka), `cmd/wes-projector` and
   `cmd/wes-reports` (analytics data product), `cmd/mcp` (MCP server)
 - **Inbound adapters**: REST (chi), Kafka consumer, MCP (Streamable HTTP)
-- **Outbound adapters**: Postgres (pgx/v5, transactional outbox), in-memory,
-  log and Kafka event publishers, process-path catalogue (file or Kafka),
+- **Outbound adapters**: Postgres (pgx/v5, transactional outbox), the Kafka event publishers
+  (outbox relay), in-memory repositories as unit-test doubles only, process-path catalogue (file or Kafka),
   product-master classification local copy (Kafka-fed), facility-layout
   travel-distance lookup
 - **Aggregates**: `ChargeForecast`, `ShiftPlan`/`PathPlan`, `WorkPool`, `WorkUnit`

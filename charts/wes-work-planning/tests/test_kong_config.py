@@ -34,10 +34,11 @@ FORBIDDEN_PLUGINS = {
 }
 
 ENABLE_KONG = [
+    # Postgres is mandatory (ADR-0044): a dummy DSN, no password.
+    "--set", "database.url=postgres://u@example.invalid:5432/db",
     # This chart refuses to render analytics without an analytical DSN (a
     # deliberate guard in reports-deployment.yaml) — supply a dummy.
-    "--set", "analytics.database.projectorUrl=postgres://user:pass@localhost:5432/analytics",
-    "--set", "kafka.enabled=true",
+    "--set", "analytics.database.projectorUrl=postgres://projector@localhost:5432/analytics",
     "--set", "kafka.brokers=dummy:9092",
     "--set", "gatewayApi.enabled=true",
     "--set", "gatewayApi.parentRefs[0].name=warehouse-gateway",
@@ -74,7 +75,7 @@ def main() -> int:
     failures: list[str] = []
 
     # 1. Defaults render zero Kong objects.
-    default_docs = render([])
+    default_docs = render(["--set", "database.url=postgres://u@example.invalid:5432/db"])
     kong_docs = [d for d in default_docs if "Kong" in (d.get("kind") or "")]
     if kong_docs:
         failures.append(

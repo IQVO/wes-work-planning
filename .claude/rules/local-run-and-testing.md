@@ -19,12 +19,15 @@ paths:
 # PATH_CATALOGUE_SOURCE=file refuses to start without PATH_CATALOGUE_FILE
 export PATH_CATALOGUE_FILE=../warehouse-infra/config/process-paths/sortable-fc.yaml
 
-# Run in-memory (no infra)
-go run ./cmd/wes                       # :8080
-
-# Run against Postgres (cmd/wes applies migrations/ itself on start)
-docker compose up -d                   # Postgres only; Kafka is the shared cluster broker
-DATABASE_URL="postgres://wes:***@localhost:5432/wes?sslmode=disable" go run ./cmd/wes
+# Run on real Postgres + real Kafka (ADR-0044: there is no in-memory mode;
+# cmd/wes applies migrations/ itself on start and exits naming the variable
+# when DATABASE_URL, KAFKA_BROKERS, KAFKA_CONSUMER_GROUP,
+# PRODUCT_CLASSIFICATION_CONSUMER_GROUP or REPLENISHMENT_CONSUMER_GROUP is missing)
+docker compose up -d --wait            # Postgres 16 + single-node Kafka on localhost:9092
+DATABASE_URL="postgres://wes:***@localhost:5432/wes?sslmode=disable" \
+KAFKA_BROKERS=localhost:9092 KAFKA_CONSUMER_GROUP=wes-work-planning-local \
+PRODUCT_CLASSIFICATION_CONSUMER_GROUP=wes-work-planning-product-classification-local \
+REPLENISHMENT_CONSUMER_GROUP=wes-work-planning-replenishment-local go run ./cmd/wes   # :8080
 
 # Analytics data product (separate DB + Kafka fan-out)
 go run ./cmd/wes-projector              # :8091 — the ONLY writer
@@ -55,7 +58,7 @@ rather than relying on the hook firing.
 
 ## Testing
 
-- Table-driven. Domain + application unit tests use the in-memory adapter. At
+- Table-driven. Domain + application unit tests use the in-memory adapter (a test double: no non-test file under `cmd/**` may import it, `TestRuntimeBinaryHasNoInMemoryAdapters`). At
   least one httptest integration test per endpoint. The Postgres repo has a
   build-tagged (`//go:build integration`) test, skipped without `DATABASE_URL`.
 - Kafka-touching integration tests MUST use testcontainers

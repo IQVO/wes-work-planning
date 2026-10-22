@@ -2,7 +2,10 @@
 // it wires env config to outbound adapters, adapters to the use cases, and
 // those to the inbound MCP adapter, then serves MCP over Streamable HTTP. It
 // is a second, independent deployable alongside cmd/wes (the HTTP service),
-// per ADR-0008.
+// per ADR-0008. It runs on real Postgres and real Kafka only (ADR-0044):
+// DATABASE_URL and KAFKA_BROKERS are required, EVENT_PUBLISHER may only be
+// kafka (or unset) and PRODUCT_CLASSIFICATION_MODE may only be kafka (or
+// unset); a missing or rejected one is a boot error that names the variable.
 package main
 
 import (
@@ -23,11 +26,10 @@ import (
 	otelchimetric "github.com/riandyrn/otelchi/metric"
 
 	inboundmcp "github.com/claudioed/wes-work-planning/internal/adapters/inbound/mcp"
-	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
-	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/productclassificationcopy"
+	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/system"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
@@ -48,6 +50,11 @@ func main() {
 func run() error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
+
+	// Misconfiguration is refused before anything is opened or bound.
+	if err := validateBootConfig(os.Getenv); err != nil {
+		return err
+	}
 
 	// Same non-blocking telemetry setup as the HTTP service: the exporters
 	// dial lazily, so an unreachable Collector degrades to dropped telemetry,
@@ -76,12 +83,12 @@ func run() error {
 	}
 	defer repos.close()
 
-	classifications, err := buildClassificationLookup(getenv("PRODUCT_CLASSIFICATION_MODE", "permissive"), repos.pool, logger)
+	classifications, err := buildClassificationLookup(os.Getenv("PRODUCT_CLASSIFICATION_MODE"), repos.pool, logger)
 	if err != nil {
 		return err
 	}
 
-	publisher, stopPublisher, err := wireEventPublisher(logger, getenv("EVENT_PUBLISHER", "log"), os.Getenv("KAFKA_BROKERS"), repos, classifications)
+	publisher, stopPublisher, err := wireEventPublisher(logger, os.Getenv("KAFKA_BROKERS"), repos, classifications)
 	if err != nil {
 		return err
 	}
@@ -98,26 +105,24 @@ func run() error {
 	return serveMCP(logger, srv)
 }
 
-// repositories groups the environment-selected persistence adapters the MCP
-// server needs. pool and uow are nil in the in-memory configuration; a nil
-// UnitOfWork makes every use case run Save + Publish back to back (ADR-0014),
-// with Postgres they run in ONE transaction together with the outbox rows.
+// repositories groups the Postgres persistence adapters the MCP server needs.
+// pool and uow are always set by wireRepositories: every use case runs its
+// state change and its outbox rows in ONE transaction (ADR-0014).
 type repositories struct {
 	pools     ports.WorkPoolRepo
 	workUnits ports.WorkUnitRepo
 	pool      *pgxpool.Pool
 	uow       ports.UnitOfWork
-	// close releases the Postgres pool (a no-op for the in-memory adapters).
+	// close releases the Postgres pool.
 	close func()
 }
 
-// wireRepositories selects the in-memory or Postgres work-pool/work-unit
-// repositories exactly as cmd/wes does: in-memory unless DATABASE_URL is
-// set. The returned close func must be deferred by the caller.
+// wireRepositories opens the Postgres work-pool/work-unit repositories exactly
+// as cmd/wes does. DATABASE_URL is mandatory (errNoDatabase): there is no
+// in-memory fallback. The returned close func must be deferred by the caller.
 func wireRepositories(logger *slog.Logger, databaseURL string) (repositories, error) {
-	if databaseURL == "" {
-		logger.Info("database url not configured; using in-memory adapters")
-		return repositories{pools: memory.NewWorkPoolRepo(), workUnits: memory.NewWorkUnitRepo(), close: func() {}}, nil
+	if strings.TrimSpace(databaseURL) == "" {
+		return repositories{close: func() {}}, errNoDatabase
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -151,74 +156,54 @@ func wireRepositories(logger *slog.Logger, databaseURL string) (repositories, er
 }
 
 // buildClassificationLookup resolves PRODUCT_CLASSIFICATION_MODE for the MCP
-// server (ADR-0035), so a WorkReleased raised through MCP carries the same
-// ADR-0009 hazmat/fragile hints as one raised through REST. This binary
+// server (ADR-0035, ADR-0044), so a WorkReleased raised through MCP carries the
+// same ADR-0009 hazmat/fragile hints as one raised through REST. This binary
 // NEVER starts the ProductClassified consumer (cmd/wes owns it, the copy's
-// migration and every write):
-//
-//   - kafka with Postgres: read-only over the same product_classification_copy
-//     table cmd/wes maintains.
-//   - kafka without Postgres: no copy to read, so the permissive lookup.
-//   - permissive (or unset): the no-op lookup.
-//   - anything else, including the retired http: a boot error.
+// migration and every write): it reads, read-only, the
+// product_classification_copy table cmd/wes maintains. kafka (or unset) is the
+// only mode; permissive/off/http/unknown and a missing pool are boot errors.
 func buildClassificationLookup(rawMode string, pool *pgxpool.Pool, logger *slog.Logger) (ports.ProductClassificationLookup, error) {
 	mode, err := productclassificationcopy.ParseMode(rawMode)
 	if err != nil {
 		return nil, err
 	}
-	switch {
-	case mode == productclassificationcopy.ModeKafka && pool != nil:
-		logger.Info("product classification lookup configured", "mode", string(mode), "source", "product_classification_copy (read-only; cmd/wes consumes)")
-		return productclassificationcopy.NewStore(pool, logger), nil
-	case mode == productclassificationcopy.ModeKafka:
-		logger.Info("PRODUCT_CLASSIFICATION_MODE=kafka without DATABASE_URL: the MCP server has no local copy to read; using the permissive lookup")
-		return productclassificationcopy.NewPermissiveLookup(), nil
-	default:
-		logger.Info("product classification lookup configured", "mode", string(mode))
-		return productclassificationcopy.NewPermissiveLookup(), nil
+	if pool == nil {
+		return nil, errNoDatabase
 	}
+	logger.Info("product classification lookup configured", "mode", string(mode), "source", "product_classification_copy (read-only; cmd/wes consumes)")
+	return productclassificationcopy.NewStore(pool, logger), nil
 }
 
-// wireEventPublisher selects the MCP server's event publisher with the SAME
-// EVENT_PUBLISHER / DATABASE_URL / KAFKA_BROKERS contract as cmd/wes
-// (ADR-0008, ADR-0014): a WorkReleased raised by the release_next_work tool
-// must reach fulfillment-execution exactly like one raised over REST.
-//
-//   - EVENT_PUBLISHER unset or "log": events are only logged (local dev).
-//   - "kafka" + Postgres: an OutboxPublisher writes one outbox_events row per
-//     event per topic inside the use case's UnitOfWork. The outbox RELAY stays
-//     in cmd/wes — it drains every row regardless of which process wrote it —
-//     so this process never opens a Kafka writer in that mode.
-//   - "kafka" without Postgres: events go straight to both topics.
-//
-// The returned stop func releases any Kafka writer opened.
-func wireEventPublisher(logger *slog.Logger, kind, kafkaBrokers string, repos repositories, classifications ports.ProductClassificationLookup) (ports.EventPublisher, func(), error) {
-	if kind != "kafka" {
-		logger.Info("event publisher configured", "publisher", "log")
-		return events.NewLogPublisher(logger), func() {}, nil
-	}
-	if kafkaBrokers == "" {
-		return nil, func() {}, fmt.Errorf("EVENT_PUBLISHER=kafka requires KAFKA_BROKERS to be set")
+// wireEventPublisher builds the MCP server's event publisher with the SAME
+// DATABASE_URL / KAFKA_BROKERS contract as cmd/wes (ADR-0008, ADR-0014): a
+// WorkReleased raised by the release_next_work tool must reach
+// fulfillment-execution exactly like one raised over REST. An OutboxPublisher
+// writes one outbox_events row per event per topic inside the use case's
+// UnitOfWork. The outbox RELAY stays in cmd/wes -- it drains every row
+// regardless of which process wrote it -- so this process never opens a Kafka
+// writer. There is no log sink and no direct-to-Kafka path (ADR-0044).
+func wireEventPublisher(logger *slog.Logger, kafkaBrokers string, repos repositories, classifications ports.ProductClassificationLookup) (ports.EventPublisher, func(), error) {
+	if repos.pool == nil {
+		return nil, func() {}, errNoDatabase
 	}
 	brokers := brokerList(kafkaBrokers)
+	if len(brokers) == 0 {
+		return nil, func() {}, errNoBrokers
+	}
 	integrationPublisher := outboundkafka.NewPublisher(brokers, repos.workUnits, classifications, newEventID)
 	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID).WithWorkUnits(repos.workUnits)
 	stop := func() {
 		_ = integrationPublisher.Close()
 		_ = analyticsPublisher.Close()
 	}
-	if repos.pool != nil {
-		logger.Info("event publisher configured", "publisher", "kafka", "mode", "outbox", "brokers", kafkaBrokers)
-		return postgres.NewOutboxPublisher(repos.pool, integrationPublisher, analyticsPublisher), stop, nil
-	}
-	logger.Info("event publisher configured", "publisher", "kafka", "mode", "direct", "brokers", kafkaBrokers)
-	return events.NewMultiPublisher(integrationPublisher, analyticsPublisher), stop, nil
+	logger.Info("event publisher configured", "publisher", "kafka", "mode", "outbox", "brokers", kafkaBrokers)
+	return postgres.NewOutboxPublisher(repos.pool, integrationPublisher, analyticsPublisher), stop, nil
 }
 
 // newMCPServerDeps wires the MCP adapter's Deps over the SAME use cases
 // the HTTP adapter uses: SampleBacklog and RebalanceDecision (read) and
-// ReleaseNextWork (write), each in the repositories' UnitOfWork (nil for
-// in-memory) so the state change and its events commit together (ADR-0014).
+// ReleaseNextWork (write), each in the repositories' UnitOfWork so the state
+// change and its events commit together (ADR-0014).
 // publisher is whatever wireEventPublisher chose — the MCP server publishes
 // through the platform's outbox exactly like cmd/wes does.
 //
@@ -228,7 +213,7 @@ func wireEventPublisher(logger *slog.Logger, kind, kafkaBrokers string, repos re
 // directly, so no process touches a datastore it does not own (ADR-0011).
 // Absent REPORTS_BASE_URL the tool is simply not registered.
 func newMCPServerDeps(logger *slog.Logger, repos repositories, publisher ports.EventPublisher) inboundmcp.Deps {
-	clock := memory.SystemClock{}
+	clock := system.Clock{}
 	deps := inboundmcp.Deps{
 		SampleBacklog:     usecases.NewSampleBacklog(repos.pools, publisher, clock).WithUnitOfWork(repos.uow),
 		RebalanceDecision: usecases.NewRebalanceDecision(repos.pools, publisher, clock).WithUnitOfWork(repos.uow),

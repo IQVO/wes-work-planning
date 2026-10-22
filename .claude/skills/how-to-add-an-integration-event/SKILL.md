@@ -147,8 +147,8 @@ time (e.g. this service's own analytics consumer feeding
 `cmd/wes-projector`). The group id is a plain named constant
 (`AnalyticsConsumerGroup`-style), reused across restarts — Kafka's
 committed-offset resume semantics are EXACTLY what you want there: pick up
-where the single instance left off. `cmd/wes/main.go`'s
-`defaultConsumerGroup = "wes-work-planning"` constant is this pattern, used
+where the single instance left off. The `KAFKA_CONSUMER_GROUP` value (`wes-work-planning` in the chart, read by
+`cmd/wes/config.go`, no default in the binary) is this pattern, used
 for the main inbound consumer that every deployed replica of this service
 cooperatively shares (horizontal scaling splits partitions across
 replicas — the normal, intended behaviour).
@@ -172,30 +172,23 @@ running `go run ./cmd/wes` against the shared cluster — joined the EXACT
 SAME consumer group as the live in-cluster Deployment. With one partition
 per topic, Kafka's rebalance protocol hands the partition to only ONE
 group member; the other is marked healthy while silently consuming
-nothing. The fix, shipped in #67 and still live today
-(`cmd/wes/main.go`'s `consumerGroupID` function): make the group id
-env-configurable via `KAFKA_CONSUMER_GROUP`, defaulting to the shared
-constant when unset, so an isolated caller (tests, local dev) can pass a
-unique value instead of colliding with the deployed instance:
-
-```go
-// consumerGroupID resolves the Kafka consumer group id, allowing
-// KAFKA_CONSUMER_GROUP to override the default.
-func consumerGroupID(override string) string {
-    if strings.TrimSpace(override) != "" {
-        return override
-    }
-    return defaultConsumerGroup
-}
-```
+nothing. The fix, shipped in #67: make the group id env-configurable via
+`KAFKA_CONSUMER_GROUP` so an isolated caller (tests, local dev) can pass a
+unique value instead of colliding with the deployed instance. Since ADR-0044
+the binary has NO default for it (`appConfig.consumerGroup` in
+`cmd/wes/config.go`; `appConfig.validate()` fails the boot with
+`KAFKA_CONSUMER_GROUP is required`), and the chart renders
+`config.consumerGroup` (`wes-work-planning`) instead. The same holds for
+`PRODUCT_CLASSIFICATION_CONSUMER_GROUP` and `REPLENISHMENT_CONSUMER_GROUP`:
+read the group from the environment, validate it before any dial, and make a
+missing one a boot error that names the variable.
 
 **Never hardcode a `GroupID` as an inline string literal, full stop** —
 `TestKafkaConsumerGroupNeverHardcodedInline` in
 `internal/architecture/fitness_test.go` statically scans every `.go` file
 for a `GroupID:`/`GroupID =` assignment from a bare string literal and
-fails CI on one (the `defaultConsumerGroup` named-constant pattern above is
-the sanctioned exception the test explicitly allows, because it's traceable
-to its own doc comment explaining why a shared name is correct there).
+fails CI on one (a group id read from the environment, as above, is what the test
+expects).
 
 ### 3. Readiness gate, if this consumer backs a local cache
 

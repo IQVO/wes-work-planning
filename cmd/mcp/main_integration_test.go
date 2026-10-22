@@ -86,7 +86,7 @@ func TestMCPReleaseNextWork_WritesOutboxRows(t *testing.T) {
 
 	// The brokers are never dialled: in outbox mode the publisher only
 	// ENCODES; the relay (cmd/wes) owns the Kafka writer.
-	publisher, stop, err := wireEventPublisher(logger, "kafka", "kafka.invalid:9092", repos, nil)
+	publisher, stop, err := wireEventPublisher(logger, "kafka.invalid:9092", repos, nil)
 	if err != nil {
 		t.Fatalf("wireEventPublisher: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestMCPReleaseNextWork_ReadsTheClassificationCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildClassificationLookup: %v", err)
 	}
-	publisher, stop, err := wireEventPublisher(logger, "kafka", "kafka.invalid:9092", repos, lookup)
+	publisher, stop, err := wireEventPublisher(logger, "kafka.invalid:9092", repos, lookup)
 	if err != nil {
 		t.Fatalf("wireEventPublisher: %v", err)
 	}

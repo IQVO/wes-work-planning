@@ -12,25 +12,15 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 )
 
-func TestBuildReplenishment_PermissiveByDefault(t *testing.T) {
-	for _, mode := range []string{"", "permissive", " Permissive "} {
-		w, err := buildReplenishment(replenishmentConfig{mode: mode}, quietLogger())
+func TestBuildReplenishment_KafkaIsTheDefaultAndEnablesTheConsumer(t *testing.T) {
+	for _, mode := range []string{"", "kafka", " KAFKA "} {
+		w, err := buildReplenishment(replenishmentConfig{mode: mode, groupID: "wes-replenishment", kafkaBrokers: "kafka:9092"}, quietLogger())
 		if err != nil {
-			t.Fatalf("mode %q: %v", mode, err)
+			t.Fatalf("mode %q: buildReplenishment: %v", mode, err)
 		}
-		if w.enabled {
-			t.Fatalf("mode %q: wiring = %+v, want no consumer", mode, w)
+		if !w.enabled || w.groupID != "wes-replenishment" {
+			t.Fatalf("mode %q: wiring = %+v, want enabled with the group", mode, w)
 		}
-	}
-}
-
-func TestBuildReplenishment_KafkaEnablesTheConsumer(t *testing.T) {
-	w, err := buildReplenishment(replenishmentConfig{mode: "KAFKA", groupID: "wes-replenishment", kafkaBrokers: "kafka:9092", hasDatabase: true}, quietLogger())
-	if err != nil {
-		t.Fatalf("buildReplenishment: %v", err)
-	}
-	if !w.enabled || w.groupID != "wes-replenishment" {
-		t.Fatalf("wiring = %+v, want enabled with the group", w)
 	}
 }
 
@@ -39,12 +29,14 @@ func TestBuildReplenishment_RejectsAtBoot(t *testing.T) {
 		cfg     replenishmentConfig
 		wantErr string
 	}{
-		"unknown mode":             {replenishmentConfig{mode: "http", hasDatabase: true}, "REPLENISHMENT_MODE"},
-		"kafka without the group":  {replenishmentConfig{mode: "kafka", kafkaBrokers: "kafka:9092", hasDatabase: true}, "REPLENISHMENT_CONSUMER_GROUP"},
-		"kafka with a blank group": {replenishmentConfig{mode: "kafka", groupID: "  ", kafkaBrokers: "kafka:9092", hasDatabase: true}, "REPLENISHMENT_CONSUMER_GROUP"},
-		"kafka without brokers":    {replenishmentConfig{mode: "kafka", groupID: "g", hasDatabase: true}, "KAFKA_BROKERS"},
-		"kafka with blank brokers": {replenishmentConfig{mode: "kafka", groupID: "g", kafkaBrokers: " ", hasDatabase: true}, "KAFKA_BROKERS"},
-		"kafka without Postgres":   {replenishmentConfig{mode: "kafka", groupID: "g", kafkaBrokers: "kafka:9092"}, "DATABASE_URL"},
+		"permissive is rejected": {replenishmentConfig{mode: "permissive", groupID: "g", kafkaBrokers: "kafka:9092"}, "REPLENISHMENT_MODE=permissive is not supported"},
+		"padded permissive":      {replenishmentConfig{mode: " Permissive ", groupID: "g", kafkaBrokers: "kafka:9092"}, "REPLENISHMENT_MODE=permissive is not supported"},
+		"off is rejected":        {replenishmentConfig{mode: "off", groupID: "g", kafkaBrokers: "kafka:9092"}, "REPLENISHMENT_MODE=off is not supported"},
+		"unknown mode":           {replenishmentConfig{mode: "http", groupID: "g", kafkaBrokers: "kafka:9092"}, "REPLENISHMENT_MODE"},
+		"without the group":      {replenishmentConfig{kafkaBrokers: "kafka:9092"}, "REPLENISHMENT_CONSUMER_GROUP"},
+		"with a blank group":     {replenishmentConfig{mode: "kafka", groupID: "  ", kafkaBrokers: "kafka:9092"}, "REPLENISHMENT_CONSUMER_GROUP"},
+		"without brokers":        {replenishmentConfig{mode: "kafka", groupID: "g"}, "KAFKA_BROKERS"},
+		"with blank brokers":     {replenishmentConfig{mode: "kafka", groupID: "g", kafkaBrokers: " "}, "KAFKA_BROKERS"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -59,8 +51,8 @@ func TestBuildReplenishment_RejectsAtBoot(t *testing.T) {
 func TestLoadReplenishmentConfig_ReadsTheEnvironment(t *testing.T) {
 	t.Setenv("REPLENISHMENT_MODE", "kafka")
 	t.Setenv("REPLENISHMENT_CONSUMER_GROUP", "g-1")
-	cfg := loadReplenishmentConfig("b:9092", true)
-	if cfg.mode != "kafka" || cfg.groupID != "g-1" || cfg.kafkaBrokers != "b:9092" || !cfg.hasDatabase {
+	cfg := loadReplenishmentConfig("b:9092")
+	if cfg.mode != "kafka" || cfg.groupID != "g-1" || cfg.kafkaBrokers != "b:9092" {
 		t.Fatalf("cfg = %+v", cfg)
 	}
 }
@@ -84,11 +76,11 @@ func TestReplenishmentCPTHorizons_DefaultsAndOverrides(t *testing.T) {
 	}
 }
 
-func TestStartReplenishmentConsumer_NoOpWhenPermissive(t *testing.T) {
+func TestStartReplenishmentConsumer_NoOpForAZeroWiring(t *testing.T) {
 	s := &serving{logger: quietLogger()}
 	s.startReplenishmentConsumer()
 	if s.stopReplenishment != nil {
-		t.Fatal("permissive mode must not start a consumer")
+		t.Fatal("a zero-value wiring must not start a consumer")
 	}
 	s.stopReplenishmentConsumer(context.Background()) // safe when never started
 }

@@ -1,59 +1,45 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
 	outboundkafka "github.com/claudioed/wes-work-planning/internal/adapters/outbound/kafka"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 )
 
-// wireEventPublisher selects the outbound event publisher. The default
-// is the log publisher; with EVENT_PUBLISHER=kafka the integration
-// publisher (warehouse.work-planning.events) is untouched while a
-// SEPARATE analytics publisher fans every domain event onto the
-// dedicated analytics topic (warehouse.wes.analytics) that feeds the
-// "Release Throughput & Backlog Health" data product (ADR-0011). With
-// Postgres configured both act only as ENCODERS inside the use case's
-// transaction — one outbox row per event per topic (ADR-0014) — and the
-// returned relay drains those rows onto Kafka through a single
-// topic-less writer, so the store and the topics can no longer diverge;
-// without Postgres a MultiPublisher emits each event to BOTH topics
-// directly. The returned stop func releases every Kafka writer opened;
-// the caller defers it.
-func wireEventPublisher(logger *slog.Logger, eventPublisherKind, kafkaBrokers string, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, pgPool *pgxpool.Pool) (ports.EventPublisher, *postgres.OutboxRelay, func(), error) {
-	if eventPublisherKind != "kafka" {
-		logger.Info("event publisher configured", "publisher", "log")
-		return events.NewLogPublisher(logger), nil, func() {}, nil
-	}
-	if kafkaBrokers == "" {
-		return nil, nil, func() {}, fmt.Errorf("EVENT_PUBLISHER=kafka requires KAFKA_BROKERS to be set")
+// wireEventPublisher builds the outbound event publisher: the integration
+// publisher (warehouse.work-planning.events) is untouched while a SEPARATE
+// analytics publisher fans every domain event onto the dedicated analytics
+// topic (warehouse.wes.analytics) that feeds the "Release Throughput & Backlog
+// Health" data product (ADR-0011). Both act only as ENCODERS inside the use
+// case's transaction -- one outbox row per event per topic (ADR-0014) -- and
+// the returned relay (always built) drains those rows onto Kafka through a
+// single topic-less writer, so the store and the topics cannot diverge.
+//
+// There is no log sink and no direct-to-Kafka path (ADR-0044): a nil pool or an
+// empty broker list is an error. The returned stop func releases every Kafka
+// writer opened; the caller defers it.
+func wireEventPublisher(logger *slog.Logger, kafkaBrokers string, workUnits ports.WorkUnitRepo, classifications ports.ProductClassificationLookup, pgPool *pgxpool.Pool) (ports.EventPublisher, *postgres.OutboxRelay, func(), error) {
+	if pgPool == nil {
+		return nil, nil, func() {}, errors.New("event publisher: a Postgres pool is required (DATABASE_URL): events leave only through the transactional outbox")
 	}
 	brokers := brokerList(kafkaBrokers)
+	if len(brokers) == 0 {
+		return nil, nil, func() {}, errors.New("event publisher: KAFKA_BROKERS is required")
+	}
 	integrationPublisher := outboundkafka.NewPublisher(brokers, workUnits, classifications, newEventID)
 	analyticsPublisher := outboundkafka.NewAnalyticsPublisher(brokers, newEventID).WithWorkUnits(workUnits)
 	closers := []func(){func() { _ = integrationPublisher.Close() }, func() { _ = analyticsPublisher.Close() }}
 
-	var relay *postgres.OutboxRelay
-	var publisher ports.EventPublisher
-	if pgPool != nil {
-		var relayClosers []func()
-		relay, relayClosers = wireOutboxRelay(logger, brokers, pgPool)
-		closers = append(closers, relayClosers...)
-		publisher = postgres.NewOutboxPublisher(pgPool, integrationPublisher, analyticsPublisher)
-		logger.Info("event publisher configured", "publisher", "kafka", "mode", "outbox", "brokers", kafkaBrokers)
-	} else {
-		// No Postgres, no transaction to bind to: publish directly. A
-		// MultiPublisher emits each event to BOTH topics, exactly once
-		// each, without either publisher knowing about the other.
-		publisher = events.NewMultiPublisher(integrationPublisher, analyticsPublisher)
-		logger.Info("event publisher configured", "publisher", "kafka", "mode", "direct", "brokers", kafkaBrokers)
-	}
+	relay, relayClosers := wireOutboxRelay(logger, brokers, pgPool)
+	closers = append(closers, relayClosers...)
+	publisher := postgres.NewOutboxPublisher(pgPool, integrationPublisher, analyticsPublisher)
+	logger.Info("event publisher configured", "publisher", "kafka", "mode", "outbox", "brokers", kafkaBrokers)
 	return publisher, relay, func() {
 		for i := len(closers) - 1; i >= 0; i-- {
 			closers[i]()

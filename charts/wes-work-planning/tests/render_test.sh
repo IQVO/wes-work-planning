@@ -85,14 +85,17 @@ grep -q '^  KAFKA_BROKERS: "kafka:9092"' <<<"$configmap" || fail "the ConfigMap 
   || fail "PRODUCT_CLASSIFICATION_CONSUMER_GROUP is not rendered by default"
 [[ "$(env_value "$api_deployment" REPLENISHMENT_CONSUMER_GROUP)" == "wes-work-planning-replenishment" ]] \
   || fail "REPLENISHMENT_CONSUMER_GROUP is not rendered by default"
+[[ "$(env_value "$api_deployment" PACK_VIEW_CONSUMER_GROUP)" == "wes-work-planning-pack-view" ]] \
+  || fail "PACK_VIEW_CONSUMER_GROUP is not rendered by default"
 grep -A4 'name: DATABASE_URL$' <<<"$api_deployment" | grep -q 'secretKeyRef:' || fail "DATABASE_URL must come from a Secret (secretKeyRef)"
 if grep -qE '^  (MIGRATIONS_)?DATABASE_URL:' <<<"$configmap"; then fail "a DSN must never land in the ConfigMap"; fi
 
 tuned_groups="$(render --set config.consumerGroup=g1 --set config.productClassificationConsumerGroup=g2 \
-  --set config.replenishmentConsumerGroup=g3 --show-only templates/deployment.yaml)"
+  --set config.replenishmentConsumerGroup=g3 --set config.packViewConsumerGroup=g4 --show-only templates/deployment.yaml)"
 [[ "$(env_value "$tuned_groups" KAFKA_CONSUMER_GROUP)" == "g1" ]] || fail "config.consumerGroup is not rendered"
 [[ "$(env_value "$tuned_groups" PRODUCT_CLASSIFICATION_CONSUMER_GROUP)" == "g2" ]] || fail "config.productClassificationConsumerGroup is not rendered"
 [[ "$(env_value "$tuned_groups" REPLENISHMENT_CONSUMER_GROUP)" == "g3" ]] || fail "config.replenishmentConsumerGroup is not rendered"
+[[ "$(env_value "$tuned_groups" PACK_VIEW_CONSUMER_GROUP)" == "g4" ]] || fail "config.packViewConsumerGroup is not rendered"
 
 # No permissive / off / log value and no in-memory mention anywhere.
 if grep -qiE 'value: "?(permissive|off|log)"?$' <<<"$all_docs"; then fail "the render carries permissive/off/log, which the binaries reject at boot"; fi
@@ -170,6 +173,7 @@ expect_refusal "empty kafka.brokers" "kafka.brokers is required" "${base[@]}" --
 expect_refusal "kafka.enabled=false" "kafka.enabled=false is not supported" "${base[@]}" --set kafka.enabled=false
 expect_refusal "empty consumer group" "config.consumerGroup is required" "${base[@]}" --set config.consumerGroup=
 expect_refusal "empty classification group" "config.productClassificationConsumerGroup is required" "${base[@]}" --set config.productClassificationConsumerGroup=
+expect_refusal "empty pack view group" "config.packViewConsumerGroup is required" "${base[@]}" --set config.packViewConsumerGroup=
 expect_refusal "empty replenishment group" "config.replenishmentConsumerGroup is required" "${base[@]}" --set config.replenishmentConsumerGroup=
 expect_refusal "log publisher" "config.eventPublisher" "${base[@]}" --set config.eventPublisher=log
 expect_refusal "log publisher on mcp" "mcp.eventPublisher" "${base[@]}" --set mcp.enabled=true --set mcp.eventPublisher=log

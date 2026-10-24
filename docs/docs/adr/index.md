@@ -79,6 +79,7 @@ no scheduler).
 | [0042](./0042-pick-face-replenishment-work.md) | Consume pick-face-replenishment's `ReplenishmentRequested`/`ReplenishmentCancelled` (opt-in `REPLENISHMENT_MODE=kafka`) into ONE `REPLENISH` work unit per request id: URGENT gets the short CPT horizon, a cancellation withdraws only a still-Pending unit, `WorkReleased` v1 gains an optional `replenishment` block | Accepted — `permissive` default removed by 0044 |
 | [0043](./0043-taskcompleted-already-completed-skip.md) | A `TaskCompleted` carrying a NEW event id for a work unit that is already completed is a stale fact: `TaskCompletedAlreadyCompleted`, an INFO-logged, processed skip — never retried, never dead-lettered; amends 0028's error enumeration | Accepted |
 | [0044](./0044-postgres-and-kafka-are-the-only-runtime.md) | Postgres and Kafka are the only runtime: `cmd/wes`, `cmd/mcp` and `cmd/wes-projector` have no in-memory repositories, no log sink, no direct publisher and no optional relay/consumer; mandatory variables and `permissive`/`off`/`log` are boot errors; real `/readyz`; NUL and `wipLimit` bounds are client errors; memory adapters are test doubles | Accepted |
+| [0045](./0045-pack-aware-work-units.md) | Pack-aware work units: `CASE_PICK` / `EACH_PICK` / `BREAK_CASE` released as the `pick` / `case_break` objects fulfillment-execution consumes; local copy of product-master pack-level events (own `PACK_VIEW_CONSUMER_GROUP`); case-based charge and travel estimates | Accepted |
 
 ## The template
 

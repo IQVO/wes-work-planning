@@ -375,6 +375,7 @@ channels:
 components:
   messages:
     ChargeForecastReceived:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: ChargeForecastReceived
       title: Charge Forecast Received
       summary: A shift's charge forecast was recorded for a process path.
@@ -406,6 +407,7 @@ components:
               path_id: pick-to-tote
 
     ShiftPlanCommitted:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: ShiftPlanCommitted
       title: Shift Plan Committed
       summary: A path's headcount, rate and hours split was committed.
@@ -873,6 +875,7 @@ components:
                 priority: URGENT
 
     WorkUnitCompleted:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: WorkUnitCompleted
       title: Work Unit Completed
       summary: A released work unit finished.
@@ -936,6 +939,7 @@ components:
               path_id: pack-singles
 
     RateDeviationDetected:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: RateDeviationDetected
       title: Rate Deviation Detected
       summary: A path's actual throughput deviated materially from plan.
@@ -978,6 +982,7 @@ components:
               path_id: pick-to-tote
 
     PathThrottled:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: PathThrottled
       title: Path Throttled
       summary: Flow balancing decided to throttle upstream release into a path.
@@ -1008,6 +1013,7 @@ components:
               path_id: pack-singles
 
     LaborReassignmentFlagged:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: LaborReassignmentFlagged
       title: Labor Reassignment Flagged
       summary: Flow balancing recommended moving labor to relieve a path.
@@ -1109,6 +1115,7 @@ components:
               known: false
 
     PathPlanDriftDetected:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: PathPlanDriftDetected
       title: Path Plan Drift Detected
       summary: >-

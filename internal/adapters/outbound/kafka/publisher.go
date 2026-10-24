@@ -329,7 +329,7 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 	cpt, ref, sku, giftWrap := "", "", "", false
 	transferRef, siteId, quantity, lineNo := "", "", 0, 0
 	var workKind workunit.WorkKind
-	var relocation, replenishment map[string]any
+	var relocation, replenishment, pick, caseBreak map[string]any
 	if unit, err := p.workUnits.FindById(ctx, ev.WorkUnitId); err == nil {
 		cpt = unit.CPT().Time().Format(time.RFC3339)
 		ref = unit.Reference()
@@ -342,6 +342,8 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 		lineNo = unit.LineNo()
 		relocation = relocationData(unit)
 		replenishment = replenishmentData(unit)
+		pick = pickData(unit)
+		caseBreak = caseBreakData(unit)
 	}
 
 	requiredCapabilities, fragile := p.classificationHints(ctx, sku)
@@ -409,7 +411,52 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 	if replenishment != nil {
 		data["replenishment"] = replenishment
 	}
+	// Pack-aware work (ADR-0045): ONE optional nested object each, exactly the
+	// shapes fulfillment-execution already decodes (its ADR 0054): `pick` on a
+	// CASE_PICK / EACH_PICK unit, `case_break` on a BREAK_CASE unit. The kind
+	// is carried by pick.unit and by the object itself; the top-level
+	// work_kind stays transfer-only (ADR-0033).
+	if pick != nil {
+		data["pick"] = pick
+	}
+	if caseBreak != nil {
+		data["case_break"] = caseBreak
+	}
 	return json.Marshal(data)
+}
+
+// pickData is WorkReleased.data.pick for a CASE_PICK / EACH_PICK unit, nil for
+// every other unit: sku, quantity (EACHES whatever the unit), unit (EACH |
+// CASE) and from_bin, omitted when no source bin was planned.
+func pickData(unit *workunit.WorkUnit) map[string]any {
+	plan, ok := unit.Pick()
+	if !ok {
+		return nil
+	}
+	out := map[string]any{
+		"sku":      plan.SKU,
+		"quantity": plan.Quantity,
+		"unit":     plan.Unit.String(),
+	}
+	if plan.FromBin != "" {
+		out["from_bin"] = plan.FromBin
+	}
+	return out
+}
+
+// caseBreakData is WorkReleased.data.case_break for a BREAK_CASE unit, nil for
+// every other unit: lpn, sku, loose_bin and pick_task_id, all required.
+func caseBreakData(unit *workunit.WorkUnit) map[string]any {
+	brk, ok := unit.CaseBreak()
+	if !ok {
+		return nil
+	}
+	return map[string]any{
+		"lpn":          brk.LPN,
+		"sku":          brk.SKU,
+		"loose_bin":    brk.LooseBin,
+		"pick_task_id": brk.PickTaskId,
+	}
 }
 
 // replenishmentData is WorkReleased.data.replenishment for a REPLENISH unit,

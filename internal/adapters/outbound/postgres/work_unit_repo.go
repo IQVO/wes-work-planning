@@ -44,20 +44,25 @@ func lineNoFromColumn(lineNo *int) int {
 func (r *WorkUnitRepo) Save(ctx context.Context, unit *workunit.WorkUnit) error {
 	move, _ := unit.Relocation()
 	repl, _ := unit.Replenishment()
+	pick, _ := unit.Pick()
+	brk, _ := unit.CaseBreak()
 	_, err := querierFrom(ctx, r.pool).Exec(ctx, `
 		INSERT INTO work_units (id, path_id, cpt, reference, sku, gift_wrap, transfer_ref, work_kind, site_id, quantity, state, released_at, completed_at, line_no,
 			relocation_plan_id, relocation_move_seq, relocation_kind, from_slot, to_slot, blocked_by, cancelled_at,
-			replenishment_request_id, replenishment_from_bin, replenishment_to_bin, replenishment_priority)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+			replenishment_request_id, replenishment_from_bin, replenishment_to_bin, replenishment_priority,
+			pick_unit, pick_from_bin, case_break_lpn, case_break_loose_bin, case_break_pick_task_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
 		ON CONFLICT (id) DO UPDATE SET
 			path_id = $2, cpt = $3, reference = $4, sku = $5, gift_wrap = $6, transfer_ref = $7, work_kind = $8, site_id = $9, quantity = $10, state = $11, released_at = $12, completed_at = $13, line_no = $14,
 			relocation_plan_id = $15, relocation_move_seq = $16, relocation_kind = $17, from_slot = $18, to_slot = $19, blocked_by = $20, cancelled_at = $21,
-			replenishment_request_id = $22, replenishment_from_bin = $23, replenishment_to_bin = $24, replenishment_priority = $25
+			replenishment_request_id = $22, replenishment_from_bin = $23, replenishment_to_bin = $24, replenishment_priority = $25,
+			pick_unit = $26, pick_from_bin = $27, case_break_lpn = $28, case_break_loose_bin = $29, case_break_pick_task_id = $30
 	`, unit.Id(), unit.PathId().String(), unit.CPT().Time(), unit.Reference(), unit.SKU(), unit.GiftWrap(),
 		unit.TransferRef(), unit.WorkKind().String(), unit.SiteId(), unit.Quantity(),
 		unit.State().String(), unit.ReleasedAt(), unit.CompletedAt(), lineNoToColumn(unit.LineNo()),
 		move.PlanId, move.MoveSeq, move.Kind.String(), move.FromSlot, move.ToSlot, unit.BlockedBy(), unit.CancelledAt(),
-		repl.RequestId, repl.FromBin, repl.ToBin, repl.Priority.String())
+		repl.RequestId, repl.FromBin, repl.ToBin, repl.Priority.String(),
+		pick.Unit.String(), pick.FromBin, brk.LPN, brk.LooseBin, brk.PickTaskId)
 	return err
 }
 
@@ -66,7 +71,8 @@ func (r *WorkUnitRepo) Save(ctx context.Context, unit *workunit.WorkUnit) error 
 const workUnitColumns = `id, path_id, cpt, reference, sku, gift_wrap, state, released_at, completed_at,
 	transfer_ref, work_kind, site_id, quantity, line_no,
 	relocation_plan_id, relocation_move_seq, relocation_kind, from_slot, to_slot, blocked_by, cancelled_at,
-	replenishment_request_id, replenishment_from_bin, replenishment_to_bin, replenishment_priority`
+	replenishment_request_id, replenishment_from_bin, replenishment_to_bin, replenishment_priority,
+	pick_unit, pick_from_bin, case_break_lpn, case_break_loose_bin, case_break_pick_task_id`
 
 // workUnitRow is one work_units row as stored.
 type workUnitRow struct {
@@ -84,13 +90,18 @@ type workUnitRow struct {
 	// for every unit that is not REPLENISH work.
 	replenishmentRequestId, replenishmentFromBin string
 	replenishmentToBin, replenishmentPriority    string
+	// pick* and caseBreak* are the ADR-0045 columns; pickUnit / caseBreakLPN
+	// are "" for every unit that is not pack-aware work.
+	pickUnit, pickFromBin                                string
+	caseBreakLPN, caseBreakLooseBin, caseBreakPickTaskId string
 }
 
 func (w *workUnitRow) dest() []any {
 	return []any{&w.id, &w.pathId, &w.cpt, &w.reference, &w.sku, &w.giftWrap, &w.state, &w.releasedAt, &w.completedAt,
 		&w.transferRef, &w.workKind, &w.siteId, &w.quantity, &w.lineNo,
 		&w.relocationPlanId, &w.relocationMoveSeq, &w.relocationKind, &w.fromSlot, &w.toSlot, &w.blockedBy, &w.cancelledAt,
-		&w.replenishmentRequestId, &w.replenishmentFromBin, &w.replenishmentToBin, &w.replenishmentPriority}
+		&w.replenishmentRequestId, &w.replenishmentFromBin, &w.replenishmentToBin, &w.replenishmentPriority,
+		&w.pickUnit, &w.pickFromBin, &w.caseBreakLPN, &w.caseBreakLooseBin, &w.caseBreakPickTaskId}
 }
 
 // missingTimestamp reports a Released/Completed/Cancelled row whose
@@ -146,7 +157,36 @@ func applyDescriptiveColumns(unit *workunit.WorkUnit, row workUnitRow) error {
 	if err := applyRelocationColumns(unit, row); err != nil {
 		return err
 	}
-	return applyReplenishmentColumns(unit, row)
+	if err := applyReplenishmentColumns(unit, row); err != nil {
+		return err
+	}
+	return applyPackAwareColumns(unit, row)
+}
+
+// applyPackAwareColumns rehydrates the pick plan of a CASE_PICK / EACH_PICK
+// row and the case break of a BREAK_CASE row (ADR-0045) from their own
+// columns plus the unit's sku and quantity; a corrupt unit or an incomplete
+// value fails loud, like the other kinds.
+func applyPackAwareColumns(unit *workunit.WorkUnit, row workUnitRow) error {
+	if row.pickUnit != "" {
+		plan, err := workunit.NewPickPlan(row.sku, row.quantity, row.pickUnit, row.pickFromBin)
+		if err != nil {
+			return fmt.Errorf("rehydrate work unit %q: %w", row.id, err)
+		}
+		unit.SetPick(plan)
+	} else if unit.WorkKind().IsPickKind() {
+		return fmt.Errorf("rehydrate work unit %q: %s row without its pick columns: %w", row.id, unit.WorkKind(), workunit.ErrInvalidPickPlan)
+	}
+	if row.caseBreakLPN != "" {
+		brk, err := workunit.NewCaseBreak(row.caseBreakLPN, row.sku, row.caseBreakLooseBin, row.caseBreakPickTaskId)
+		if err != nil {
+			return fmt.Errorf("rehydrate work unit %q: %w", row.id, err)
+		}
+		unit.SetCaseBreak(brk)
+	} else if unit.WorkKind() == workunit.WorkKindBreakCase {
+		return fmt.Errorf("rehydrate work unit %q: BREAK_CASE row without its case break columns: %w", row.id, workunit.ErrInvalidCaseBreak)
+	}
+	return nil
 }
 
 // applyRelocationColumns rehydrates the slot-plan move of a RELOCATE row.

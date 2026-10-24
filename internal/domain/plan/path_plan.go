@@ -3,6 +3,7 @@ package plan
 import (
 	"math"
 
+	"github.com/claudioed/wes-work-planning/internal/domain/pickload"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 )
 
@@ -26,6 +27,11 @@ type PathPlan struct {
 	travelDistanceKnown     bool
 	travelDistanceM         float64
 	travelDistanceEstimated bool
+
+	// handle is the optional load of ONE handle of the pick unit this plan
+	// staffs (one case for CASE_PICK, one each for EACH_PICK), from the local
+	// pack copy at commit time (ADR-0045). nil when the caller stated none.
+	handle *pickload.Load
 }
 
 // NewPathPlan validates and constructs a PathPlan. Enforces
@@ -91,3 +97,27 @@ func (p PathPlan) TravelDistanceEstimated() bool { return p.travelDistanceEstima
 // unknown or in different zones (facility-layout refuses rather than
 // guesses across zones, see ADR-0017 there).
 func (p PathPlan) TravelDistanceKnown() bool { return p.travelDistanceKnown }
+
+// SetHandleLoad records the optional per-handle load (ADR-0045) after
+// construction, mirroring SetTravelDistance's additive-setter discipline.
+func (p *PathPlan) SetHandleLoad(l pickload.Load) { p.handle = &l }
+
+// HandleLoad is the load of one handle of the staffed pick unit; ok is false
+// when none was recorded.
+func (p PathPlan) HandleLoad() (l pickload.Load, ok bool) {
+	if p.handle == nil {
+		return pickload.Load{}, false
+	}
+	return *p.handle, true
+}
+
+// CarryKgM is the travel estimate for a pack-aware path: the weight of one
+// handle (a whole CASE for a CASE_PICK path) times the recorded travel
+// distance. ok is false unless both a travel distance and a handle weight
+// are known: an unknown figure is never presented as zero.
+func (p PathPlan) CarryKgM() (kgM float64, ok bool) {
+	if p.handle == nil || !p.travelDistanceKnown {
+		return 0, false
+	}
+	return p.handle.CarryKgM(p.travelDistanceM)
+}

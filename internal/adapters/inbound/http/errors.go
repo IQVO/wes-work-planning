@@ -8,6 +8,7 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/domain/charge"
 	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
+	"github.com/claudioed/wes-work-planning/internal/domain/pickload"
 	"github.com/claudioed/wes-work-planning/internal/domain/plan"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
@@ -40,7 +41,9 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, errMalformedBody), errors.Is(err, errMissingReference), errors.Is(err, errIdempotencyKeyRequired):
 		return http.StatusBadRequest
-	case errors.Is(err, errIdempotencyKeyReused):
+	case errors.Is(err, errIdempotencyKeyReused),
+		errors.Is(err, pickload.ErrNoActiveCaseLevel),
+		errors.Is(err, pickload.ErrNotCaseMultiple):
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, ports.ErrNotFound):
 		return http.StatusNotFound
@@ -68,6 +71,10 @@ func statusFor(err error) int {
 		errors.Is(err, workunit.ErrEmptyId),
 		errors.Is(err, workunit.ErrEmptyReference),
 		errors.Is(err, workunit.ErrInvalidLineNo),
+		errors.Is(err, workunit.ErrUnknownPickUnit),
+		errors.Is(err, workunit.ErrInvalidPickPlan),
+		errors.Is(err, workunit.ErrInvalidCaseBreak),
+		errors.Is(err, pickload.ErrInvalidQuantity),
 		errors.Is(err, release.ErrInvalidWIPLimit),
 		errors.Is(err, release.ErrUnknownFeedMode),
 		errors.Is(err, release.ErrUnknownEntry):
@@ -125,6 +132,12 @@ var problemCatalog = []problemCategory{
 	{workunit.ErrEmptyId, "work-unit-id-required", "Work unit id is required"},
 	{workunit.ErrEmptyReference, "work-unit-reference-required", "Work unit reference is required"},
 	{workunit.ErrInvalidLineNo, "invalid-line-no", "Invalid line number"},
+	{workunit.ErrUnknownPickUnit, "unknown-pick-unit", "Unknown pick unit"},
+	{workunit.ErrInvalidPickPlan, "invalid-pick-plan", "Invalid pick plan"},
+	{workunit.ErrInvalidCaseBreak, "invalid-case-break", "Invalid case break"},
+	{pickload.ErrInvalidQuantity, "invalid-pick-quantity", "Invalid pick quantity"},
+	{pickload.ErrNoActiveCaseLevel, "no-active-case-level", "The SKU has no active CASE pack level"},
+	{pickload.ErrNotCaseMultiple, "quantity-not-case-multiple", "Quantity is not a whole number of cases"},
 	{release.ErrUnknownEntry, "work-pool-entry-not-found", "Work unit not found in this pool"},
 	{release.ErrInvalidWIPLimit, "invalid-wip-limit", "Invalid WIP limit"},
 	{release.ErrUnknownFeedMode, "unknown-feed-mode", "Unknown work pool feed mode"},

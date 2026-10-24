@@ -10,7 +10,7 @@ buffer telemetry. Module `github.com/claudioed/wes-work-planning`.
 > **Study project.** Educational DDD exercise using real WMS/WES/WCS
 > terminology. Not a production system, not affiliated with any real company.
 
-Domain source of truth: `/Users/claudioed/docs/amazon-fulfillment-ddd.md` and
+Domain source of truth: `/Users/claudioed/docs/fulfillment-reference-ddd.md` and
 `/Users/claudioed/warehouse-systems-ddd.md`. Use the ubiquitous language from
 `.claude/rules/domain-model.md`; do not invent synonyms.
 

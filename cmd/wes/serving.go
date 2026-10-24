@@ -54,6 +54,10 @@ type serving struct {
 	// stopReplenishment is set while its consumer runs.
 	replenishment     replenishmentWiring
 	stopReplenishment func(ctx context.Context)
+	// packViewGroupID is PACK_VIEW_CONSUMER_GROUP (ADR-0045); stopPackLevel is
+	// set while the pack-level consumer runs.
+	packViewGroupID string
+	stopPackLevel   func(ctx context.Context)
 }
 
 // servingDeps is everything run() has wired by the time it can build the
@@ -69,13 +73,14 @@ type servingDeps struct {
 	cancelCatalogueConsumer context.CancelFunc
 	classification          classificationWiring
 	replenishment           replenishmentWiring
+	packViewGroupID         string
 }
 
 // newServing builds the HTTP handlers, the server, and the serving group
 // over already-wired adapters.
 func newServing(d servingDeps) *serving {
 	clock := system.Clock{}
-	handlers := newHandlers(d.repos, d.publisher, clock, d.catalogue, d.repos.travelDistanceLookup(d.logger), d.cfg.kafkaBrokers)
+	handlers := newHandlers(d.repos, d.publisher, clock, d.catalogue, d.repos.travelDistanceLookup(d.logger), d.classification.lookup, d.cfg.kafkaBrokers)
 
 	server := &http.Server{
 		Addr:              d.cfg.httpAddr,
@@ -97,11 +102,12 @@ func newServing(d servingDeps) *serving {
 		kafkaBrokers:            d.cfg.kafkaBrokers,
 		consumerGroup:           d.cfg.consumerGroup,
 		recordCompletion:        usecases.NewRecordCompletion(d.repos.workUnits, d.repos.pools, d.publisher, clock).WithUnitOfWork(d.repos.uow).WithRelocationWork(d.repos.relocations),
-		enqueueWorkUnit:         usecases.NewEnqueueWorkUnit(d.repos.workUnits, d.repos.pools, d.publisher, clock).WithUnitOfWork(d.repos.uow),
+		enqueueWorkUnit:         usecases.NewEnqueueWorkUnit(d.repos.workUnits, d.repos.pools, d.publisher, clock).WithUnitOfWork(d.repos.uow).WithCatalogue(d.catalogue),
 		cancelCatalogueConsumer: d.cancelCatalogueConsumer,
 		kafkaCatalogue:          d.kafkaCatalogue,
 		classification:          d.classification,
 		replenishment:           d.replenishment,
+		packViewGroupID:         d.packViewGroupID,
 	}
 }
 
@@ -160,6 +166,11 @@ func (s *serving) run(ctx context.Context) error {
 	// REPLENISH work; always on (ADR-0044).
 	s.startReplenishmentConsumer()
 	defer s.stopReplenishmentConsumerBounded()
+
+	// The ProductPackLevelDeclared/Retired/Measured consumer (ADR-0045) feeds
+	// the local pack-level copy; always on (ADR-0044).
+	s.startPackLevelConsumer()
+	defer s.stopPackLevelConsumerBounded()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -302,6 +313,7 @@ func (s *serving) gracefulShutdown(cancelConsumer context.CancelFunc, consumer *
 	}
 	s.stopClassificationConsumer(ctx)
 	s.stopReplenishmentConsumer(ctx)
+	s.stopPackLevelConsumer(ctx)
 	s.cancelCatalogueConsumer()
 	if s.kafkaCatalogue != nil {
 		_ = s.kafkaCatalogue.Close()

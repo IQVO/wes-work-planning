@@ -26,12 +26,12 @@ func newReadiness(repos repositories, kafkaBrokers string) *inboundhttp.Readines
 
 // newHandlers wires every use case into the inbound HTTP handlers,
 // including the idempotency pool and readiness gate of their ADRs.
-func newHandlers(repos repositories, publisher ports.EventPublisher, clock ports.Clock, catalogue ports.PathCatalogue, travelDistances ports.TravelDistanceLookup, kafkaBrokers string) *inboundhttp.Handlers {
+func newHandlers(repos repositories, publisher ports.EventPublisher, clock ports.Clock, catalogue ports.PathCatalogue, travelDistances ports.TravelDistanceLookup, packs ports.ProductClassificationLookup, kafkaBrokers string) *inboundhttp.Handlers {
 	uow := repos.uow
 	return &inboundhttp.Handlers{
-		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(repos.charges, publisher, clock).WithUnitOfWork(uow),
-		CommitShiftPlan:         usecases.NewCommitShiftPlan(repos.plans, publisher, clock).WithUnitOfWork(uow).WithTravelDistanceLookup(travelDistances).WithLaborPlanViews(repos.laborPlanViews),
-		EnqueueWorkUnit:         usecases.NewEnqueueWorkUnit(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow),
+		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(repos.charges, publisher, clock).WithUnitOfWork(uow).WithPackLookup(packs),
+		CommitShiftPlan:         usecases.NewCommitShiftPlan(repos.plans, publisher, clock).WithUnitOfWork(uow).WithTravelDistanceLookup(travelDistances).WithLaborPlanViews(repos.laborPlanViews).WithPackLookup(packs),
+		EnqueueWorkUnit:         usecases.NewEnqueueWorkUnit(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow).WithPackLookup(packs).WithCatalogue(catalogue),
 		ReleaseNextWork:         usecases.NewReleaseNextWork(repos.pools, repos.workUnits, publisher, clock).WithUnitOfWork(uow).WithMetrics(telemetry.NewReleaseMetrics()),
 		RecordCompletion:        usecases.NewRecordCompletion(repos.workUnits, repos.pools, publisher, clock).WithUnitOfWork(uow).WithRelocationWork(repos.relocations),
 		SampleBacklog:           usecases.NewSampleBacklog(repos.pools, publisher, clock).WithUnitOfWork(uow),

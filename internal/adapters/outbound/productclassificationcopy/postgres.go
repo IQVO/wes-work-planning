@@ -34,6 +34,7 @@ type Store struct {
 var (
 	_ ports.ProductClassificationLookup   = (*Store)(nil)
 	_ ports.ProductClassificationCopyRepo = (*Store)(nil)
+	_ ports.PackLevelCopyRepo             = (*Store)(nil)
 )
 
 // NewStore constructs a Store over pool. logger receives the WARN logged
@@ -95,19 +96,57 @@ func (s *Store) GetClassification(ctx context.Context, sku string) (productclass
 func (s *Store) read(ctx context.Context, sku string) (productclassificationview.ProductClassificationView, error) {
 	tx, inTx := pgtx.TxFrom(ctx)
 	if !inTx {
-		return scanClassification(s.pool.QueryRow(ctx, selectClassificationSQL, sku), sku)
+		return s.readWith(ctx, s.pool, sku)
 	}
 	savepoint, err := tx.Begin(ctx)
 	if err != nil {
 		return productclassificationview.ProductClassificationView{}, fmt.Errorf("savepoint: %w", err)
 	}
-	view, err := scanClassification(savepoint.QueryRow(ctx, selectClassificationSQL, sku), sku)
+	view, err := s.readWith(ctx, savepoint, sku)
 	if err != nil {
 		_ = savepoint.Rollback(ctx)
 		return productclassificationview.ProductClassificationView{}, err
 	}
 	if err := savepoint.Commit(ctx); err != nil {
 		return productclassificationview.ProductClassificationView{}, fmt.Errorf("release savepoint: %w", err)
+	}
+	return view, nil
+}
+
+// reader is the read half of pgx that the pool and a savepoint both satisfy.
+type reader interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// readWith reads the classification row and the SKU's active EACH / CASE pack
+// levels through q. Pack facts never change Known: a SKU with a pack level but
+// no classification row is Known=false with Each / Case set.
+func (s *Store) readWith(ctx context.Context, q reader, sku string) (productclassificationview.ProductClassificationView, error) {
+	view, err := scanClassification(q.QueryRow(ctx, selectClassificationSQL, sku), sku)
+	if err != nil {
+		return productclassificationview.ProductClassificationView{}, err
+	}
+	rows, err := q.Query(ctx, selectActivePacksSQL, sku)
+	if err != nil {
+		return productclassificationview.ProductClassificationView{}, fmt.Errorf("active pack levels: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		rec, err := scanPackLevel(rows)
+		if err != nil {
+			return productclassificationview.ProductClassificationView{}, err
+		}
+		facts := rec.Facts()
+		switch rec.Level {
+		case productclassificationview.PackLevelEach:
+			view.Each = &facts
+		case productclassificationview.PackLevelCase:
+			view.Case = &facts
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return productclassificationview.ProductClassificationView{}, fmt.Errorf("active pack levels: %w", err)
 	}
 	return view, nil
 }

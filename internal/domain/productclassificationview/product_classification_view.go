@@ -28,6 +28,14 @@ type ProductClassificationView struct {
 	HandlingTags     []string
 	TemperatureClass string
 	Known            bool
+	// Each and Case are the pack facts of the SKU's ACTIVE EACH and CASE
+	// levels, read from the local copy of product-master's
+	// ProductPackLevelDeclared / Retired / Measured events (ADR-0045). nil
+	// means "no active level of that kind in the copy" (or the copy is
+	// unreadable): pack data is optional and never changes Known, so a SKU
+	// that is pack-known but unclassified keeps Known=false.
+	Each *PackFacts
+	Case *PackFacts
 }
 
 // HasTag reports whether the view carries tag (e.g. "Hazmat", "Fragile") —

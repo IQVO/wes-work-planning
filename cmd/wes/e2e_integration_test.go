@@ -152,6 +152,7 @@ func startE2EService(t *testing.T, ctx context.Context, env e2eEnv) func() error
 	t.Setenv("KAFKA_CONSUMER_GROUP", fmt.Sprintf("wes-e2e-%d", env.suffix))
 	t.Setenv("PRODUCT_CLASSIFICATION_CONSUMER_GROUP", fmt.Sprintf("wes-e2e-classification-%d", env.suffix))
 	t.Setenv("REPLENISHMENT_CONSUMER_GROUP", fmt.Sprintf("wes-e2e-replenishment-%d", env.suffix))
+	t.Setenv("PACK_VIEW_CONSUMER_GROUP", fmt.Sprintf("wes-e2e-pack-view-%d", env.suffix))
 	t.Setenv("PRODUCT_CLASSIFICATION_MODE", "kafka")
 	t.Setenv("REPLENISHMENT_MODE", "kafka")
 	t.Setenv("EVENT_PUBLISHER", "kafka")

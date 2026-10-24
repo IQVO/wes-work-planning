@@ -40,4 +40,14 @@ var (
 	// INTEGER). 0 is not an error: it is the "unknown" value of the
 	// optional line_no hint (ADR-0036).
 	ErrInvalidLineNo = errors.New("work unit line number must be between 1 and 2147483647 when given")
+	// ErrUnknownPickUnit marks a pick unit other than EACH or CASE (ADR-0045).
+	ErrUnknownPickUnit = errors.New("unknown pick unit")
+	// ErrInvalidPickPlan marks a pick that is incomplete or inconsistent: no
+	// SKU, a quantity below 1 (eaches), or a pick on the BREAK_CASE path
+	// (ADR-0045).
+	ErrInvalidPickPlan = errors.New("invalid pick plan")
+	// ErrInvalidCaseBreak marks a case break that is incomplete or
+	// inconsistent: a malformed lpn, no SKU, loose bin or pick task id, or a
+	// path other than BREAK_CASE (ADR-0045).
+	ErrInvalidCaseBreak = errors.New("invalid case break")
 )

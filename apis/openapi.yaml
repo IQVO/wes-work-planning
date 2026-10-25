@@ -1178,20 +1178,23 @@ components:
           example: 4200
         sku:
           type: string
+          nullable: true
           description: >-
             OPTIONAL (ADR-0045, pack-aware estimate). The SKU this bucket
             counts. With a `sku`, the response bucket also carries `handles`,
             `cubeMm3` and `weightG`, estimated from this service's local copy
             of the SKU's pack levels (never a live lookup). `quantity` stays
-            in EACHES either way. Omit it for a plain bucket, which is
-            returned exactly as before. A blank value is treated as absent.
+            in EACHES either way. Omit it (or send null or a blank value, all
+            treated as absent) for a plain bucket, which is returned exactly
+            as before.
           example: sku-482910
         pickUnit:
           type: string
-          enum: [EACH, CASE]
+          nullable: true
+          enum: [EACH, CASE, null]
           description: >-
-            OPTIONAL (ADR-0045), only meaningful with `sku` (sent without one
-            it is a `400 invalid-pick-plan`). `EACH` (the default when `sku`
+            OPTIONAL (ADR-0045; null is treated as omitted), only meaningful
+            with `sku` (sent without one it is a `400 invalid-pick-plan`). `EACH` (the default when `sku`
             is given without it) estimates one handle per each. `CASE`
             estimates cases: it needs an active CASE pack level for the SKU
             (otherwise `422 no-active-case-level`) and a `quantity` that is a

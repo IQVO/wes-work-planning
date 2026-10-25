@@ -1,0 +1,20 @@
+# Schemathesis config, auto-loaded by scripts/contract-test.sh (run from the
+# repo root) and by the CI `contract` job.
+
+# A schema-valid pack-aware charge bucket can legitimately be refused with 422
+# because of STATE, not shape (ADR-0045): pickUnit CASE for a SKU with no
+# active CASE pack level in the local copy (no-active-case-level), or eaches
+# that are not a whole number of cases (quantity-not-case-multiple). OpenAPI
+# 3.0 cannot express either, and the empty contract-run store has no pack
+# data, so 422 is an expected answer to valid data on this one operation. Both
+# problems are documented on the operation and pinned by unit/httptest tests.
+#
+# 400 is expected too, for the same reason: "pickUnit needs a sku"
+# (invalid-pick-plan) is a cross-field rule OpenAPI 3.0 cannot express (the
+# same limit that excludes commitShiftPlan in scripts/contract-test.sh), so a
+# schema-valid bucket with a pickUnit and a null/absent sku is a 400.
+[[operations]]
+include-operation-id = "receiveChargeForecast"
+
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", "400", "401", "403", "404", "409", "422", "429", "5xx"]

@@ -68,12 +68,17 @@ All type URIs are prefixed
 | `invalid-wip-limit` | Invalid WIP limit | `PUT /paths/{pathId}/pool` with a `wipLimit` ≤ 0 ([ADR-0034](../adr/0034-configure-pool-command.md)) |
 | `unknown-feed-mode` | Unknown work pool feed mode | `PUT /paths/{pathId}/pool` with a `mode` other than `ReleaseFed`/`FlowFed` |
 | `idempotency-key-required` | Idempotency-Key header is required | `POST /paths/{pathId}/work-units` without an `Idempotency-Key` header ([ADR-0022](../adr/0022-idempotency-key-middleware.md)) |
+| `unknown-pick-unit` | Unknown pick unit | `POST /paths/{pathId}/charge` with a bucket `pickUnit` other than `EACH`/`CASE` ([ADR-0045](../adr/0045-pack-aware-work-units.md)) |
+| `invalid-pick-plan` | Invalid pick plan | `POST /paths/{pathId}/charge` with a bucket `pickUnit` but no `sku` |
+| `invalid-pick-quantity` | Invalid pick quantity | `POST /paths/{pathId}/charge` with a `sku` and a bucket `quantity` below 1 |
 
 ### 422 Unprocessable Entity
 
 | `type` suffix | `title` | Raised by |
 |---|---|---|
 | `idempotency-key-reused` | Idempotency-Key was already used with a different request | `POST /paths/{pathId}/work-units` re-using an `Idempotency-Key` with a different body — use a new key for a genuinely different request |
+| `no-active-case-level` | The SKU has no active CASE pack level | `POST /paths/{pathId}/charge` with a bucket `pickUnit` `CASE` for a SKU with no active CASE level in the local pack copy ([ADR-0045](../adr/0045-pack-aware-work-units.md)) |
+| `quantity-not-case-multiple` | Quantity is not a whole number of cases | `POST /paths/{pathId}/charge` with a `CASE` bucket whose `quantity` (eaches) is not a multiple of the units per case |
 
 ### 404 Not Found
 

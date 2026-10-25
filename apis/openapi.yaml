@@ -168,7 +168,11 @@ paths:
         due at that CPT). Publishes `ChargeForecastReceived`. This is the
         input side of the "charge → plan → release" pipeline: a plan is later
         committed against this charge, and work units enqueued against it are
-        released against a `WorkPool` in CPT priority order.
+        released against a `WorkPool` in CPT priority order. A bucket may
+        optionally name a `sku` and a `pickUnit` (`EACH` | `CASE`) for a
+        pack-aware estimate (ADR-0045): `quantity` stays in eaches and the
+        response bucket adds `handles`, `cubeMm3` and `weightG` from the SKU's
+        local pack copy. A plain bucket is unchanged.
       tags: [Charge Forecast]
       parameters:
         - $ref: "#/components/parameters/PathId"
@@ -178,12 +182,23 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ReceiveChargeForecastRequest"
-            example:
-              buckets:
-                - cpt: "2026-08-21T12:00:00Z"
-                  quantity: 4200
-                - cpt: "2026-08-21T18:00:00Z"
-                  quantity: 1800
+            examples:
+              plain:
+                summary: Plain buckets (quantity only)
+                value:
+                  buckets:
+                    - cpt: "2026-08-21T12:00:00Z"
+                      quantity: 4200
+                    - cpt: "2026-08-21T18:00:00Z"
+                      quantity: 1800
+              packAware:
+                summary: Pack-aware bucket (36 eaches of a 12-per-case SKU, as cases)
+                value:
+                  buckets:
+                    - cpt: "2026-08-21T12:00:00Z"
+                      quantity: 36
+                      sku: sku-482910
+                      pickUnit: CASE
       responses:
         "201":
           description: >
@@ -202,17 +217,95 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChargeForecastResponse"
-              example:
-                pathId: pick-a
-                totalQuantity: 6000
-                buckets:
-                  - cpt: "2026-08-21T12:00:00Z"
-                    quantity: 4200
-                  - cpt: "2026-08-21T18:00:00Z"
-                    quantity: 1800
-                receivedAt: "2026-08-21T08:00:00Z"
+              examples:
+                plain:
+                  summary: Plain buckets
+                  value:
+                    pathId: pick-a
+                    totalQuantity: 6000
+                    buckets:
+                      - cpt: "2026-08-21T12:00:00Z"
+                        quantity: 4200
+                      - cpt: "2026-08-21T18:00:00Z"
+                        quantity: 1800
+                    receivedAt: "2026-08-21T08:00:00Z"
+                packAware:
+                  summary: >-
+                    Pack-aware bucket: 36 eaches of a 12-per-case SKU as CASE
+                    is 3 cases (`quantity` stays in eaches)
+                  value:
+                    pathId: pick-a
+                    totalQuantity: 36
+                    buckets:
+                      - cpt: "2026-08-21T12:00:00Z"
+                        quantity: 36
+                        sku: sku-482910
+                        pickUnit: CASE
+                        handles: 3
+                        cubeMm3: 72000000
+                        weightG: 19500
+                    receivedAt: "2026-08-21T08:00:00Z"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >
+            Malformed request body (invalid JSON), a missing required field,
+            an invalid field value (e.g. negative quantity), a `pathId`
+            outside the deployment's declared process-path families
+            (`unknown-path-id`), or a NUL character (U+0000) in the body
+            (`malformed-request-body`). For pack-aware buckets: a `pickUnit`
+            other than `EACH` / `CASE` (`unknown-pick-unit`), a `pickUnit`
+            without a `sku` (`invalid-pick-plan`), or a `quantity` below 1
+            with a `sku` (`invalid-pick-quantity`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                unknownPickUnit:
+                  summary: pickUnit is neither EACH nor CASE
+                  value:
+                    type: https://errors.wes-work-planning.warehouse-systems.dev/unknown-pick-unit
+                    title: Unknown pick unit
+                    status: 400
+                    detail: 'unknown pick unit: "PALLET" (want EACH or CASE)'
+                    instance: /paths/pick-a/charge
+                invalidQuantity:
+                  summary: Negative quantity
+                  value:
+                    type: https://errors.wes-work-planning.warehouse-systems.dev/invalid-quantity
+                    title: Invalid quantity
+                    status: 400
+                    detail: "quantity must be non-negative"
+                    instance: /paths/pick-a/charge
+        "422":
+          description: >
+            A pack-aware bucket cannot be estimated as asked. Either
+            `pickUnit` is `CASE` but the SKU has no active CASE pack level in
+            this service's local copy (`no-active-case-level`; an unknown SKU
+            is the same), or `quantity` is not a whole number of cases
+            (`quantity-not-case-multiple`). Nothing is recorded; send the
+            bucket with `pickUnit` `EACH` or without a `sku` to forecast it
+            without a pack estimate.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                noActiveCaseLevel:
+                  summary: CASE requested for a SKU with no active CASE level
+                  value:
+                    type: https://errors.wes-work-planning.warehouse-systems.dev/no-active-case-level
+                    title: The SKU has no active CASE pack level
+                    status: 422
+                    detail: "pick load: the SKU has no active CASE pack level in the local copy: sku-482910"
+                    instance: /paths/pick-a/charge
+                quantityNotCaseMultiple:
+                  summary: 35 eaches of a 12-per-case SKU
+                  value:
+                    type: https://errors.wes-work-planning.warehouse-systems.dev/quantity-not-case-multiple
+                    title: Quantity is not a whole number of cases
+                    status: 422
+                    detail: "pick load: quantity is not a whole number of cases: 35 eaches with 12 per case"
+                    instance: /paths/pick-a/charge
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1083,6 +1176,61 @@ components:
             Units due by this CPT. int64, not int32: the impl and its JSONB
             store accept quantities across the full 64-bit range.
           example: 4200
+        sku:
+          type: string
+          nullable: true
+          description: >-
+            OPTIONAL (ADR-0045, pack-aware estimate). The SKU this bucket
+            counts. With a `sku`, the response bucket also carries `handles`,
+            `cubeMm3` and `weightG`, estimated from this service's local copy
+            of the SKU's pack levels (never a live lookup). `quantity` stays
+            in EACHES either way. Omit it (or send null or a blank value, all
+            treated as absent) for a plain bucket, which is returned exactly
+            as before.
+          example: sku-482910
+        pickUnit:
+          type: string
+          nullable: true
+          enum: [EACH, CASE, null]
+          description: >-
+            OPTIONAL (ADR-0045; null is treated as omitted), only meaningful
+            with `sku` (sent without one it is a `400 invalid-pick-plan`). `EACH` (the default when `sku`
+            is given without it) estimates one handle per each. `CASE`
+            estimates cases: it needs an active CASE pack level for the SKU
+            (otherwise `422 no-active-case-level`) and a `quantity` that is a
+            whole number of cases (otherwise `422 quantity-not-case-multiple`).
+            Exact, case-sensitive match; any other value is a
+            `400 unknown-pick-unit`. With `sku`, `quantity` must be at least 1.
+          example: CASE
+        handles:
+          type: integer
+          format: int32
+          minimum: 1
+          readOnly: true
+          description: >-
+            Response only; present when the bucket was sent with a `sku`.
+            What an operator handles to move `quantity` eaches: cases for
+            `pickUnit` `CASE` (`quantity` / units per case), eaches for `EACH`.
+          example: 3
+        cubeMm3:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+          description: >-
+            Response only; total cube of all `handles`, in cubic millimetres.
+            Omitted (never reported as 0) when the pack level has no size on
+            record.
+          example: 72000000
+        weightG:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+          description: >-
+            Response only; total weight of all `handles`, in grams. Omitted
+            (never reported as 0) when the pack level has no weight on record.
+          example: 19500
       required: [cpt, quantity]
 
     ReceiveChargeForecastRequest:

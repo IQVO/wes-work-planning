@@ -2703,3 +2703,174 @@ components:
                     Workforce's own commit timestamp, carried from
                     LaborPlanObserved (not the detection time — that is the
                     envelope `time`).
+    ProductPackLevelDeclaredEvent:
+      title: ProductPackLevelDeclared CloudEvent (consumed)
+      description: >-
+        CloudEvent envelope of product-master's ProductPackLevelDeclared, mirrored read-only from
+        the producer's own contract. This service consumes it (ADR-0045);
+        it never publishes it.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wms.product-master.product.ProductPackLevelDeclared"
+            dataschema:
+              type: string
+              const: "urn:warehouse:product-master:events:ProductPackLevelDeclared:v1"
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - units_per_pack
+                - is_orderable
+                - is_despatch_unit
+                - effective_from
+                - version
+              properties:
+                sku:
+                  type: string
+                level:
+                  type: string
+                gtin:
+                  type: string
+                child_gtin:
+                  type: string
+                qty_of_child:
+                  type: integer
+                  minimum: 2
+                  description: Absent for EACH.
+                units_per_pack:
+                  type: integer
+                  minimum: 1
+                  description: Direct factor to eaches; 1 for EACH.
+                is_orderable:
+                  type: boolean
+                is_despatch_unit:
+                  type: boolean
+                effective_from:
+                  type: string
+                  format: date-time
+                version:
+                  type: integer
+                  minimum: 1
+    ProductPackLevelRetiredEvent:
+      title: ProductPackLevelRetired CloudEvent (consumed)
+      description: >-
+        CloudEvent envelope of product-master's ProductPackLevelRetired, mirrored read-only from
+        the producer's own contract. This service consumes it (ADR-0045);
+        it never publishes it.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wms.product-master.product.ProductPackLevelRetired"
+            dataschema:
+              type: string
+              const: "urn:warehouse:product-master:events:ProductPackLevelRetired:v1"
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - effective_to
+                - reason
+                - version
+              properties:
+                sku:
+                  type: string
+                level:
+                  type: string
+                gtin:
+                  type: string
+                effective_to:
+                  type: string
+                  format: date-time
+                reason:
+                  type: string
+                version:
+                  type: integer
+                  minimum: 1
+    ProductPackLevelMeasuredEvent:
+      title: ProductPackLevelMeasured CloudEvent (consumed)
+      description: >-
+        CloudEvent envelope of product-master's ProductPackLevelMeasured, mirrored read-only from
+        the producer's own contract. This service consumes it (ADR-0045);
+        it never publishes it.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wms.product-master.product.ProductPackLevelMeasured"
+            dataschema:
+              type: string
+              const: "urn:warehouse:product-master:events:ProductPackLevelMeasured:v1"
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - dims
+                - measured_at
+                - version
+              properties:
+                sku:
+                  type: string
+                level:
+                  type: string
+                gtin:
+                  type: string
+                dims:
+                  type: object
+                  required:
+                    - length_mm
+                    - width_mm
+                    - height_mm
+                    - weight_g
+                  properties:
+                    length_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                    width_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                    height_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                    weight_g:
+                      type: integer
+                      minimum: 1
+                      maximum: 2000000
+                measured_at:
+                  type: string
+                  format: date-time
+                device_id:
+                  type: string
+                  description: Omitted for a manual measurement.
+                version:
+                  type: integer
+                  minimum: 1

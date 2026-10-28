@@ -329,9 +329,15 @@ channels:
       product-master's integration topic, CONSUMED by this service (owned by
       that bounded context; listed here read-only for orientation, mirroring
       its own apis/asyncapi.yaml). Key = the SKU. This service consumes only
-      ProductClassified and ignores every other type on the topic
-      (ProductRegistered, ProductDescriptionChanged,
-      ProductDimensionsDeclared, ProductMeasured). See ADR-0035.
+      ProductClassified (ADR-0035) and the pack-level types
+      ProductPackLevelDeclared, ProductPackLevelRetired and
+      ProductPackLevelMeasured into the local PackView (ADR-0045), and
+      ignores every other type on the topic (ProductRegistered,
+      ProductDescriptionChanged, ProductDimensionsDeclared, ProductMeasured).
+      A second consumer reads this topic under the STABLE
+      `PACK_VIEW_CONSUMER_GROUP` (mandatory; it must differ from
+      `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`, because a group that already
+      committed past the pack events could never replay them).
     publish:
       operationId: consumeProductClassified
       summary: Consume product-master's ProductClassified into the local classification copy.
@@ -346,7 +352,11 @@ channels:
         WARN-logged and skipped; transient failures retry the same message
         and the offset is committed only after success.
       message:
-        $ref: "#/components/messages/ProductClassified"
+        oneOf:
+          - $ref: "#/components/messages/ProductClassified"
+          - $ref: "#/components/messages/ProductPackLevelDeclared"
+          - $ref: "#/components/messages/ProductPackLevelRetired"
+          - $ref: "#/components/messages/ProductPackLevelMeasured"
 
   warehouse.inventory.events:
     description: >-
@@ -1290,6 +1300,51 @@ components:
       payload:
         $ref: "#/components/schemas/PathPlanDriftDetectedAnalyticsEvent"
 
+    ProductPackLevelDeclared:
+      name: ProductPackLevelDeclared
+      title: ProductPackLevelDeclared (consumed)
+      summary: product-master declared or revised a pack level of a SKU.
+      description: >-
+        CONSUMED from `warehouse.product-master.events` - this entry mirrors
+        the producer's own contract read-only and is NOT published by this
+        service. Feeds the local PackView (ADR-0045) under the stable
+        `PACK_VIEW_CONSUMER_GROUP`. Payload pinned by product-master's
+        `apis/asyncapi.yaml` on `develop`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProductPackLevelDeclaredEvent"
+    ProductPackLevelRetired:
+      name: ProductPackLevelRetired
+      title: ProductPackLevelRetired (consumed)
+      summary: product-master retired a pack level of a SKU.
+      description: >-
+        CONSUMED from `warehouse.product-master.events` - this entry mirrors
+        the producer's own contract read-only and is NOT published by this
+        service. Feeds the local PackView (ADR-0045) under the stable
+        `PACK_VIEW_CONSUMER_GROUP`. Payload pinned by product-master's
+        `apis/asyncapi.yaml` on `develop`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProductPackLevelRetiredEvent"
+    ProductPackLevelMeasured:
+      name: ProductPackLevelMeasured
+      title: ProductPackLevelMeasured (consumed)
+      summary: product-master measured a pack level of a SKU.
+      description: >-
+        CONSUMED from `warehouse.product-master.events` - this entry mirrors
+        the producer's own contract read-only and is NOT published by this
+        service. Feeds the local PackView (ADR-0045) under the stable
+        `PACK_VIEW_CONSUMER_GROUP`. Payload pinned by product-master's
+        `apis/asyncapi.yaml` on `develop`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProductPackLevelMeasuredEvent"
   schemas:
     CloudEventBase:
       type: object

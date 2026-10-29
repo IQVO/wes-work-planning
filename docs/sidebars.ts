@@ -166,6 +166,8 @@ const sidebars: SidebarsConfig = {
         'adr/0042-pick-face-replenishment-work',
         'adr/0043-taskcompleted-already-completed-skip',
         'adr/0044-postgres-and-kafka-are-the-only-runtime',
+        'adr/0045-pack-aware-work-units',
+        'adr/0046-a2a-inbound-adapter',
       ],
     },
   ],

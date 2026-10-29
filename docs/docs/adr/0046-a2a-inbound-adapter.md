@@ -3,7 +3,7 @@ id: 0046-a2a-inbound-adapter
 slug: /adr/0046-a2a-inbound-adapter
 title: 0046. Agent2Agent as an inbound adapter — this context as an A2A agent
 sidebar_label: 0046. A2A inbound adapter
-description: ADR 0046 — expose this bounded context to the fleet's agent ecosystem as a third driving adapter over the existing use cases: official a2a-go SDK, JSON-RPC 2.0 over HTTP, Agent Card at the well-known path, curated goal-shaped skills, delegation only — facts still travel as CloudEvents on Kafka.
+description: "ADR 0046 — expose this bounded context to the fleet's agent ecosystem as a third driving adapter over the existing use cases — official a2a-go SDK, JSON-RPC 2.0 over HTTP, Agent Card at the well-known path, curated goal-shaped skills, delegation only, facts still travel as CloudEvents on Kafka."
 ---
 
 # 0046. Agent2Agent as an inbound adapter — this context as an A2A agent

@@ -3,13 +3,13 @@ id: entity-relationship
 title: Entity-relationship diagram
 sidebar_label: ER diagram
 sidebar_position: 8
-description: The final Postgres schema after migrations 0001 to 0010 and the separate analytics database, with the table-to-aggregate mapping.
+description: The final Postgres schema after migrations 0001 to 0016 and the separate analytics database, with the table-to-aggregate mapping.
 ---
 
 # Entity-relationship diagram
 
 The schema below is the **final state** after applying `migrations/0001` to
-`migrations/0010` in order (golang-migrate, run on start-up by
+`migrations/0016` in order (golang-migrate, run on start-up by
 `cmd/wes` (`DATABASE_URL` is mandatory), over `MIGRATIONS_DATABASE_URL` if given —
 [ADR-0026](../adr/0026-migrations-direct-postgres-connection.md)), plus the
 separate **analytical** database built from `migrations/analytics/`.
@@ -85,6 +85,36 @@ erDiagram
         bigint version "producer aggregate version"
         timestamptz updated_at
     }
+    slot_plans {
+        text plan_id PK
+        text site_id "indexed with approved_at"
+        timestamptz approved_at
+        text supersedes_plan_id
+        integer move_count
+        timestamptz recorded_at
+    }
+    product_pack_level_copy {
+        text gtin PK "14-digit"
+        text sku "indexed with level where active"
+        text level "EACH, INNER, CASE, PALLET"
+        text child_gtin "nullable, 14-digit"
+        integer qty_of_child "nullable"
+        integer units_per_pack
+        integer length_mm "nullable"
+        integer width_mm "nullable"
+        integer height_mm "nullable"
+        integer weight_g "nullable"
+        integer measured_length_mm "nullable"
+        integer measured_width_mm "nullable"
+        integer measured_height_mm "nullable"
+        integer measured_weight_g "nullable"
+        boolean is_orderable
+        boolean is_despatch_unit
+        timestamptz effective_from
+        timestamptz effective_to "nullable"
+        bigint version "producer aggregate version"
+        timestamptz updated_at
+    }
     processed_events {
         text event_id PK
         timestamptz processed_at
@@ -120,13 +150,16 @@ erDiagram
     }
 ```
 
-Source: `migrations/0001_init.up.sql` to `migrations/0012_product_classification_copy.up.sql`.
+Source: `migrations/0001_init.up.sql` to `migrations/0016_pack_aware_work.up.sql`.
 Omits: golang-migrate's own `schema_migrations` bookkeeping table, column
 defaults and `NOT NULL` flags (every column above is `NOT NULL` except
 `released_at`, `completed_at`, `drift_heads`, `drift_detected_at`,
 `travel_distance_m`, `travel_distance_estimated`, `key`,
-`published_at`, `last_error`, `temperature_class`, `dot_hazard_class` and
-the idempotency outcome columns).
+`published_at`, `last_error`, `temperature_class`, `dot_hazard_class`,
+`child_gtin`, `qty_of_child`, the pack-level dimension and measured columns
+(`length_mm`, `width_mm`, `height_mm`, `weight_g`, `measured_length_mm`,
+`measured_width_mm`, `measured_height_mm`, `measured_weight_g`),
+`effective_to` and the idempotency outcome columns).
 
 **The only foreign key in the schema** is
 `work_pool_entries.path_id → work_pools.path_id`. Everything else is linked
@@ -145,6 +178,16 @@ logically, by value, with no constraint — on purpose:
 - `product_classification_copy.sku` ↔ `work_units.sku` — product-master owns
   the classification; the copy is fed by its `ProductClassified` events
   ([ADR-0035](../adr/0035-product-classification-local-copy.md)).
+- `slot_plans.plan_id` ↔ slotting-optimization's approved plans — the plan is
+  owned by slotting-optimization; the copy records every plan this context
+  applied (or found stale) so a newer plan supersedes an older one whatever
+  order the events arrive in
+  ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)).
+- `product_pack_level_copy.gtin` / `.sku` ↔ product-master's pack levels —
+  the copy is fed by `ProductPackLevelDeclared` / `Retired` / `Measured`
+  events, keyed by 14-digit GTIN
+  ([ADR-0045](../adr/0045-pack-aware-work-units.md)). Neither new table has a
+  foreign key.
 
 ## Analytics database
 
@@ -194,6 +237,8 @@ migrator (`CREATE TABLE IF NOT EXISTS` in `migrate.go`), not a migration file.
 | `labor_plan_view` | **Read model** `LaborPlanObserved` + ADR-0019 drift | `postgres.LaborPlanViewRepo` |
 | `usable_inventory_view` | **Read model** `UsableInventoryObserved` | `postgres.InventoryViewRepo` |
 | `product_classification_copy` | **Local copy** of product-master's classification, read as `ProductClassificationView` ([ADR-0035](../adr/0035-product-classification-local-copy.md)) | `productclassificationcopy.Store` |
+| `slot_plans` | **Local record** of slotting-optimization's approved plans this context applied or superseded ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) | `postgres.SlotPlanRepo` |
+| `product_pack_level_copy` | **Local copy** of product-master's pack levels, keyed by GTIN ([ADR-0045](../adr/0045-pack-aware-work-units.md)) | `productclassificationcopy` (pack store) |
 | `processed_events` | **Infrastructure**: consumer inbox / dedupe on CloudEvents `id` ([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)) | `postgres.ProcessedEventRepo` |
 | `outbox_events` | **Infrastructure**: transactional outbox, one row per topic per event ([ADR-0014](../adr/0014-transactional-outbox.md)); published rows swept after `OUTBOX_RETENTION` | `postgres.OutboxPublisher`, `postgres.OutboxRelay` |
 | `idempotency_keys` | **Infrastructure**: `Idempotency-Key` replay store ([ADR-0022](../adr/0022-idempotency-key-middleware.md)); swept after `IDEMPOTENCY_KEY_TTL` | `RequireIdempotencyKey`, `postgres` housekeeper |

@@ -1,12 +1,5 @@
 # WES — Work Planning & Release
 
-> **⚠️ Study project.** This repository is an educational exercise in
-> Domain-Driven Design applied to warehouse management/execution systems. It
-> follows real industry-standard patterns and terminology (WMS/WES/WCS,
-> waveless release, CloudEvents, RFC 7807, hexagonal architecture) but is
-> **not a production system** and is **not affiliated with, endorsed by, or
-> representative of any real-world company**.
-
 The core bounded context of a Warehouse Execution System. It turns a shift's
 **charge** (volume due by each CPT) into a **plan** (rate x heads per process
 path), releases work continuously in priority order (waveless), and performs
@@ -741,6 +734,13 @@ failing-path unit test:
   Concurrent writers are serialised by an optimistic `version` check on save
   plus a bounded retry ([ADR-0029](docs/docs/adr/0029-work-pool-optimistic-concurrency.md)).
 
+## Disclaimer
+
+This project is a domain-driven design study. It is not associated with,
+endorsed by or affiliated with any company, and it uses no company's code,
+data, logos or trademarks. All names, figures and examples are illustrative
+or synthetic.
+
 ## Documentation
 
 Full documentation site: **<https://iqvo.github.io/wes-work-planning/>**
@@ -775,6 +775,17 @@ Entry points (paths under [`docs/docs/`](./docs/docs)):
 | A2A agent card & skills | [`adr/0046-a2a-inbound-adapter.md`](./docs/docs/adr/0046-a2a-inbound-adapter.md) |
 | ADR index | [`adr/index.md`](./docs/docs/adr/index.md) |
 
+## Helm chart
+
+`charts/wes-work-planning` deploys the OLTP service with optional components behind
+values flags: the analytics projector and reports reader (`analytics.enabled`), the read-only MCP server (`mcp.enabled`) and the operator micro-frontend (`frontend.enabled`). Mandatory values are the Postgres secret and the Kafka
+broker list; the deployed consumer-group ids and mode flags come from
+`warehouse-infra`'s helm-values.
+
+The chart is linted in CI (`helm-lint`, `chart-tests`) and its invariants are
+asserted by the tests in `charts/wes-work-planning/tests/` — `render_test.sh`,
+`test_service_selectors.py` (every Service selects exactly one Deployment) and
+`test_kong_config.py`.
 ## Operator micro-frontend (`web/`)
 
 `web/` is `planning_mfe`, this context's Module Federation remote. It talks only to
@@ -823,3 +834,13 @@ python3 charts/wes-work-planning/tests/test_service_selectors.py
 
 which proves every Service selects exactly one Deployment — the OLTP Service
 must never select the frontend, analytics or MCP pods.
+
+## Architecture Decision Records
+
+The ADR index lives at [docs/docs/adr/index.md](docs/docs/adr/index.md) — 45 decisions, from the
+hexagonal layout to the CloudEvents-only envelope and the transactional
+outbox.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

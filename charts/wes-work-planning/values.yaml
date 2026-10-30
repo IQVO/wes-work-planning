@@ -435,6 +435,53 @@ mcp:
       cpu: 100m
       memory: 128Mi
 
+# --- a2a (Agent2Agent agent, ADR-0046) ---
+# The fleet's agent-to-agent delegation surface: one A2A agent per bounded
+# context, a third deployable over the SAME use cases as the OLTP API and the
+# A2A agent. JSON-RPC 2.0 over HTTP on :8093, Agent Card at
+# /.well-known/agent-card.json, unauthenticated like every fleet endpoint.
+# Skills delegate goals (flow_status, release_next_work); facts still travel
+# as CloudEvents on Kafka - A2A is never a data-sync channel.
+a2a:
+  enabled: false
+  replicaCount: 1
+  httpAddr: ":8093"
+  # Absolute URL advertised on the Agent Card. Empty defaults to this
+  # release's in-cluster Service DNS (http://<release>-a2a.<ns>.svc.cluster.local:8093/);
+  # warehouse-infra can override it with the Kong path when the agent must be
+  # reachable off-cluster.
+  agentUrl: ""
+  # Event publisher for events raised by A2A skills (release_next_work ...).
+  # Empty inherits config.eventPublisher; "kafka" is the only value. The skill
+  # writes outbox rows in Postgres that the api Deployment's relay drains
+  # (ADR-0046, ADR-0014, ADR-0044), so WorkReleased reaches fulfillment-execution.
+  eventPublisher: ""
+  service:
+    type: ClusterIP
+    port: 8093
+    targetPort: 8093
+  # Kong exposure of the A2A agent (a2a-route.yaml): host path
+  # /api/a2a/<context> rewritten to / (JSON-RPC root; the well-known agent
+  # card stays reachable under the same prefix). Off by default;
+  # warehouse-infra turns it on with the real parentRefs and path.
+  route:
+    enabled: false
+    path: "/api/a2a/wes-work-planning"
+    parentRefs:
+      - name: ""
+        namespace: ""
+        sectionName: "http"
+  # Extra environment variables for the A2A container only.
+  extraEnv: []
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+
 # --- frontend (REMOTE Module Federation remote) ---
 # The operator SPA remote, built from web/ and served by its own
 # nginx-unprivileged pod. In the kind cluster it is reached through

@@ -33,6 +33,7 @@ ENABLE_EVERYTHING = [
     "--set", "frontend.enabled=true",
     "--set", "analytics.enabled=true",
     "--set", "mcp.enabled=true",
+    "--set", "a2a.enabled=true",
 ]
 
 

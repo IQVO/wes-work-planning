@@ -1,12 +1,5 @@
 # WES — Work Planning & Release
 
-> **⚠️ Study project.** This repository is an educational exercise in
-> Domain-Driven Design applied to warehouse management/execution systems. It
-> follows real industry-standard patterns and terminology (WMS/WES/WCS,
-> waveless release, CloudEvents, RFC 7807, hexagonal architecture) but is
-> **not a production system** and is **not affiliated with, endorsed by, or
-> representative of any real-world company**.
-
 The core bounded context of a Warehouse Execution System. It turns a shift's
 **charge** (volume due by each CPT) into a **plan** (rate x heads per process
 path), releases work continuously in priority order (waveless), and performs
@@ -24,6 +17,7 @@ cmd/wes/                     main.go — wiring/composition root (OLTP service)
 cmd/wes-projector/           analytics writer (ADR-0011)
 cmd/wes-reports/             analytics read-only reports API (ADR-0011)
 cmd/mcp/                     MCP server (ADR-0008)
+cmd/a2a/                     A2A agent (ADR-0046)
 internal/
   domain/                    pure Go: aggregates, value objects, domain events
     charge/                  ChargeForecast aggregate
@@ -38,6 +32,7 @@ internal/
     inbound/http/            REST handlers, DTOs, chi router
     inbound/kafka/           integration-event consumer + analytics consumer (projector)
     inbound/mcp/             MCP tools, resources, prompts
+    inbound/a2a/             A2A agent: agent card, skill dispatch, JSON-RPC handler
     outbound/postgres/       pgx repositories + migrations, UnitOfWork, transactional outbox + relay (ADR-0014)
     outbound/memory/         in-memory repositories (tests/local)
     outbound/events/         log-based event publisher + MultiPublisher (direct Kafka fan-out when no Postgres)
@@ -190,6 +185,34 @@ helm upgrade --install wes charts/wes-work-planning \
   --set database.url="postgres://..." \
   --set mcp.enabled=true
 ```
+
+### Running the A2A agent in Kubernetes
+
+The A2A agent ([ADR-0046](docs/docs/adr/0046-a2a-inbound-adapter.md)) ships in
+the same image (`/app/a2a`, built from `cmd/a2a`) and is deployed by the Helm
+chart as a separate Deployment + ClusterIP Service (`<release>-a2a`, port
+`8093`) when `a2a.enabled=true`. It is **off by default**. The binary reuses
+the OLTP `DATABASE_URL` secret and serves Agent2Agent as JSON-RPC 2.0 over
+HTTP: the Agent Card at `/.well-known/agent-card.json`, the protocol endpoint
+at `/` and `/a2a` (the fleet's `<CTX>_A2A_ENDPOINT` convention is
+`http://<release>-a2a.<ns>.svc.cluster.local:8093/a2a`), and `GET /healthz`
+for the probes. Two curated, goal-shaped skills — `flow_status` (backlog
+telemetry + rebalance recommendation in one answer) and `release_next_work`
+(the single state-changing delegation; `WorkReleased` still travels through
+the transactional outbox to Kafka). Skills answer from this context's own
+state; A2A is a delegation channel, never a data-sync channel — facts between
+contexts still flow exclusively as CloudEvents.
+
+```sh
+helm upgrade --install wes charts/wes-work-planning \
+  --set database.url="postgres://..." \
+  --set a2a.enabled=true
+```
+
+An opt-in Kong route (`a2a.route.enabled=true`, host path
+`/api/a2/wes-work-planning` rewritten to `/`) exposes the agent — card
+included — through the API gateway; `warehouse-infra` owns the real
+parentRefs.
 
 ### Analytics config
 
@@ -711,6 +734,13 @@ failing-path unit test:
   Concurrent writers are serialised by an optimistic `version` check on save
   plus a bounded retry ([ADR-0029](docs/docs/adr/0029-work-pool-optimistic-concurrency.md)).
 
+## Disclaimer
+
+This project is a domain-driven design study. It is not associated with,
+endorsed by or affiliated with any company, and it uses no company's code,
+data, logos or trademarks. All names, figures and examples are illustrative
+or synthetic.
+
 ## Documentation
 
 Full documentation site: **<https://iqvo.github.io/wes-work-planning/>**
@@ -742,8 +772,20 @@ Entry points (paths under [`docs/docs/`](./docs/docs)):
 | Use cases | [`ddd/use-cases.md`](./docs/docs/ddd/use-cases.md) |
 | Subdomain classification | [`ddd/subdomain-classification.md`](./docs/docs/ddd/subdomain-classification.md) |
 | MCP tools, resources, prompts | [`mcp/tools.md`](./docs/docs/mcp/tools.md) |
+| A2A agent card & skills | [`adr/0046-a2a-inbound-adapter.md`](./docs/docs/adr/0046-a2a-inbound-adapter.md) |
 | ADR index | [`adr/index.md`](./docs/docs/adr/index.md) |
 
+## Helm chart
+
+`charts/wes-work-planning` deploys the OLTP service with optional components behind
+values flags: the analytics projector and reports reader (`analytics.enabled`), the read-only MCP server (`mcp.enabled`) and the operator micro-frontend (`frontend.enabled`). Mandatory values are the Postgres secret and the Kafka
+broker list; the deployed consumer-group ids and mode flags come from
+`warehouse-infra`'s helm-values.
+
+The chart is linted in CI (`helm-lint`, `chart-tests`) and its invariants are
+asserted by the tests in `charts/wes-work-planning/tests/` — `render_test.sh`,
+`test_service_selectors.py` (every Service selects exactly one Deployment) and
+`test_kong_config.py`.
 ## Operator micro-frontend (`web/`)
 
 `web/` is `planning_mfe`, this context's Module Federation remote. It talks only to
@@ -792,3 +834,13 @@ python3 charts/wes-work-planning/tests/test_service_selectors.py
 
 which proves every Service selects exactly one Deployment — the OLTP Service
 must never select the frontend, analytics or MCP pods.
+
+## Architecture Decision Records
+
+The ADR index lives at [docs/docs/adr/index.md](docs/docs/adr/index.md) — 45 decisions, from the
+hexagonal layout to the CloudEvents-only envelope and the transactional
+outbox.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

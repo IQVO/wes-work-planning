@@ -51,6 +51,10 @@ ENABLE_KONG = [
     "--set", "mcp.route.enabled=true",
     "--set", "mcp.route.parentRefs[0].name=warehouse-gateway",
     "--set", "mcp.route.parentRefs[0].namespace=kong",
+    "--set", "a2a.enabled=true",
+    "--set", "a2a.route.enabled=true",
+    "--set", "a2a.route.parentRefs[0].name=warehouse-gateway",
+    "--set", "a2a.route.parentRefs[0].namespace=kong",
     "--set", "analytics.enabled=true",
     "--set", "analytics.reports.route.enabled=true",
     "--set", "analytics.reports.route.parentRefs[0].name=warehouse-gateway",
@@ -115,7 +119,9 @@ def main() -> int:
                 "plugins are forbidden at the gateway by fleet-wide decision"
             )
 
-    # 4. Rewrite targets: MCP -> /mcp, reports -> /reports.
+    # 4. Rewrite targets: MCP -> /mcp, reports -> /reports, a2a -> / (the
+    #    JSON-RPC root; the well-known agent card stays reachable under the
+    #    same prefix).
     for r in routes:
         name = r["metadata"]["name"]
         for rule in r.get("spec", {}).get("rules", []):
@@ -124,6 +130,8 @@ def main() -> int:
                     target = f["urlRewrite"]["path"].get("replacePrefixMatch")
                     if name.endswith("-mcp") and target != "/mcp":
                         failures.append(f"MCP route {name} rewrites to {target!r}, expected '/mcp'")
+                    if name.endswith("-a2a") and target != "/":
+                        failures.append(f"A2A route {name} rewrites to {target!r}, expected '/'")
                     if name.endswith("-reports") and target != "/reports":
                         failures.append(f"reports route {name} rewrites to {target!r}, expected '/reports'")
 

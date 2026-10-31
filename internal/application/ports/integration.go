@@ -80,3 +80,23 @@ type ProductClassificationCopyRepo interface {
 	// or an out-of-order redelivery). view.Known is ignored.
 	ApplyIfNewer(ctx context.Context, view productclassificationview.ProductClassificationView, dotHazardClass int, version int64, updatedAt time.Time) (applied bool, err error)
 }
+
+// PackLevelCopyRepo maintains the local copy of product-master's pack levels,
+// one row per GTIN, fed by the pack-level consumer (ADR-0045). Every method
+// is version-guarded with the product aggregate's version the event carries:
+// it changes nothing (applied=false) when the stored version is equal or
+// higher, so a replay or an out-of-order redelivery is a no-op. The levels
+// are read back through ProductClassificationLookup, as the Each / Case
+// facts of the view.
+type PackLevelCopyRepo interface {
+	// ApplyDeclared stores the full level of a ProductPackLevelDeclared,
+	// inserting a missing GTIN. The measured dimensions already on the row
+	// are kept.
+	ApplyDeclared(ctx context.Context, rec productclassificationview.PackLevelRecord) (applied bool, err error)
+	// ApplyRetired end-dates an existing GTIN at effectiveTo. An unknown
+	// GTIN is applied=false (nothing to end-date).
+	ApplyRetired(ctx context.Context, gtin string, effectiveTo time.Time, version int64) (applied bool, err error)
+	// ApplyMeasured stores the measured dimensions of an existing GTIN. An
+	// unknown GTIN is applied=false.
+	ApplyMeasured(ctx context.Context, gtin string, dims productclassificationview.Dims, version int64) (applied bool, err error)
+}

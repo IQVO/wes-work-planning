@@ -69,6 +69,8 @@ type WorkUnit struct {
 	lineNo      int
 	relocation  *RelocationMove
 	replenish   *ReplenishmentMove
+	pick        *PickPlan
+	caseBreak   *CaseBreak
 	blockedBy   string
 	state       State
 	releasedAt  *time.Time
@@ -221,6 +223,43 @@ func (w *WorkUnit) SetReplenishment(move ReplenishmentMove) {
 	w.replenish = &move
 	w.sku = move.SKU
 	w.quantity = move.Quantity
+}
+
+// Pick returns the pick plan of a CASE_PICK / EACH_PICK unit (ADR-0045); ok
+// is false for every other unit.
+func (w *WorkUnit) Pick() (plan PickPlan, ok bool) {
+	if w.pick == nil {
+		return PickPlan{}, false
+	}
+	return *w.pick, true
+}
+
+// SetPick records the validated pick plan (built by NewPickPlan) after
+// construction. The plan is the single source of the unit's SKU, quantity
+// (eaches) and pack-aware kind, so all three are set from it and can never
+// drift (the SetReplenishment discipline).
+func (w *WorkUnit) SetPick(plan PickPlan) {
+	w.pick = &plan
+	w.sku = plan.SKU
+	w.quantity = plan.Quantity
+	w.workKind = plan.Unit.WorkKind()
+}
+
+// CaseBreak returns the sealed-case break of a BREAK_CASE unit (ADR-0045);
+// ok is false for every other unit.
+func (w *WorkUnit) CaseBreak() (brk CaseBreak, ok bool) {
+	if w.caseBreak == nil {
+		return CaseBreak{}, false
+	}
+	return *w.caseBreak, true
+}
+
+// SetCaseBreak records the validated case break (built by NewCaseBreak)
+// after construction; it sets the unit's SKU and BREAK_CASE kind from it.
+func (w *WorkUnit) SetCaseBreak(brk CaseBreak) {
+	w.caseBreak = &brk
+	w.sku = brk.SKU
+	w.workKind = WorkKindBreakCase
 }
 
 // BlockedBy is the id of the work unit this unit waits on: a slot-plan move

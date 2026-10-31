@@ -18,6 +18,16 @@ const (
 	// pick-face-replenishment (ADR-0042), released on the REPLENISH process
 	// path.
 	WorkKindReplenish WorkKind = "REPLENISH"
+	// WorkKindCasePick is a pick of whole sealed cases (ADR-0045): the
+	// operator scans the CASE GTIN; the quantity is in eaches. Released on
+	// the pick path with `pick.unit = CASE`.
+	WorkKindCasePick WorkKind = "CASE_PICK"
+	// WorkKindEachPick is a pick of single eaches (ADR-0045), released on
+	// the pick path with `pick.unit = EACH`.
+	WorkKindEachPick WorkKind = "EACH_PICK"
+	// WorkKindBreakCase opens one sealed case into loose eaches (ADR-0045),
+	// released on the BREAK_CASE path with the `case_break` object.
+	WorkKindBreakCase WorkKind = "BREAK_CASE"
 )
 
 // String returns the exact wire form (the identity for a string enum, kept
@@ -30,6 +40,10 @@ func (k WorkKind) IsTransfer() bool {
 	return k == WorkKindTransferPick || k == WorkKindTransferDispatch || k == WorkKindTransferArrival
 }
 
+// IsPickKind reports whether k is the pack-aware pick kinds (CASE_PICK or
+// EACH_PICK), the ones that carry a `pick` object on WorkReleased.
+func (k WorkKind) IsPickKind() bool { return k == WorkKindCasePick || k == WorkKindEachPick }
+
 // ParseWorkKind validates and converts the persisted form of a WorkKind.
 // Anything that is not exactly one of the declared kinds — including "" —
 // is rejected with ErrUnknownWorkKind, so a corrupt value can never become
@@ -38,7 +52,7 @@ func (k WorkKind) IsTransfer() bool {
 // require IsTransfer (a WorkDemandReleased can never carry RELOCATE).
 func ParseWorkKind(value string) (WorkKind, error) {
 	k := WorkKind(value)
-	if k.IsTransfer() || k == WorkKindRelocate || k == WorkKindReplenish {
+	if k.IsTransfer() || k.IsPickKind() || k == WorkKindRelocate || k == WorkKindReplenish || k == WorkKindBreakCase {
 		return k, nil
 	}
 	return "", ErrUnknownWorkKind

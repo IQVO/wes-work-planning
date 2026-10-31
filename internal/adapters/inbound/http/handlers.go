@@ -109,6 +109,18 @@ func toBucketDTOs(buckets []charge.CPTBucket) []cptBucketDTO {
 		cpt := b.CPT.Time()
 		qty := b.Quantity.Value()
 		out[i] = cptBucketDTO{CPT: &cpt, Quantity: &qty}
+		if b.Load != nil {
+			handles := b.Load.Handles
+			out[i].SKU, out[i].PickUnit, out[i].Handles = b.SKU, b.Load.Unit.String(), &handles
+			if b.Load.CubeKnown {
+				cube := b.Load.CubeMm3
+				out[i].CubeMm3 = &cube
+			}
+			if b.Load.WeightKnown {
+				weight := b.Load.WeightG
+				out[i].WeightG = &weight
+			}
+		}
 	}
 	return out
 }
@@ -127,6 +139,77 @@ func toWorkUnitResponseDTO(unit *workunit.WorkUnit) workUnitResponseDTO {
 		CompletedAt: unit.CompletedAt(),
 		CancelledAt: unit.CancelledAt(),
 		Relocation:  toRelocationDTO(unit),
+		WorkKind:    packAwareKind(unit),
+		Pick:        toPickDTO(unit),
+		CaseBreak:   toCaseBreakDTO(unit),
+	}
+}
+
+// packAwareKind is the unit's work kind when it is one of the pack-aware kinds
+// (ADR-0045), "" for every other unit so existing responses are unchanged.
+func packAwareKind(unit *workunit.WorkUnit) string {
+	if k := unit.WorkKind(); k.IsPickKind() || k == workunit.WorkKindBreakCase {
+		return k.String()
+	}
+	return ""
+}
+
+// toPickDTO is the pick plan of unit, nil for any unit that is not a pick.
+func toPickDTO(unit *workunit.WorkUnit) *pickDTO {
+	plan, ok := unit.Pick()
+	if !ok {
+		return nil
+	}
+	return &pickDTO{Quantity: plan.Quantity, Unit: plan.Unit.String(), FromBin: plan.FromBin}
+}
+
+// toCaseBreakDTO is the case break of unit, nil for any unit that is not a
+// BREAK_CASE.
+func toCaseBreakDTO(unit *workunit.WorkUnit) *caseBreakDTO {
+	brk, ok := unit.CaseBreak()
+	if !ok {
+		return nil
+	}
+	return &caseBreakDTO{LPN: brk.LPN, LooseBin: brk.LooseBin, PickTaskId: brk.PickTaskId}
+}
+
+// pickUnitOf parses an optional wire pick unit: "" is "not stated".
+func pickUnitOf(raw string) (workunit.PickUnit, error) {
+	if raw == "" {
+		return "", nil
+	}
+	return workunit.ParsePickUnit(raw)
+}
+
+// packAwareOf builds the validated pick plan or case break of an enqueue
+// body, nil/nil for a plain one. Quantity, pickUnit and fromBin belong to a
+// pick, caseBreak to a break; the two never mix and both need a sku.
+func packAwareOf(body enqueueWorkUnitRequestDTO) (*workunit.PickPlan, *workunit.CaseBreak, error) {
+	pickGiven := body.Quantity != nil || body.PickUnit != "" || body.FromBin != ""
+	switch {
+	case body.CaseBreak != nil && pickGiven:
+		return nil, nil, fmt.Errorf("%w: caseBreak excludes quantity, pickUnit and fromBin", workunit.ErrInvalidCaseBreak)
+	case body.CaseBreak != nil:
+		brk, err := workunit.NewCaseBreak(body.CaseBreak.LPN, body.SKU, body.CaseBreak.LooseBin, body.CaseBreak.PickTaskId)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, &brk, nil
+	case pickGiven:
+		if body.Quantity == nil {
+			return nil, nil, fmt.Errorf("%w: quantity (eaches) is required with pickUnit or fromBin", workunit.ErrInvalidPickPlan)
+		}
+		unit := body.PickUnit
+		if unit == "" {
+			unit = workunit.PickUnitEach.String()
+		}
+		plan, err := workunit.NewPickPlan(body.SKU, *body.Quantity, unit, body.FromBin)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &plan, nil, nil
+	default:
+		return nil, nil, nil
 	}
 }
 
@@ -178,7 +261,12 @@ func (h *Handlers) postChargeForecast(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, err)
 			return
 		}
-		buckets[i] = usecases.CPTBucketInput{CPT: shared.NewCPT(*b.CPT), Quantity: qty}
+		pickUnit, err := pickUnitOf(b.PickUnit)
+		if err != nil {
+			writeError(w, r, err)
+			return
+		}
+		buckets[i] = usecases.CPTBucketInput{CPT: shared.NewCPT(*b.CPT), Quantity: qty, SKU: b.SKU, PickUnit: pickUnit}
 	}
 
 	forecast, err := h.ReceiveChargeForecast.Execute(r.Context(), usecases.ReceiveChargeForecastRequest{
@@ -240,6 +328,11 @@ func (h *Handlers) postShiftPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pickUnit, err := pickUnitOf(body.PickUnit)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
 	shiftPlan, err := h.CommitShiftPlan.Execute(r.Context(), usecases.CommitShiftPlanRequest{
 		PathId:            pathId,
 		PlannedHeads:      heads,
@@ -248,6 +341,8 @@ func (h *Handlers) postShiftPlan(w http.ResponseWriter, r *http.Request) {
 		Hours:             body.Hours,
 		FromLocationCode:  body.FromLocationCode,
 		ToLocationCode:    body.ToLocationCode,
+		SKU:               body.SKU,
+		PickUnit:          pickUnit,
 	})
 	if err != nil {
 		writeError(w, r, err)
@@ -273,6 +368,21 @@ func toShiftPlanResponseDTO(p plan.PathPlan) shiftPlanResponseDTO {
 		estimated := p.TravelDistanceEstimated()
 		dto.TravelDistanceM = &metresM
 		dto.TravelDistanceEstimated = &estimated
+	}
+	if load, ok := p.HandleLoad(); ok {
+		handle := &handleLoadDTO{PickUnit: load.Unit.String()}
+		if load.WeightKnown {
+			weight := load.WeightG
+			handle.WeightG = &weight
+		}
+		if load.CubeKnown {
+			cube := load.CubeMm3
+			handle.CubeMm3 = &cube
+		}
+		if kgM, known := p.CarryKgM(); known {
+			handle.CarryKgM = &kgM
+		}
+		dto.Handle = handle
 	}
 	return dto
 }
@@ -308,6 +418,12 @@ func (h *Handlers) postWorkUnit(w http.ResponseWriter, r *http.Request) {
 		lineNo = *body.LineNo
 	}
 
+	pick, caseBreak, err := packAwareOf(body)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+
 	unit, err := h.EnqueueWorkUnit.Execute(r.Context(), usecases.EnqueueWorkUnitRequest{
 		WorkUnitId: body.WorkUnitId,
 		PathId:     pathId,
@@ -316,6 +432,8 @@ func (h *Handlers) postWorkUnit(w http.ResponseWriter, r *http.Request) {
 		SKU:        body.SKU,
 		GiftWrap:   body.GiftWrap,
 		LineNo:     lineNo,
+		Pick:       pick,
+		CaseBreak:  caseBreak,
 	})
 	if err != nil {
 		writeError(w, r, err)

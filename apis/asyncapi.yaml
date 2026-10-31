@@ -329,9 +329,15 @@ channels:
       product-master's integration topic, CONSUMED by this service (owned by
       that bounded context; listed here read-only for orientation, mirroring
       its own apis/asyncapi.yaml). Key = the SKU. This service consumes only
-      ProductClassified and ignores every other type on the topic
-      (ProductRegistered, ProductDescriptionChanged,
-      ProductDimensionsDeclared, ProductMeasured). See ADR-0035.
+      ProductClassified (ADR-0035) and the pack-level types
+      ProductPackLevelDeclared, ProductPackLevelRetired and
+      ProductPackLevelMeasured into the local PackView (ADR-0045), and
+      ignores every other type on the topic (ProductRegistered,
+      ProductDescriptionChanged, ProductDimensionsDeclared, ProductMeasured).
+      A second consumer reads this topic under the STABLE
+      `PACK_VIEW_CONSUMER_GROUP` (mandatory; it must differ from
+      `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`, because a group that already
+      committed past the pack events could never replay them).
     publish:
       operationId: consumeProductClassified
       summary: Consume product-master's ProductClassified into the local classification copy.
@@ -346,7 +352,11 @@ channels:
         WARN-logged and skipped; transient failures retry the same message
         and the offset is committed only after success.
       message:
-        $ref: "#/components/messages/ProductClassified"
+        oneOf:
+          - $ref: "#/components/messages/ProductClassified"
+          - $ref: "#/components/messages/ProductPackLevelDeclared"
+          - $ref: "#/components/messages/ProductPackLevelRetired"
+          - $ref: "#/components/messages/ProductPackLevelMeasured"
 
   warehouse.inventory.events:
     description: >-
@@ -375,6 +385,7 @@ channels:
 components:
   messages:
     ChargeForecastReceived:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: ChargeForecastReceived
       title: Charge Forecast Received
       summary: A shift's charge forecast was recorded for a process path.
@@ -406,6 +417,7 @@ components:
               path_id: pick-to-tote
 
     ShiftPlanCommitted:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: ShiftPlanCommitted
       title: Shift Plan Committed
       summary: A path's headcount, rate and hours split was committed.
@@ -873,6 +885,7 @@ components:
                 priority: URGENT
 
     WorkUnitCompleted:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: WorkUnitCompleted
       title: Work Unit Completed
       summary: A released work unit finished.
@@ -936,6 +949,7 @@ components:
               path_id: pack-singles
 
     RateDeviationDetected:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: RateDeviationDetected
       title: Rate Deviation Detected
       summary: A path's actual throughput deviated materially from plan.
@@ -978,6 +992,7 @@ components:
               path_id: pick-to-tote
 
     PathThrottled:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: PathThrottled
       title: Path Throttled
       summary: Flow balancing decided to throttle upstream release into a path.
@@ -1008,6 +1023,7 @@ components:
               path_id: pack-singles
 
     LaborReassignmentFlagged:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: LaborReassignmentFlagged
       title: Labor Reassignment Flagged
       summary: Flow balancing recommended moving labor to relieve a path.
@@ -1109,6 +1125,7 @@ components:
               known: false
 
     PathPlanDriftDetected:
+      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
       name: PathPlanDriftDetected
       title: Path Plan Drift Detected
       summary: >-
@@ -1283,6 +1300,51 @@ components:
       payload:
         $ref: "#/components/schemas/PathPlanDriftDetectedAnalyticsEvent"
 
+    ProductPackLevelDeclared:
+      name: ProductPackLevelDeclared
+      title: ProductPackLevelDeclared (consumed)
+      summary: product-master declared or revised a pack level of a SKU.
+      description: >-
+        CONSUMED from `warehouse.product-master.events` - this entry mirrors
+        the producer's own contract read-only and is NOT published by this
+        service. Feeds the local PackView (ADR-0045) under the stable
+        `PACK_VIEW_CONSUMER_GROUP`. Payload pinned by product-master's
+        `apis/asyncapi.yaml` on `develop`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProductPackLevelDeclaredEvent"
+    ProductPackLevelRetired:
+      name: ProductPackLevelRetired
+      title: ProductPackLevelRetired (consumed)
+      summary: product-master retired a pack level of a SKU.
+      description: >-
+        CONSUMED from `warehouse.product-master.events` - this entry mirrors
+        the producer's own contract read-only and is NOT published by this
+        service. Feeds the local PackView (ADR-0045) under the stable
+        `PACK_VIEW_CONSUMER_GROUP`. Payload pinned by product-master's
+        `apis/asyncapi.yaml` on `develop`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProductPackLevelRetiredEvent"
+    ProductPackLevelMeasured:
+      name: ProductPackLevelMeasured
+      title: ProductPackLevelMeasured (consumed)
+      summary: product-master measured a pack level of a SKU.
+      description: >-
+        CONSUMED from `warehouse.product-master.events` - this entry mirrors
+        the producer's own contract read-only and is NOT published by this
+        service. Feeds the local PackView (ADR-0045) under the stable
+        `PACK_VIEW_CONSUMER_GROUP`. Payload pinned by product-master's
+        `apis/asyncapi.yaml` on `develop`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProductPackLevelMeasuredEvent"
   schemas:
     CloudEventBase:
       type: object
@@ -2696,3 +2758,174 @@ components:
                     Workforce's own commit timestamp, carried from
                     LaborPlanObserved (not the detection time — that is the
                     envelope `time`).
+    ProductPackLevelDeclaredEvent:
+      title: ProductPackLevelDeclared CloudEvent (consumed)
+      description: >-
+        CloudEvent envelope of product-master's ProductPackLevelDeclared, mirrored read-only from
+        the producer's own contract. This service consumes it (ADR-0045);
+        it never publishes it.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wms.product-master.product.ProductPackLevelDeclared"
+            dataschema:
+              type: string
+              const: "urn:warehouse:product-master:events:ProductPackLevelDeclared:v1"
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - units_per_pack
+                - is_orderable
+                - is_despatch_unit
+                - effective_from
+                - version
+              properties:
+                sku:
+                  type: string
+                level:
+                  type: string
+                gtin:
+                  type: string
+                child_gtin:
+                  type: string
+                qty_of_child:
+                  type: integer
+                  minimum: 2
+                  description: Absent for EACH.
+                units_per_pack:
+                  type: integer
+                  minimum: 1
+                  description: Direct factor to eaches; 1 for EACH.
+                is_orderable:
+                  type: boolean
+                is_despatch_unit:
+                  type: boolean
+                effective_from:
+                  type: string
+                  format: date-time
+                version:
+                  type: integer
+                  minimum: 1
+    ProductPackLevelRetiredEvent:
+      title: ProductPackLevelRetired CloudEvent (consumed)
+      description: >-
+        CloudEvent envelope of product-master's ProductPackLevelRetired, mirrored read-only from
+        the producer's own contract. This service consumes it (ADR-0045);
+        it never publishes it.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wms.product-master.product.ProductPackLevelRetired"
+            dataschema:
+              type: string
+              const: "urn:warehouse:product-master:events:ProductPackLevelRetired:v1"
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - effective_to
+                - reason
+                - version
+              properties:
+                sku:
+                  type: string
+                level:
+                  type: string
+                gtin:
+                  type: string
+                effective_to:
+                  type: string
+                  format: date-time
+                reason:
+                  type: string
+                version:
+                  type: integer
+                  minimum: 1
+    ProductPackLevelMeasuredEvent:
+      title: ProductPackLevelMeasured CloudEvent (consumed)
+      description: >-
+        CloudEvent envelope of product-master's ProductPackLevelMeasured, mirrored read-only from
+        the producer's own contract. This service consumes it (ADR-0045);
+        it never publishes it.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wms.product-master.product.ProductPackLevelMeasured"
+            dataschema:
+              type: string
+              const: "urn:warehouse:product-master:events:ProductPackLevelMeasured:v1"
+            data:
+              type: object
+              required:
+                - sku
+                - level
+                - gtin
+                - dims
+                - measured_at
+                - version
+              properties:
+                sku:
+                  type: string
+                level:
+                  type: string
+                gtin:
+                  type: string
+                dims:
+                  type: object
+                  required:
+                    - length_mm
+                    - width_mm
+                    - height_mm
+                    - weight_g
+                  properties:
+                    length_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                    width_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                    height_mm:
+                      type: integer
+                      minimum: 1
+                      maximum: 20000
+                    weight_g:
+                      type: integer
+                      minimum: 1
+                      maximum: 2000000
+                measured_at:
+                  type: string
+                  format: date-time
+                device_id:
+                  type: string
+                  description: Omitted for a manual measurement.
+                version:
+                  type: integer
+                  minimum: 1

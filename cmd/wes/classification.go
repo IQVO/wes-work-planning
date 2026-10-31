@@ -57,8 +57,11 @@ func (c classificationConfig) validate() (productclassificationcopy.Mode, error)
 // classificationWiring is what the mode selected: the lookup the WorkReleased
 // encoder reads and the copy the consumer writes (the same Postgres store).
 type classificationWiring struct {
-	lookup  ports.ProductClassificationLookup
-	copies  ports.ProductClassificationCopyRepo
+	lookup ports.ProductClassificationLookup
+	copies ports.ProductClassificationCopyRepo
+	// packs is the pack-level copy the pack-level consumer writes (ADR-0045):
+	// the same Postgres store, read back through lookup.
+	packs   ports.PackLevelCopyRepo
 	groupID string
 }
 
@@ -66,6 +69,7 @@ type classificationWiring struct {
 type copyStore interface {
 	ports.ProductClassificationLookup
 	ports.ProductClassificationCopyRepo
+	ports.PackLevelCopyRepo
 }
 
 // buildClassification resolves PRODUCT_CLASSIFICATION_MODE (ADR-0035,
@@ -83,7 +87,7 @@ func buildClassification(cfg classificationConfig, pool *pgxpool.Pool, logger *s
 	}
 	var store copyStore = productclassificationcopy.NewStore(pool, logger)
 	logger.Info("product classification lookup configured", "mode", string(mode), "topic", cloudevents.TopicProductMasterEvents, "group_id", cfg.groupID)
-	return classificationWiring{lookup: store, copies: store, groupID: cfg.groupID}, nil
+	return classificationWiring{lookup: store, copies: store, packs: store, groupID: cfg.groupID}, nil
 }
 
 // startClassificationConsumer starts the ProductClassified consumer when a

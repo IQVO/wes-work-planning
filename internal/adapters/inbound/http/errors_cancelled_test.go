@@ -18,7 +18,7 @@ func TestWriteError_CancelledWorkUnitIs409(t *testing.T) {
 		t.Fatalf("statusFor = %d, want 409", got)
 	}
 	rr := httptest.NewRecorder()
-	writeError(rr, httptest.NewRequest(nethttp.MethodPost, "/paths/RELOCATE/release", nil), err)
+	writeError(rr, httptest.NewRequest(nethttp.MethodPost, "/paths/RELOCATE/work-releases", nil), err)
 	if rr.Code != nethttp.StatusConflict || !strings.Contains(rr.Body.String(), "/work-unit-cancelled") {
 		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
 	}

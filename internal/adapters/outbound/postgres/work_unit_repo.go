@@ -271,6 +271,24 @@ func (r *WorkUnitRepo) FindByReference(ctx context.Context, reference string) ([
 	return r.query(ctx, `SELECT `+workUnitColumns+` FROM work_units WHERE reference = $1`, reference)
 }
 
+// FindByReferencePage is the keyset-paged FindByReference: ordered by
+// (cpt, id), strictly after `after`, at most `limit` rows (limit <= 0 means
+// unbounded).
+func (r *WorkUnitRepo) FindByReferencePage(ctx context.Context, reference string, after *workunit.Cursor, limit int) ([]*workunit.WorkUnit, error) {
+	sql := `SELECT ` + workUnitColumns + ` FROM work_units WHERE reference = $1`
+	args := []any{reference}
+	if after != nil {
+		sql += ` AND (cpt, id) > ($2, $3)`
+		args = append(args, after.CPT, after.ID)
+	}
+	sql += ` ORDER BY cpt, id`
+	if limit > 0 {
+		args = append(args, limit)
+		sql += fmt.Sprintf(` LIMIT $%d`, len(args))
+	}
+	return r.query(ctx, sql, args...)
+}
+
 // PendingRelocationsAtSite returns every Pending RELOCATE work unit of
 // siteId (ADR-0040), served by idx_work_units_relocate_site_state.
 func (r *WorkUnitRepo) PendingRelocationsAtSite(ctx context.Context, siteId string) ([]*workunit.WorkUnit, error) {

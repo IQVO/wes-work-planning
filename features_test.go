@@ -190,14 +190,16 @@ func (w *world) decodeLast() (map[string]any, error) {
 	return out, nil
 }
 
-// decodeLastArray unmarshals the last response body into a generic JSON
-// array (e.g. the GET /work-units?reference= lookup).
+// decodeLastArray unmarshals the `items` of the last response body, a page
+// envelope {items,nextCursor} (e.g. the GET /work-units?reference= lookup).
 func (w *world) decodeLastArray() ([]any, error) {
-	var out []any
+	var out struct {
+		Items []any `json:"items"`
+	}
 	if err := json.Unmarshal(w.lastBody, &out); err != nil {
 		return nil, fmt.Errorf("decode response %q: %w", string(w.lastBody), err)
 	}
-	return out, nil
+	return out.Items, nil
 }
 
 func (w *world) stringField(field string) (string, error) {
@@ -337,7 +339,7 @@ func (w *world) enqueueNWorkUnits(count int, pathId string) error {
 }
 
 func (w *world) releaseWork(pathId string) error {
-	return w.do(http.MethodPost, "/paths/"+pathId+"/release", nil)
+	return w.do(http.MethodPost, "/paths/"+pathId+"/work-releases", nil)
 }
 
 func (w *world) releaseNWorkUnits(count int, pathId string) error {
@@ -353,7 +355,7 @@ func (w *world) releaseNWorkUnits(count int, pathId string) error {
 }
 
 func (w *world) recordCompletion(workUnitId string) error {
-	return w.do(http.MethodPost, "/work-units/"+workUnitId+"/complete", nil)
+	return w.do(http.MethodPost, "/work-units/"+workUnitId+"/completions", nil)
 }
 
 func (w *world) requestRebalanceDecision(pathId string) error {

@@ -343,7 +343,7 @@ or `GET /work-units?reference=<plan_id>` (each unit's `relocation` object).
 
 - **A move never releases.** It is `Pending` with `blocked_by` set: it waits
   for the unit that vacates its target slot. Complete that unit (its
-  fulfillment-execution task, or `POST /work-units/{id}/complete` once
+  fulfillment-execution task, or `POST /work-units/{id}/completions` once
   released) and the waiting move enters the RELOCATE pool in the same
   transaction.
 - **Moves were `Cancelled`.** A newer `SlotPlanApproved` for the same site

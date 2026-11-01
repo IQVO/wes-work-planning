@@ -53,7 +53,7 @@ problem `type` it produces. Problem types are relative to
 | RELOCATE work units turned `Cancelled` | a newer `SlotPlanApproved` for the same site superseded their plan before they were released (by design) | `SELECT * FROM slot_plans WHERE site_id = '...' ORDER BY approved_at DESC` | none |
 | `SlotPlanApproved older than the site's current plan; recorded, nothing planned` | a plan arrived after a newer one for the same site | INFO only | none |
 | `TaskCompleted for a work unit this context never planned; skipping` | a PACK task fulfillment-execution created itself carries the order id | INFO only | none — expected ([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)) |
-| Release-fed paths answer `409 wip-limit-reached` for good although fulfillment finishes tasks | completions are not arriving, so WIP slots are never freed (`RecordCompletion` frees them) | is the `warehouse.fulfillment.events` consumer running? lag on that topic? | restore consumption, or complete via `POST /work-units/{id}/complete` |
+| Release-fed paths answer `409 wip-limit-reached` for good although fulfillment finishes tasks | completions are not arriving, so WIP slots are never freed (`RecordCompletion` frees them) | is the `warehouse.fulfillment.events` consumer running? lag on that topic? | restore consumption, or complete via `POST /work-units/{id}/completions` |
 | `applying ProductClassified failed; retrying the same message` repeating | a transient error the classification consumer retries forever (it never skips a decodable event) | the `error` field | fix Postgres; the consumer continues by itself |
 | `WorkReleased` never carries `required_capabilities`/`fragile` | the copy has no row for the SKU yet (the `ProductClassified` consumer has not seen it, or the SKU is not hazmat/fragile) | `SELECT * FROM product_classification_copy WHERE sku = '...'` | check the consumer lag on `warehouse.product-master.events`; the MCP server reads the same table |
 
@@ -85,7 +85,7 @@ problem `type` it produces. Problem types are relative to
 | `400 idempotency-key-required` | `POST /paths/{pathId}/work-units` without `Idempotency-Key` (always enforced: Postgres is the only runtime) | send a unique key per logical request ([ADR-0022](../adr/0022-idempotency-key-middleware.md)) |
 | `400 malformed-request-body` for a body or query with U+0000, `404` for a path with U+0000 | Postgres text cannot hold NUL; the guard answers before any idempotency key is recorded | the request bytes | remove the NUL character |
 | `400 invalid-wip-limit` for a huge `wipLimit` | `wipLimit` above 2147483647 (the Postgres `INTEGER` maximum) | the request body | send a smaller limit |
-| `422 idempotency-key-reused` | same key, different body (SHA-256 of the body differs) | new key for a different request |
+| `409 idempotency-key-reused` | same key, different body (SHA-256 of the body differs) | new key for a different request |
 | Retry with same key and body returns the first response, no new unit | cached replay, by design; after `IDEMPOTENCY_KEY_TTL` (24 h) the key is forgotten and the call runs again | — |
 | `500 internal-error` | unmapped error, usually Postgres (pool exhausted, `statement_timeout` 5 s) | ERROR access log with `trace_id`; `db.client.operation.errors` |
 

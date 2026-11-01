@@ -67,7 +67,11 @@ All type URIs are prefixed
 | `work-pool-entry-not-found` | Work unit not found in this pool | releasing an unknown entry |
 | `invalid-wip-limit` | Invalid WIP limit | `PUT /paths/{pathId}/pool` with a `wipLimit` ≤ 0 ([ADR-0034](../adr/0034-configure-pool-command.md)) |
 | `unknown-feed-mode` | Unknown work pool feed mode | `PUT /paths/{pathId}/pool` with a `mode` other than `ReleaseFed`/`FlowFed` |
-| `idempotency-key-required` | Idempotency-Key header is required | `POST /paths/{pathId}/work-units` without an `Idempotency-Key` header ([ADR-0022](../adr/0022-idempotency-key-middleware.md)) |
+| `idempotency-key-required` | Idempotency-Key header is required | any `POST` without an `Idempotency-Key` header ([ADR-0022](../adr/0022-idempotency-key-middleware.md), [ADR-0047](../adr/0047-fleet-rest-api-guideline.md)) |
+| `idempotency-key-invalid` | Idempotency-Key header is invalid | an `Idempotency-Key` that is not 1-128 printable ASCII characters |
+| `invalid-limit` | Invalid limit | `GET /work-units` with a `limit` outside 1-500, empty or repeated |
+| `invalid-cursor` | Invalid cursor | `GET /work-units` with a `cursor` that does not decode, or a repeated `cursor` |
+| `unknown-query-parameter` | Unknown query parameter | `GET /work-units` with a query parameter it does not declare (e.g. the retired `after`, `offset`, `nextToken`) |
 | `unknown-pick-unit` | Unknown pick unit | `POST /paths/{pathId}/charge` with a bucket `pickUnit` other than `EACH`/`CASE` ([ADR-0045](../adr/0045-pack-aware-work-units.md)) |
 | `invalid-pick-plan` | Invalid pick plan | `POST /paths/{pathId}/charge` with a bucket `pickUnit` but no `sku` |
 | `invalid-pick-quantity` | Invalid pick quantity | `POST /paths/{pathId}/charge` with a `sku` and a bucket `quantity` below 1 |
@@ -76,9 +80,14 @@ All type URIs are prefixed
 
 | `type` suffix | `title` | Raised by |
 |---|---|---|
-| `idempotency-key-reused` | Idempotency-Key was already used with a different request | `POST /paths/{pathId}/work-units` re-using an `Idempotency-Key` with a different body — use a new key for a genuinely different request |
 | `no-active-case-level` | The SKU has no active CASE pack level | `POST /paths/{pathId}/charge` with a bucket `pickUnit` `CASE` for a SKU with no active CASE level in the local pack copy ([ADR-0045](../adr/0045-pack-aware-work-units.md)) |
 | `quantity-not-case-multiple` | Quantity is not a whole number of cases | `POST /paths/{pathId}/charge` with a `CASE` bucket whose `quantity` (eaches) is not a multiple of the units per case |
+
+### 409 Conflict — key reuse
+
+| `type` suffix | `title` | Raised by |
+|---|---|---|
+| `idempotency-key-reused` | Idempotency-Key was already used with a different request | any `POST` re-using an `Idempotency-Key` with a different method, path or body — use a new key for a genuinely different request. Distinguished from business 409s by the problem `type` |
 
 ### 404 Not Found
 
@@ -131,7 +140,7 @@ a corresponding case in `problemFor`, so no error can get a correct status with
 a generic problem type. Both use `errors.Is`, so wrapped errors keep their
 mapping. This includes the two `Idempotency-Key` problems raised by the
 route-scoped middleware (`errIdempotencyKeyRequired` → 400,
-`errIdempotencyKeyReused` → 422): the middleware calls `writeError` rather
+`errIdempotencyKeyReused` → 409): the middleware calls `writeError` rather
 than building problem bodies inline.
 
 Keeping this in the **adapter** is the point. The domain returns typed sentinel

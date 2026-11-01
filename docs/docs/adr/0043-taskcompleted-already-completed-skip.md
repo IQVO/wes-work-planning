@@ -84,7 +84,7 @@ completed — and a replay would now be a logged skip anyway.
   (configured by `slog.SetDefault` in every binary) because the INFO log
   for the sibling skip outcome lives in the consumer, which this change
   deliberately does not touch.
-- REST callers are unaffected: `POST /work-units/{id}/complete` still
+- REST callers are unaffected: `POST /work-units/{id}/completions` still
   surfaces `ErrAlreadyCompleted` as a 409 problem detail; only the inbound
   Kafka path classifies it.
 

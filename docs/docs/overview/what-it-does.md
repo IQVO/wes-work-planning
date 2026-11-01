@@ -108,7 +108,7 @@ Transitions a `Released` work unit to `Completed`. The aggregate rejects
 double-completion (`ErrAlreadyCompleted`) and completion of a unit that was
 never released (`ErrNotReleased`).
 
-Reachable two ways: `POST /work-units/{id}/complete`, or a `TaskCompleted`
+Reachable two ways: `POST /work-units/{id}/completions`, or a `TaskCompleted`
 event consumed from `fulfillment-execution` through `ApplyTaskCompleted` —
 the same use case, called from a different inbound adapter. Completion also
 frees the unit's WIP slot on its `WorkPool` (the pool entry is reconciled to

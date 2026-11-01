@@ -94,7 +94,7 @@ owns are:
    `Pending` with `blocked_by = A's work unit id` and is NOT admitted to the
    RELOCATE work pool, so no release (REST, MCP) can hand it out. When A's
    completion is recorded (`TaskCompleted` from fulfillment-execution, already
-   consumed by `ApplyTaskCompleted`, or `POST .../complete`), `RecordCompletion`
+   consumed by `ApplyTaskCompleted`, or `POST .../completions`), `RecordCompletion`
    admits every `Pending` unit blocked by A into the pool in the SAME
    transaction and clears its `blocked_by`. Two rules keep this total:
    - when several moves vacate the same slot (a valid plan has at most one),

@@ -1,5 +1,7 @@
 # WES — Work Planning & Release
 
+[![CI](https://github.com/IQVO/wes-work-planning/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/IQVO/wes-work-planning/actions/workflows/ci.yml?query=branch%3Adevelop) [![coverage gate](https://img.shields.io/badge/coverage%20gate-90%25-brightgreen)](https://github.com/IQVO/wes-work-planning/blob/develop/Makefile) [![Go](https://img.shields.io/badge/go-1.26.10-00ADD8?logo=go&logoColor=white)](https://github.com/IQVO/wes-work-planning/blob/develop/go.mod) [![release](https://img.shields.io/github/v/release/IQVO/wes-work-planning?sort=semver)](https://github.com/IQVO/wes-work-planning/releases) [![docs](https://img.shields.io/badge/docs-iqvo.github.io-blue)](https://iqvo.github.io/wes-work-planning/) [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/IQVO/wes-work-planning/blob/develop/LICENSE)
+
 The core bounded context of a Warehouse Execution System. It turns a shift's
 **charge** (volume due by each CPT) into a **plan** (rate x heads per process
 path), releases work continuously in priority order (waveless), and performs

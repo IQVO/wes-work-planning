@@ -175,6 +175,7 @@ paths:
         local pack copy. A plain bucket is unchanged.
       tags: [Charge Forecast]
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/PathId"
       requestBody:
         required: true
@@ -208,6 +209,8 @@ paths:
             in `GET /paths/{pathId}/telemetry` once work is enqueued and
             released against it).
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             Location:
               schema:
                 type: string
@@ -306,6 +309,21 @@ paths:
                     status: 422
                     detail: "pick load: quantity is not a whole number of cases: 35 eaches with 12 per case"
                     instance: /paths/pick-a/charge
+        "409":
+          description: >
+            Business conflict (see the operation description), or the `Idempotency-Key`
+            was already used with a different request (`idempotency-key-reused`;
+            fingerprint = method + path + body hash). Distinguish by the problem `type`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://errors.wes-work-planning.warehouse-systems.dev/idempotency-key-reused
+                title: Idempotency-Key was already used with a different request
+                status: 409
+                detail: "idempotency key reused: the Idempotency-Key header on this request was already used with a request that had a different body; use a new Idempotency-Key for a genuinely different request"
+                instance: /paths/pick-a/charge
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -324,6 +342,7 @@ paths:
         Publishes `ShiftPlanCommitted`.
       tags: [Shift Plan]
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/PathId"
       requestBody:
         required: true
@@ -345,6 +364,8 @@ paths:
             visible indirectly via `GET /paths/{pathId}/rebalance`'s labor
             context).
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             Location:
               schema:
                 type: string
@@ -380,6 +401,21 @@ paths:
                 status: 400
                 detail: "planned heads exceeds installed stations"
                 instance: /paths/pick-a/plan
+        "409":
+          description: >
+            Business conflict (see the operation description), or the `Idempotency-Key`
+            was already used with a different request (`idempotency-key-reused`;
+            fingerprint = method + path + body hash). Distinguish by the problem `type`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://errors.wes-work-planning.warehouse-systems.dev/idempotency-key-reused
+                title: Idempotency-Key was already used with a different request
+                status: 409
+                detail: "idempotency key reused: the Idempotency-Key header on this request was already used with a request that had a different body; use a new Idempotency-Key for a genuinely different request"
+                instance: /paths/pick-a/plan
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -408,7 +444,8 @@ paths:
         write; a retry with the same key and the same body replays that
         stored response verbatim and does not enqueue again. A missing key is
         `400 idempotency-key-required`; the same key with a different body
-        is `422 idempotency-key-reused`. Use a fresh key per logical action.
+        is `409 idempotency-key-reused`. Use a fresh key per logical action. A replay carries
+        `Idempotency-Replayed: true`.
 
         Superseded by the K1 choreography (X3): order-management publishes
         `OrderAllocated` / `OrderPartiallyAllocated` and this service's
@@ -433,6 +470,8 @@ paths:
         "201":
           description: Work unit enqueued in `Pending` state.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             Location:
               schema:
                 type: string
@@ -466,7 +505,11 @@ paths:
                 detail: "idempotency key required: this endpoint creates a new resource on every call and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice"
                 instance: /paths/pick-a/work-units
         "409":
-          description: A work unit with this `workUnitId` is already enqueued in this pool.
+          description: >
+            A work unit with this `workUnitId` is already enqueued in this pool
+            (`work-unit-already-enqueued`), or the `Idempotency-Key` was already
+            used with a different request (`idempotency-key-reused`;
+            fingerprint = method + path + body hash). Distinguish by the problem `type`.
           content:
             application/problem+json:
               schema:
@@ -477,25 +520,10 @@ paths:
                 status: 409
                 detail: "work unit already enqueued in this pool"
                 instance: /paths/pick-a/work-units
-        "422":
-          description: >
-            The `Idempotency-Key` was already used with a request that had a
-            different body (`idempotency-key-reused`). Use a new key for a
-            genuinely different request.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-              example:
-                type: https://errors.wes-work-planning.warehouse-systems.dev/idempotency-key-reused
-                title: Idempotency-Key was already used with a different request
-                status: 422
-                detail: "idempotency key reused: the Idempotency-Key header on this request was already used with a request that had a different body; use a new Idempotency-Key for a genuinely different request"
-                instance: /paths/pick-a/work-units
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /paths/{pathId}/release:
+  /paths/{pathId}/work-releases:
     post:
       operationId: releaseNextWork
       summary: Release the next highest-priority work unit on a process path
@@ -513,9 +541,13 @@ paths:
         in REST terms to a resource-scoped bulk action.
       tags: [Release]
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/PathId"
       responses:
         "200":
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           description: The released work unit, now in `Released` state.
           content:
             application/json:
@@ -541,7 +573,7 @@ paths:
                 title: Resource not found
                 status: 404
                 detail: "resource not found"
-                instance: /paths/pick-a/release
+                instance: /paths/pick-a/work-releases
         "409":
           description: >
             The pool is empty (nothing pending to release) or a release-fed
@@ -555,7 +587,7 @@ paths:
                 title: Release-fed pool WIP limit reached
                 status: 409
                 detail: "WIP limit reached"
-                instance: /paths/pick-a/release
+                instance: /paths/pick-a/work-releases
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -579,7 +611,7 @@ paths:
 
         **Lowering a limit never evicts work.** If the new `wipLimit` is below
         the current `wip`, nothing is cancelled or taken back: the pool is
-        simply saturated and `POST /paths/{pathId}/release` answers
+        simply saturated and `POST /paths/{pathId}/work-releases` answers
         `409 wip-limit-reached` until completions bring `wip` strictly below
         the new limit. Raising the limit takes effect on the next release. The
         response reports the live `wip` so the caller can see the overshoot.
@@ -830,29 +862,35 @@ paths:
             type: string
             minLength: 1
           example: order-77213-line-1
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
           description: >
-            Every work unit found for this reference, oldest-first history
-            included. An empty array when nothing matches.
+            One keyset page (ordered by cpt, id) of the work units found for
+            this reference: `{items, nextCursor}`; `items` is empty (not 404)
+            when nothing matches and `nextCursor` is absent on the last page.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/WorkUnitResponse"
+                $ref: "#/components/schemas/WorkUnitPage"
               example:
-                - id: wu-482910
-                  pathId: pick-a
-                  cpt: "2026-08-21T12:00:00Z"
-                  reference: order-77213-line-1
-                  state: Completed
-                  giftWrap: false
-                  sku: sku-482910
-                  releasedAt: "2026-08-21T09:00:00Z"
-                  completedAt: "2026-08-21T10:00:00Z"
+                items:
+                  - id: wu-482910
+                    pathId: pick-a
+                    cpt: "2026-08-21T12:00:00Z"
+                    reference: order-77213-line-1
+                    state: Completed
+                    giftWrap: false
+                    sku: sku-482910
+                    releasedAt: "2026-08-21T09:00:00Z"
+                    completedAt: "2026-08-21T10:00:00Z"
         "400":
-          description: The `reference` query parameter was missing or empty.
+          description: >
+            The `reference` query parameter was missing or empty, `limit` is
+            out of range (`invalid-limit`), `cursor` does not decode
+            (`invalid-cursor`), or an undeclared query parameter was sent
+            (`unknown-query-parameter`).
           content:
             application/problem+json:
               schema:
@@ -917,7 +955,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /work-units/{id}/complete:
+  /work-units/{id}/completions:
     post:
       operationId: recordCompletion
       deprecated: true
@@ -937,9 +975,13 @@ paths:
         window.
       tags: [Work Units]
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/WorkUnitId"
       responses:
         "200":
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           description: The completed work unit, now in `Completed` state.
           content:
             application/json:
@@ -963,7 +1005,7 @@ paths:
                 title: Resource not found
                 status: 404
                 detail: "resource not found"
-                instance: /work-units/wu-482910/complete
+                instance: /work-units/wu-482910/completions
         "409":
           description: The work unit was never released, or was already completed.
           content:
@@ -975,7 +1017,9 @@ paths:
                 title: Work unit already completed
                 status: 409
                 detail: "work unit is already completed"
-                instance: /work-units/wu-482910/complete
+                instance: /work-units/wu-482910/completions
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1021,6 +1065,12 @@ paths:
           $ref: "#/components/responses/InternalError"
 
 components:
+  headers:
+    IdempotencyReplayed:
+      description: Present, with value `true`, only when this answer is a replay of a stored earlier answer for the same `Idempotency-Key`.
+      schema:
+        type: string
+        enum: ["true"]
   parameters:
     PathId:
       name: pathId
@@ -1047,16 +1097,39 @@ components:
       in: header
       required: true
       description: >
-        Caller-supplied key that makes a retried resource-creating POST safe
-        (ADR-0022). **Clients must always send a non-empty key**: a missing
-        key is rejected with `400 idempotency-key-required` (Postgres is the
-        only runtime, ADR-0044, so the check is on in every deployment).
-        Generate a fresh unique value (e.g. a UUID) per logical action and
-        reuse it only to retry that same request with the same body. Reusing
-        a key with a different body is `422 idempotency-key-reused`.
+        Caller-supplied key that makes a retried POST safe (ADR-0022, ADR-0047).
+        1-128 printable ASCII characters; **clients must always send one**
+        (missing: `400 idempotency-key-required`; malformed:
+        `400 idempotency-key-invalid`). Generate a fresh UUID per logical
+        submit and reuse it only to retry that same request. The key is global:
+        reusing it with a different method, path or body is
+        `409 idempotency-key-reused`. A replayed answer carries
+        `Idempotency-Replayed: true`.
       schema:
         type: string
+        minLength: 1
+        maxLength: 128
       example: 6f1c9a52-8f6e-4a0b-9d44-2c1b0f7a3e55
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size (1-500, default 100). Out of range is `400 invalid-limit`.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: >
+        Opaque keyset cursor taken from a previous page's `nextCursor`; repeat
+        the filters on every page. Undecodable is `400 invalid-cursor`. Any
+        other query parameter is `400 unknown-query-parameter`.
+      schema:
+        type: string
     WorkUnitId:
       name: id
       in: path
@@ -1156,7 +1229,7 @@ components:
         instance:
           type: string
           description: The request path that produced the error, omitted if there is no natural resource path.
-          example: /work-units/wu-482910/complete
+          example: /work-units/wu-482910/completions
       required: [type, title, status, detail]
 
     CPTBucket:
@@ -1430,6 +1503,17 @@ components:
           example: 3
       required: [workUnitId, cpt, reference]
 
+    WorkUnitPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkUnitResponse"
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
     WorkUnitState:
       type: string
       description: >

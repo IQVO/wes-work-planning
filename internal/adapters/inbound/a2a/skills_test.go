@@ -282,7 +282,7 @@ func TestPartJSON(t *testing.T) {
 }
 
 func TestProblemFromUseCaseUnexpectedError(t *testing.T) {
-	p := problemFromUseCase(errBoom{})
+	p := problemFromUseCase(boomError{})
 	if p == nil || p.Status != 500 {
 		t.Fatalf("unexpected error must map to a 500 problem, got %+v", p)
 	}
@@ -291,9 +291,9 @@ func TestProblemFromUseCaseUnexpectedError(t *testing.T) {
 	}
 }
 
-type errBoom struct{}
+type boomError struct{}
 
-func (errBoom) Error() string { return "boom" }
+func (boomError) Error() string { return "boom" }
 
 func hasPrefix(s, prefix string) bool { return len(s) >= len(prefix) && s[:len(prefix)] == prefix }
 

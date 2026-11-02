@@ -1,6 +1,7 @@
 package workunit
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -44,7 +45,7 @@ func TestParseWorkKind(t *testing.T) {
 		if tc.err == nil && err != nil {
 			t.Fatalf("ParseWorkKind(%q): %v", tc.in, err)
 		}
-		if tc.err != nil && err != tc.err {
+		if tc.err != nil && !errors.Is(err, tc.err) {
 			t.Fatalf("ParseWorkKind(%q) err = %v, want %v", tc.in, err, tc.err)
 		}
 		if tc.err == nil && got != tc.want {

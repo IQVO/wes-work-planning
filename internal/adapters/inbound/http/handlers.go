@@ -17,6 +17,9 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
+// statusKey is the JSON key shared by the health and readiness payloads.
+const statusKey = "status"
+
 // Handlers holds every use case the inbound HTTP adapter depends on.
 type Handlers struct {
 	ReceiveChargeForecast *usecases.ReceiveChargeForecast
@@ -94,7 +97,7 @@ func (h *Handlers) validatePathId(pathId shared.PathId) error {
 // response and returning false on malformed JSON so callers can bail out.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
-		writeError(w, r, fmt.Errorf("%w: %v", errMalformedBody, err))
+		writeError(w, r, fmt.Errorf("%w: %w", errMalformedBody, err))
 		return false
 	}
 	return true
@@ -233,7 +236,7 @@ func (h *Handlers) postComplete(w http.ResponseWriter, r *http.Request) {
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "ok"})
 }
 
 func (h *Handlers) getWorkUnit(w http.ResponseWriter, r *http.Request) {

@@ -239,11 +239,11 @@ func (c *PackLevelConsumer) settle(ctx context.Context, msg kafkago.Message) err
 		"topic", c.topic, "partition", msg.Partition, "offset", msg.Offset, "dlq_topic", c.topic+dlqTopicSuffix, "error", err)
 	headers := append([]kafkago.Header{}, msg.Headers...)
 	headers = append(headers,
-		kafkago.Header{Key: "x-dlq-source-topic", Value: []byte(c.topic)},
+		kafkago.Header{Key: hdrDLQSourceTopic, Value: []byte(c.topic)},
 		kafkago.Header{Key: "x-dlq-source-partition", Value: []byte(strconv.Itoa(msg.Partition))},
 		kafkago.Header{Key: "x-dlq-source-offset", Value: []byte(strconv.FormatInt(msg.Offset, 10))},
-		kafkago.Header{Key: "x-dlq-error", Value: []byte(err.Error())},
-		kafkago.Header{Key: "x-dlq-failed-at", Value: []byte(time.Now().UTC().Format(time.RFC3339))},
+		kafkago.Header{Key: hdrDLQError, Value: []byte(err.Error())},
+		kafkago.Header{Key: hdrDLQFailedAt, Value: []byte(time.Now().UTC().Format(time.RFC3339))},
 	)
 	if dlqErr := writeDLQ(ctx, c.dlq, kafkago.Message{Key: msg.Key, Value: msg.Value, Headers: headers}); dlqErr != nil {
 		return fmt.Errorf("pack level consumer: publish to dead-letter topic: %w", dlqErr)
@@ -313,7 +313,7 @@ func (c *PackLevelConsumer) requestFor(env ce.Event) (usecases.ObservePackLevelR
 func declaredRecord(env ce.Event) (productclassificationview.PackLevelRecord, error) {
 	var d productPackLevelDeclaredData
 	if err := env.DataAs(&d); err != nil {
-		return productclassificationview.PackLevelRecord{}, fmt.Errorf("%w: %v", errBadPackLevelPayload, err)
+		return productclassificationview.PackLevelRecord{}, fmt.Errorf("%w: %w", errBadPackLevelPayload, err)
 	}
 	return d.record()
 }
@@ -321,7 +321,7 @@ func declaredRecord(env ce.Event) (productclassificationview.PackLevelRecord, er
 func retiredRecord(env ce.Event) (productclassificationview.PackLevelRecord, error) {
 	var d productPackLevelRetiredData
 	if err := env.DataAs(&d); err != nil {
-		return productclassificationview.PackLevelRecord{}, fmt.Errorf("%w: %v", errBadPackLevelPayload, err)
+		return productclassificationview.PackLevelRecord{}, fmt.Errorf("%w: %w", errBadPackLevelPayload, err)
 	}
 	if !validGTIN(d.GTIN) || d.Version < 1 || d.EffectiveTo.IsZero() {
 		return productclassificationview.PackLevelRecord{}, fmt.Errorf("%w: retired needs a 14-digit gtin, effective_to and version >= 1", errBadPackLevelPayload)
@@ -332,7 +332,7 @@ func retiredRecord(env ce.Event) (productclassificationview.PackLevelRecord, err
 func measuredRecord(env ce.Event) (productclassificationview.PackLevelRecord, error) {
 	var d productPackLevelMeasuredData
 	if err := env.DataAs(&d); err != nil {
-		return productclassificationview.PackLevelRecord{}, fmt.Errorf("%w: %v", errBadPackLevelPayload, err)
+		return productclassificationview.PackLevelRecord{}, fmt.Errorf("%w: %w", errBadPackLevelPayload, err)
 	}
 	if !validGTIN(d.GTIN) || d.Version < 1 || !d.Dims.valid() {
 		return productclassificationview.PackLevelRecord{}, fmt.Errorf("%w: measured needs a 14-digit gtin, version >= 1 and dims with every member >= 1", errBadPackLevelPayload)

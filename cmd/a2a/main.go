@@ -99,7 +99,7 @@ func run() error {
 	}
 	defer stopPublisher()
 
-	executor := inbounda2a.NewExecutor(newA2ADeps(logger, repos, publisher))
+	executor := inbounda2a.NewExecutor(newA2ADeps(repos, publisher))
 	card := inbounda2a.Card(inbounda2a.Config{
 		AgentURL: strings.TrimSpace(os.Getenv("A2A_AGENT_URL")),
 		Version:  getenv("SERVICE_VERSION", telemetry.DefaultServiceVersion),
@@ -217,7 +217,7 @@ func wireEventPublisher(logger *slog.Logger, kafkaBrokers string, repos reposito
 // commit together (ADR-0014). publisher is whatever wireEventPublisher chose —
 // the A2A agent publishes through the platform's outbox exactly like cmd/wes
 // and cmd/mcp do.
-func newA2ADeps(logger *slog.Logger, repos repositories, publisher ports.EventPublisher) inbounda2a.Deps {
+func newA2ADeps(repos repositories, publisher ports.EventPublisher) inbounda2a.Deps {
 	clock := system.Clock{}
 	return inbounda2a.Deps{
 		SampleBacklog:     usecases.NewSampleBacklog(repos.pools, publisher, clock).WithUnitOfWork(repos.uow),

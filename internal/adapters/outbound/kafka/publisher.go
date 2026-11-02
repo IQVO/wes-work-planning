@@ -21,6 +21,16 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 )
 
+// Attribute keys shared by the CloudEvents data payloads and the entity
+// segments of eventTypeEntity below.
+const (
+	attrPathID     = "path_id"
+	attrWorkUnitID = "work_unit_id"
+	attrSKU        = "sku"
+	entityWorkUnit = "workunit"
+	entityWorkPool = "workpool"
+)
+
 // hazmatTag and fragileTag are the ProductClassification.HandlingTags
 // values product-master publishes (ADR-0035; formerly inventory-storage's)
 // that this service maps onto the
@@ -214,14 +224,14 @@ func encodeCloudEventKeyed(ctx context.Context, topic, stream, id, key string, e
 var eventTypeEntity = map[string]string{
 	"ChargeForecastReceived":   "charge",
 	"ShiftPlanCommitted":       "plan",
-	"WorkUnitCreated":          "workunit",
-	"WorkReleased":             "workunit",
-	"WorkUnitCompleted":        "workunit",
-	"BacklogThresholdBreached": "workpool",
-	"RateDeviationDetected":    "workpool",
-	"PathThrottled":            "workpool",
-	"LaborReassignmentFlagged": "workpool",
-	"PathCapacityChanged":      "workpool",
+	"WorkUnitCreated":          entityWorkUnit,
+	"WorkReleased":             entityWorkUnit,
+	"WorkUnitCompleted":        entityWorkUnit,
+	"BacklogThresholdBreached": entityWorkPool,
+	"RateDeviationDetected":    entityWorkPool,
+	"PathThrottled":            entityWorkPool,
+	"LaborReassignmentFlagged": entityWorkPool,
+	"PathCapacityChanged":      entityWorkPool,
 	"PathPlanDriftDetected":    "pathplan",
 }
 

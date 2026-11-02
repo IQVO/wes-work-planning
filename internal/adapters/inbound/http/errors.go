@@ -16,6 +16,9 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
+// titleInternalError is the RFC 7807 title for unclassified internal errors.
+const titleInternalError = "Internal server error"
+
 // errMalformedBody is a sentinel wrapped around request-body decode failures
 // (invalid JSON) so statusFor routes them to 400 instead of falling through
 // to the default 500 case — malformed input is a client error, never a
@@ -162,7 +165,7 @@ func problemFor(err error) (typeURI, title string) {
 			return problemBaseURI + category.slug, category.title
 		}
 	}
-	return problemBaseURI + "internal-error", "Internal server error"
+	return problemBaseURI + "internal-error", titleInternalError
 }
 
 // writeError writes a domain/application error as an RFC 7807

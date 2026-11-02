@@ -38,7 +38,7 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				"method", r.Method,
 				"path", sanitizeForLog(r.URL.Path),
 				"route", routePattern(r),
-				"status", ww.Status(),
+				statusKey, ww.Status(),
 				"duration_ms", time.Since(start).Milliseconds(),
 				"bytes", ww.BytesWritten(),
 				"request_id", middleware.GetReqID(r.Context()),

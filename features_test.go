@@ -359,7 +359,7 @@ func (w *world) recordCompletion(workUnitId string) error {
 }
 
 func (w *world) requestRebalanceDecision(pathId string) error {
-	return w.do(http.MethodGet, "/paths/"+pathId+"/rebalance", nil)
+	return w.do(http.MethodPost, "/paths/"+pathId+"/rebalance-decisions", nil)
 }
 
 func (w *world) receiveChargeForecast(qty1, qty2 int, pathId string) error {

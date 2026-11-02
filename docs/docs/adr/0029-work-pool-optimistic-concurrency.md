@@ -22,7 +22,7 @@ entry (`pending` / `released` / `completed`) and enforces the WIP limit.
 Three use cases read-modify-write the same pool concurrently:
 
 - `EnqueueWorkUnit`, on every `OrderAllocated` line consumed from Kafka.
-- `ReleaseNextWork`, on every `POST /paths/{pathId}/release`.
+- `ReleaseNextWork`, on every `POST /paths/{pathId}/work-releases`.
 - `RecordCompletion`, on every `TaskCompleted` consumed from Kafka.
 
 With no concurrency control, whichever save committed last silently

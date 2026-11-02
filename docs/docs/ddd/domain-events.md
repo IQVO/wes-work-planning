@@ -111,7 +111,7 @@ sequenceDiagram
     WES->>WES: ShiftPlanCommitted ours, maybe PathPlanDriftDetected
     OM-->>WES: OrderAllocated
     WES->>WES: WorkUnitCreated per line
-    Note over WES: POST /paths/pick-a/release
+    Note over WES: POST /paths/pick-a/work-releases
     WES-->>FE: WorkReleased
     Note over FE: creates a Task
     FE-->>WES: TaskCompleted

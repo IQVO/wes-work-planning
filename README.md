@@ -280,13 +280,14 @@ Fails with `400` if `plannedHeads > installedStations`.
 
 ### `POST /paths/{pathId}/work-units` — EnqueueWorkUnit
 
-Requires an `Idempotency-Key` header (ADR-0022): this is the one mutating
-endpoint that creates a genuinely new resource, so a retried request with
-the same key and the same body is guaranteed to return the identical
-response and create exactly one work unit, never a duplicate. A retry
-with the same key but a *different* body gets `422`
-(`idempotency-key-reused`); a missing header gets `400`
-(`idempotency-key-required`).
+Every `POST` in this API (`/charge`, `/plan`, `/work-units`, `/work-releases`,
+`/completions`) requires an `Idempotency-Key` header (1-128 printable ASCII,
+ADR-0022 / ADR-0047). The key is global: a retry with the same key and the
+same request (method + path + body) returns the identical stored answer with
+`Idempotency-Replayed: true` and has its effect once. The same key with a
+*different* request gets `409` (`idempotency-key-reused`); a missing header gets
+`400` (`idempotency-key-required`), a malformed one `400`
+(`idempotency-key-invalid`). `PUT` takes no key.
 
 ```sh
 curl -X POST localhost:8080/paths/pick-a/work-units \
@@ -295,22 +296,22 @@ curl -X POST localhost:8080/paths/pick-a/work-units \
   -d '{"workUnitId":"wu-1","cpt":"2026-08-21T12:00:00Z","reference":"order-line-1"}'
 ```
 
-### `POST /paths/{pathId}/release` — ReleaseNextWork
+### `POST /paths/{pathId}/work-releases` — ReleaseNextWork
 
 Applies the release policy: admits the pending work unit with the earliest
 (most urgent) CPT.
 
 ```sh
-curl -X POST localhost:8080/paths/pick-a/release
+curl -X POST localhost:8080/paths/pick-a/work-releases -H "Idempotency-Key: $(uuidgen)"
 ```
 
 Fails with `409` if the pool is empty or a release-fed pool is at its WIP
 limit.
 
-### `POST /work-units/{id}/complete` — RecordCompletion
+### `POST /work-units/{id}/completions` — RecordCompletion
 
 ```sh
-curl -X POST localhost:8080/work-units/wu-1/complete
+curl -X POST localhost:8080/work-units/wu-1/completions -H "Idempotency-Key: $(uuidgen)"
 ```
 
 Fails with `409` if the unit was never released, or already completed.
@@ -357,7 +358,10 @@ curl "localhost:8080/work-units?reference=order-line-1"
 ```
 
 Every work unit ever enqueued with that `reference` (order-management's order
-id), as an array. Read-only; an unknown reference returns `200` with `[]`.
+id), keyset-paged: `{"items":[...],"nextCursor":"..."}`, ordered by `(cpt, id)`,
+`limit` 1-500 (default 100) and an opaque `cursor`; follow `nextCursor` until it
+is absent. Read-only; an unknown reference returns `200` with `{"items":[]}`.
+An undeclared query parameter is `400 unknown-query-parameter`.
 
 ### `GET /work-units/{id}` — GetWorkUnit
 
@@ -548,7 +552,7 @@ same `ports.EventPublisher` interface the log publisher does.
   `data.work_unit_id` is fed into `ApplyTaskCompleted`, which wraps the
   existing `RecordCompletion` use case (`RecordCompletionRequest.WorkUnitId`)
   with the atomic processed-event mark (ADR-0028), transitioning that work
-  unit from Released to Completed exactly as `POST /work-units/{id}/complete`
+  unit from Released to Completed exactly as `POST /work-units/{id}/completions`
   would. A `work_unit_id` this context never planned (e.g. a PACK task keyed
   by the order id) is an INFO-logged, processed skip.
 - Topic `warehouse.order-management.events`, event types `OrderAllocated` and
@@ -624,7 +628,7 @@ release it), then publish the completion event and re-query the unit:
 curl -X POST localhost:8080/paths/pick-a/work-units \
   -H 'Idempotency-Key: wu-1-attempt-1' \
   -d '{"workUnitId":"wu-1","cpt":"2026-08-21T23:00:00Z","reference":"ref-1"}'
-curl -X POST localhost:8080/paths/pick-a/release
+curl -X POST localhost:8080/paths/pick-a/work-releases -H "Idempotency-Key: $(uuidgen)"
 
 kubectl --context kind-warehouse -n warehouse-systems exec -i kafka-controller-0 -c kafka -- \
   kafka-console-producer.sh --bootstrap-server localhost:9092 --topic warehouse.fulfillment.events <<'EOF'
@@ -663,7 +667,7 @@ in-cluster Collector Service (`charts/wes-work-planning/values.yaml`, the
 **Traces**
 
 - One server span per HTTP request (`github.com/riandyrn/otelchi`), named
-  after the chi **route pattern** (`/paths/{pathId}/release`) rather than the
+  after the chi **route pattern** (`/paths/{pathId}/work-releases`) rather than the
   raw path, so span names stay low-cardinality.
 - A child span per database call (`github.com/exaring/otelpgx` as the pgx v5
   pool tracer), carrying the normalized SQL — parameter placeholders, never
@@ -693,7 +697,7 @@ Every record is JSON on stdout. Records emitted while a span is active carry
 that span's IDs, so logs join traces:
 
 ```json
-{"time":"...","level":"INFO","msg":"http request","method":"POST","route":"/paths/{pathId}/release","status":200,"trace_id":"21da85e3a34ce1fabc425b63dfb148c6","span_id":"3af54929e6a0094c"}
+{"time":"...","level":"INFO","msg":"http request","method":"POST","route":"/paths/{pathId}/work-releases","status":200,"trace_id":"21da85e3a34ce1fabc425b63dfb148c6","span_id":"3af54929e6a0094c"}
 ```
 
 The OTel SDK's own diagnostics are bridged onto the same logger at `debug`,
@@ -712,7 +716,7 @@ curl -X POST localhost:8080/paths/pick-a/work-units \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: wu-1-attempt-1' \
   -d '{"workUnitId":"wu-1","cpt":"2026-08-23T23:00:00Z","reference":"order-1"}'
-curl -X POST localhost:8080/paths/pick-a/release
+curl -X POST localhost:8080/paths/pick-a/work-releases -H "Idempotency-Key: $(uuidgen)"
 
 kafka-console-consumer.sh --bootstrap-server localhost:9092 \
   --topic warehouse.work-planning.events --property print.headers=true --from-beginning

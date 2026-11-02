@@ -219,8 +219,8 @@ alarm threshold. `Configure pool` raises no event
 | Receive charge forecast | Command | `usecases.ReceiveChargeForecast`, `POST /paths/{pathId}/charge` |
 | Commit shift plan | Command | `usecases.CommitShiftPlan`, `POST /paths/{pathId}/plan` |
 | Enqueue work unit | Command | `usecases.EnqueueWorkUnit`, `POST /paths/{pathId}/work-units` |
-| Release next work | Command | `usecases.ReleaseNextWork`, `POST /paths/{pathId}/release`, MCP `release_next_work` |
-| Record completion | Command | `usecases.RecordCompletion`, `POST /work-units/{id}/complete` |
+| Release next work | Command | `usecases.ReleaseNextWork`, `POST /paths/{pathId}/work-releases`, MCP `release_next_work` |
+| Record completion | Command | `usecases.RecordCompletion`, `POST /work-units/{id}/completions` |
 | Sample backlog | Command (query that can emit events) | `usecases.SampleBacklog`, `GET /paths/{pathId}/telemetry` |
 | Decide rebalance | Command (query that can emit events) | `usecases.RebalanceDecision`, `GET /paths/{pathId}/rebalance` |
 | Configure pool | Command | `usecases.ConfigurePool`, `PUT /paths/{pathId}/pool` ([ADR-0034](../adr/0034-configure-pool-command.md)); raises no event |

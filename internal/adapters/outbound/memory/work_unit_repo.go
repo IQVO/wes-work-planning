@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
@@ -58,6 +59,33 @@ func (r *WorkUnitRepo) FindByReference(ctx context.Context, reference string) ([
 	for _, u := range r.byId {
 		if u.Reference() == reference {
 			out = append(out, cloneWorkUnit(u))
+		}
+	}
+	return out, nil
+}
+
+// FindByReferencePage is the keyset-paged FindByReference: ordered by
+// (cpt, id), strictly after `after`, at most `limit` rows (limit <= 0 means
+// unbounded).
+func (r *WorkUnitRepo) FindByReferencePage(ctx context.Context, reference string, after *workunit.Cursor, limit int) ([]*workunit.WorkUnit, error) {
+	all, err := r.FindByReference(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].CPT().Time().Equal(all[j].CPT().Time()) {
+			return all[i].CPT().Time().Before(all[j].CPT().Time())
+		}
+		return all[i].Id() < all[j].Id()
+	})
+	var out []*workunit.WorkUnit
+	for _, u := range all {
+		if after != nil && !keysetAfter(u, after) {
+			continue
+		}
+		out = append(out, u)
+		if limit > 0 && len(out) == limit {
+			break
 		}
 	}
 	return out, nil
@@ -129,4 +157,10 @@ func cloneWorkUnit(u *workunit.WorkUnit) *workunit.WorkUnit {
 		_ = cp.Cancel(*at)
 	}
 	return cp
+}
+
+// keysetAfter reports whether u sorts strictly after the cursor in (cpt, id) order.
+func keysetAfter(u *workunit.WorkUnit, c *workunit.Cursor) bool {
+	cpt := u.CPT().Time()
+	return cpt.After(c.CPT) || (cpt.Equal(c.CPT) && u.Id() > c.ID)
 }

@@ -39,42 +39,31 @@ func NewRouter(h *Handlers, serviceName string, logger *slog.Logger) *chi.Mux {
 	r.Get("/healthz", healthz)
 	r.Get("/readyz", h.handleReadyz)
 
-	r.Route("/paths/{pathId}", func(r chi.Router) {
-		r.Post("/charge", h.postChargeForecast)
-		r.Post("/plan", h.postShiftPlan)
-		// POST /paths/{pathId}/work-units is route-scoped (r.With, not
-		// r.Use) behind RequireIdempotencyKey — it is the one mutating
-		// endpoint in this service that creates a NEW resource with a
-		// (caller-supplied but server-persisted) id, so a lost response
-		// and a client retry would otherwise duplicate the work unit
-		// (see docs/docs/adr for the ADR). The other three mutating POST
-		// routes are explicitly ruled out: postChargeForecast and
-		// postShiftPlan are upserts keyed by the caller-supplied path_id
-		// (ON CONFLICT (path_id) DO UPDATE — idempotent by construction,
-		// a retry just re-applies the same natural-key upsert), and
-		// postRelease acts on whichever existing pending entry the
-		// release policy currently picks, not a caller-identified new
-		// resource. IdempotencyPool nil (in-memory dev/test
-		// configuration, no transactional Postgres backing) skips the
-		// middleware entirely, mirroring every other optional
-		// Postgres-backed capability's nil convention in this service.
-		if h.IdempotencyPool != nil {
-			r.With(RequireIdempotencyKey(h.IdempotencyPool)).Post("/work-units", h.postWorkUnit)
-		} else {
-			r.Post("/work-units", h.postWorkUnit)
+	// Every POST is route-scoped (r.With, not r.Use) behind
+	// RequireIdempotencyKey (REST guideline section 2, ADR-0047). PUT and
+	// GET take no middleware. IdempotencyPool nil (in-memory test
+	// configuration, no transactional Postgres backing) skips the
+	// middleware entirely; production is Postgres-only (ADR-0044).
+	keyed := func(rt chi.Router) chi.Router {
+		if h.IdempotencyPool == nil {
+			return rt
 		}
-		r.Post("/release", h.postRelease)
+		return rt.With(RequireIdempotencyKey(h.IdempotencyPool))
+	}
+
+	r.Route("/paths/{pathId}", func(r chi.Router) {
+		keyed(r).Post("/charge", h.postChargeForecast)
+		keyed(r).Post("/plan", h.postShiftPlan)
+		keyed(r).Post("/work-units", h.postWorkUnit)
+		keyed(r).Post("/work-releases", h.postRelease)
 		r.Put("/pool", h.putPool)
 		r.Get("/telemetry", h.getTelemetry)
 		r.Get("/rebalance", h.getRebalance)
 		r.Get("/labor-plan-view", h.getLaborPlanView)
 	})
 
-	r.Post("/work-units/{id}/complete", h.postComplete)
+	keyed(r).Post("/work-units/{id}/completions", h.postComplete)
 	r.Get("/work-units", h.getWorkUnitsByReference)
-	// GET /work-units/{id} reads one work unit by its own identity. chi's
-	// radix tree matches the static "/complete" suffix as a distinct,
-	// longer route, so this never shadows POST /work-units/{id}/complete.
 	r.Get("/work-units/{id}", h.getWorkUnit)
 
 	r.Get("/inventory-view/{sku}", h.getInventoryView)

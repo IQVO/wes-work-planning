@@ -118,7 +118,7 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 
 ### ReleaseNextWork
 
-- **Trigger**: `POST /paths/{pathId}/release` → `200`; MCP tool
+- **Trigger**: `POST /paths/{pathId}/work-releases` → `200`; MCP tool
   `release_next_work`.
 - **Inputs**: `pathId`.
 - **Invariants**: the pool exists (`404`); it has a pending entry
@@ -136,7 +136,7 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 
 ### RecordCompletion
 
-- **Trigger**: `POST /work-units/{id}/complete` → `200`; internally by
+- **Trigger**: `POST /work-units/{id}/completions` → `200`; internally by
   `ApplyTaskCompleted`.
 - **Inputs**: work-unit id.
 - **Invariants**: the unit exists (`404`), was released
@@ -194,7 +194,7 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 | Use case | Trigger | Returns | Not found |
 |---|---|---|---|
 | `GetWorkUnit` | `GET /work-units/{id}` | one work unit (`id`, `pathId`, `cpt`, `reference`, `state`, `giftWrap`, `sku`, `lineNo`, `releasedAt`, `completedAt`, `cancelledAt`; RELOCATE units add `relocation` = `planId`, `moveSeq`, `kind`, `siteId`, `fromSlot`, `toSlot`, `blockedBy`) | `404` |
-| `GetWorkUnitsByReference` | `GET /work-units?reference=` | every work unit with that reference (an array; empty when none) | `400 reference-required` when the parameter is missing |
+| `GetWorkUnitsByReference` | `GET /work-units?reference=` | every work unit with that reference, keyset-paged (`{items,nextCursor}`; `items` empty when none) | `400 reference-required` when the parameter is missing |
 | `LaborPlanView` | `GET /paths/{pathId}/labor-plan-view` | the `LaborPlanObserved` projection, with the ADR-0019 drift outcome | `404` until a `ShiftPlanCommitted` for the path arrives |
 | `InventoryView` | `GET /inventory-view/{sku}` | the `UsableInventoryObserved` projection | `404` until an inventory event for the SKU arrives |
 

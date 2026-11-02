@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/claudioed/wes-work-planning/internal/adapters/inbound/http/page"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
@@ -247,13 +249,36 @@ func (h *Handlers) getWorkUnit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) getWorkUnitsByReference(w http.ResponseWriter, r *http.Request) {
-	reference := r.URL.Query().Get("reference")
-	if reference == "" {
+	if name := page.Unknown(r, "reference"); name != "" {
+		writeError(w, r, fmt.Errorf("%w: %q is not a parameter of this collection (declared: reference, limit, cursor)", errUnknownQueryParameter, name))
+		return
+	}
+	limit, err := page.Limit(r)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	req := usecases.GetWorkUnitsByReferenceRequest{Limit: page.FetchSize(limit)}
+	pos, err := page.After(r)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if pos != nil {
+		cpt, perr := time.Parse(time.RFC3339Nano, pos.Sort)
+		if perr != nil {
+			writeError(w, r, page.ErrInvalidCursor)
+			return
+		}
+		req.After = &workunit.Cursor{CPT: cpt, ID: pos.ID}
+	}
+	req.Reference = r.URL.Query().Get("reference")
+	if req.Reference == "" {
 		writeError(w, r, errMissingReference)
 		return
 	}
 
-	units, err := h.GetWorkUnitsByReference.Execute(r.Context(), usecases.GetWorkUnitsByReferenceRequest{Reference: reference})
+	units, err := h.GetWorkUnitsByReference.Execute(r.Context(), req)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -263,6 +288,7 @@ func (h *Handlers) getWorkUnitsByReference(w http.ResponseWriter, r *http.Reques
 	for i, unit := range units {
 		out[i] = toWorkUnitResponseDTO(unit)
 	}
-
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, page.Of(out, limit, func(d workUnitResponseDTO) page.Position {
+		return page.Position{Sort: d.CPT.UTC().Format(time.RFC3339Nano), ID: d.Id}
+	}))
 }

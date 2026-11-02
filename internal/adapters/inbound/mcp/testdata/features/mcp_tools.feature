@@ -13,7 +13,7 @@
 #   - docs/docs/mcp/governance-charter.md (§2 tool curation: intent-level
 #     tools; §4 write tools must be safe-by-construction)
 #   - apis/openapi.yaml GET /paths/{pathId}/telemetry,
-#     GET /paths/{pathId}/rebalance and POST /paths/{pathId}/release —
+#     GET /paths/{pathId}/rebalance and POST /paths/{pathId}/work-releases —
 #     the same read models and write the tools serve.
 
 Feature: MCP tool behavioral evals

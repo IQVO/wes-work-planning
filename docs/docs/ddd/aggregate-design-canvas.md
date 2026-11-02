@@ -275,8 +275,8 @@ flow-fed only through `ConfigurePool` (W9); an unconfigured path keeps the
 |---|---|---|
 | `EnqueueWorkUnit` | `POST /paths/{pathId}/work-units` (`Idempotency-Key` with Postgres); `ApplyOrderAllocated` from Kafka | `Enqueue` (creates the pool on first enqueue **if none was configured**: `ReleaseFed`, WIP limit and alarm threshold 1000) |
 | `ConfigurePool` | `PUT /paths/{pathId}/pool` (REST only, no MCP tool; [ADR-0034](../adr/0034-configure-pool-command.md)) | `Configure` (creates the pool if absent; idempotent; raises no event) |
-| `ReleaseNextWork` | `POST /paths/{pathId}/release`; MCP `release_next_work` | `ReleasePolicy.Apply` → `ReleaseNext`, plus `Reconcile` |
-| `RecordCompletion` | `POST /work-units/{id}/complete`; `ApplyTaskCompleted` from Kafka | `Reconcile` |
+| `ReleaseNextWork` | `POST /paths/{pathId}/work-releases`; MCP `release_next_work` | `ReleasePolicy.Apply` → `ReleaseNext`, plus `Reconcile` |
+| `RecordCompletion` | `POST /work-units/{id}/completions`; `ApplyTaskCompleted` from Kafka | `Reconcile` |
 | `SampleBacklog` | `GET /paths/{pathId}/telemetry`; MCP `get_backlog_telemetry` | read-only: `BacklogDepth`, `WIP`, `IsOverAlarmThreshold`, `RemainingCapacity` |
 | `RebalanceDecision` | `GET /paths/{pathId}/rebalance`; MCP `get_rebalance_recommendation` | read-only |
 
@@ -378,8 +378,8 @@ the aggregate rejects a second completion — defence in depth.
 | Command | Entry points |
 |---|---|
 | `EnqueueWorkUnit` | `POST /paths/{pathId}/work-units`; `ApplyOrderAllocated` |
-| `ReleaseNextWork` | `POST /paths/{pathId}/release`; MCP `release_next_work` |
-| `RecordCompletion` | `POST /work-units/{id}/complete`; `ApplyTaskCompleted` |
+| `ReleaseNextWork` | `POST /paths/{pathId}/work-releases`; MCP `release_next_work` |
+| `RecordCompletion` | `POST /work-units/{id}/completions`; `ApplyTaskCompleted` |
 
 ### 7. Created events
 

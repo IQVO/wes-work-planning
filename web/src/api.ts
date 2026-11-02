@@ -3,6 +3,7 @@ import type {
   ChargeForecastResponse,
   ConfigurePoolRequest,
   PoolConfigResponse,
+  WorkUnit,
   ReceiveChargeForecastRequest,
 } from "./types";
 
@@ -147,8 +148,7 @@ export function configurePool(
 }
 
 /** POST /paths/{pathId}/charge -> 201 (400 invalid-quantity & malformed body,
- *  422 idempotency-key-reused on the server side where the store enforces
- *  keys). The caller owns the key's lifecycle: same key retries the same
+ *  409 idempotency-key-reused when the key was used for a different request). The caller owns the key's lifecycle: same key retries the same
  *  submission, a fresh key is a genuinely new forecast. */
 export function receiveChargeForecast(
   pathId: string,
@@ -158,4 +158,28 @@ export function receiveChargeForecast(
   return apiPost<ChargeForecastResponse>(`/paths/${seg(pathId)}/charge`, input, {
     idempotencyKey,
   });
+}
+
+/** GET /work-units?reference= follows `nextCursor` until it is absent and
+ *  returns every work unit (REST guideline 5.2/5.3: the list is `items` of a
+ *  {items,nextCursor} page, never a bare array; one page is not the whole
+ *  history). */
+export async function fetchWorkUnitsByReference(reference: string): Promise<WorkUnit[]> {
+  const all: WorkUnit[] = [];
+  let cursor: string | undefined;
+  do {
+    const qs = new URLSearchParams({ reference, limit: "500" });
+    if (cursor) qs.set("cursor", cursor);
+    let res: Response;
+    try {
+      res = await fetch(`${WES_API_BASE}/work-units?${qs.toString()}`);
+    } catch (err) {
+      throw toApiError(err);
+    }
+    if (!res.ok) await parseProblemOrThrow(res);
+    const page = (await res.json()) as { items: WorkUnit[]; nextCursor?: string };
+    all.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return all;
 }

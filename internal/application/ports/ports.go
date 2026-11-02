@@ -48,6 +48,12 @@ type WorkUnitRepo interface {
 	// reference; that mirrors FindByPathId's empty-collection semantics
 	// rather than FindById's single-resource semantics.
 	FindByReference(ctx context.Context, reference string) ([]*workunit.WorkUnit, error)
+	// FindByReferencePage is the keyset-paged form of FindByReference
+	// (REST guideline section 3): work units ordered by (cpt, id), strictly
+	// after `after` when non-nil, at most `limit` rows when limit > 0.
+	// Rows that share a CPT are separated by id, so no row is skipped or
+	// repeated across pages.
+	FindByReferencePage(ctx context.Context, reference string, after *workunit.Cursor, limit int) ([]*workunit.WorkUnit, error)
 }
 
 // RelocationWorkRepo reads the RELOCATE work units planned from approved

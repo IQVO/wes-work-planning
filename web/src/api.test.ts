@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   configurePool,
+  fetchWorkUnitsByReference,
   newIdempotencyKey,
   receiveChargeForecast,
   toApiError,
@@ -178,5 +179,23 @@ describe("network failures and key minting", () => {
     vi.stubGlobal("crypto", { getRandomValues: realCrypto.getRandomValues.bind(realCrypto) });
     const key = newIdempotencyKey();
     expect(key).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+});
+
+describe("fetchWorkUnitsByReference", () => {
+  it("follows nextCursor until absent and returns every item", async () => {
+    const wu = (id: string) => ({ id });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { items: [wu("a"), wu("b")], nextCursor: "c1" }))
+      .mockResolvedValueOnce(jsonResponse(200, { items: [wu("c")] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rows = await fetchWorkUnitsByReference("order-1");
+
+    expect(rows.map((r) => r.id)).toEqual(["a", "b", "c"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe(`${WES_API_BASE}/work-units?reference=order-1&limit=500`);
+    expect(fetchMock.mock.calls[1][0]).toContain("cursor=c1");
   });
 });

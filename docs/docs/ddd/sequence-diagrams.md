@@ -52,9 +52,9 @@ sequenceDiagram
     alt key already stored
         IDEM->>IDEM: ROLLBACK and read stored row
         alt same request hash
-            IDEM-->>Client: replay stored status, headers and body
+            IDEM-->>Client: replay stored status, headers and body (+ Idempotency-Replayed: true)
         else different request hash
-            IDEM-->>Client: 422 idempotency-key-reused
+            IDEM-->>Client: 409 idempotency-key-reused
         end
     else new key
         IDEM->>UC: Execute inside the middleware transaction
@@ -104,7 +104,7 @@ sequenceDiagram
     participant Outbox as outbox_events
     participant Metrics as ReleaseMetrics
 
-    Caller->>IN: POST /paths/{pathId}/release
+    Caller->>IN: POST /paths/{pathId}/work-releases
     IN->>UC: Execute
     loop retryOnPoolConflict, at most 12 attempts
         UC->>PoolRepo: FindByPathId
@@ -190,7 +190,7 @@ sequenceDiagram
     Note over KIN: a failing handler is tried 3 times in total, then sent to warehouse.fulfillment.events.dlq
 ```
 
-`POST /work-units/{id}/complete` calls the same `RecordCompletion.Execute`
+`POST /work-units/{id}/completions` calls the same `RecordCompletion.Execute`
 directly, without the processed-event mark.
 
 Source: `internal/adapters/inbound/kafka/consumer.go`,

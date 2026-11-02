@@ -81,6 +81,7 @@ no scheduler).
 | [0044](./0044-postgres-and-kafka-are-the-only-runtime.md) | Postgres and Kafka are the only runtime: `cmd/wes`, `cmd/mcp` and `cmd/wes-projector` have no in-memory repositories, no log sink, no direct publisher and no optional relay/consumer; mandatory variables and `permissive`/`off`/`log` are boot errors; real `/readyz`; NUL and `wipLimit` bounds are client errors; memory adapters are test doubles | Accepted |
 | [0045](./0045-pack-aware-work-units.md) | Pack-aware work units: `CASE_PICK` / `EACH_PICK` / `BREAK_CASE` released as the `pick` / `case_break` objects fulfillment-execution consumes; local copy of product-master pack-level events (own `PACK_VIEW_CONSUMER_GROUP`); case-based charge and travel estimates | Accepted |
 | [0046](./0046-a2a-inbound-adapter.md) | Agent2Agent as an inbound adapter: this context as an A2A agent (official a2a-go SDK, JSON-RPC 2.0 over HTTP, Agent Card at the well-known path, curated goal-shaped skills, delegation only — facts still travel as CloudEvents) | Accepted |
+| [0047](./0047-fleet-rest-api-guideline.md) | Adopt the fleet REST API guideline: noun routes, idempotent POST on a global `Idempotency-Key` (409 on reuse, `Idempotency-Replayed`), keyset-paged collections, Spectral-enforced | Accepted |
 
 ## The template
 

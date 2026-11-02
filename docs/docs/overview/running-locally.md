@@ -124,14 +124,14 @@ curl -s -X POST localhost:8080/paths/pick-a/work-units \
   -d '{"workUnitId":"wu-2","cpt":"2026-08-23T18:00:00Z","reference":"order-78/line-1"}'
 
 # 4 — release: returns wu-2, the earlier CPT, regardless of insert order
-curl -s -X POST localhost:8080/paths/pick-a/release
+curl -s -X POST localhost:8080/paths/pick-a/work-releases -H "Idempotency-Key: $(uuidgen)"
 
 # 5 — telemetry, then the rebalance recommendation
 curl -s localhost:8080/paths/pick-a/telemetry
 curl -s localhost:8080/paths/pick-a/rebalance
 
 # 6 — complete it
-curl -s -X POST localhost:8080/work-units/wu-2/complete
+curl -s -X POST localhost:8080/work-units/wu-2/completions -H "Idempotency-Key: $(uuidgen)"
 ```
 
 Every endpoint, with full schemas and status codes, is in the

@@ -18,3 +18,14 @@ include-operation-id = "receiveChargeForecast"
 
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", "400", "401", "403", "404", "409", "422", "429", "5xx"]
+
+# getWorkUnitsByReference is keyset-paged (REST guideline section 3). `cursor`
+# is an opaque token OpenAPI can only call `string`, so Schemathesis sends a
+# random schema-valid string and the service rightly answers 400
+# `invalid-cursor`. Pinned by TestGetWorkUnitsByReference_BadPagingParameters
+# (rest_guideline_test.go).
+[[operations]]
+include-operation-id = "getWorkUnitsByReference"
+
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", "400", "401", "403", "404", "409", "429", "5xx"]

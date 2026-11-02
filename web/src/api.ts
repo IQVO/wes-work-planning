@@ -3,6 +3,7 @@ import type {
   ChargeForecastResponse,
   ConfigurePoolRequest,
   PoolConfigResponse,
+  RebalanceRecommendation,
   WorkUnit,
   ReceiveChargeForecastRequest,
 } from "./types";
@@ -158,6 +159,25 @@ export function receiveChargeForecast(
   return apiPost<ChargeForecastResponse>(`/paths/${seg(pathId)}/charge`, input, {
     idempotencyKey,
   });
+}
+
+/** POST /paths/{pathId}/rebalance-decisions -> 201 (404 not-found when the
+ *  path has no work pool). Every call mints a NEW Idempotency-Key: a decision
+ *  publishes PathThrottled / LaborReassignmentFlagged on its first execution,
+ *  and a reused key would replay a frozen decision and publish nothing, so a
+ *  key is never shared between two decisions (REST guideline 5.1). No body. */
+export async function decideRebalance(pathId: string): Promise<RebalanceRecommendation> {
+  let res: Response;
+  try {
+    res = await fetch(`${WES_API_BASE}/paths/${seg(pathId)}/rebalance-decisions`, {
+      method: "POST",
+      headers: { "Idempotency-Key": newIdempotencyKey() },
+    });
+  } catch (err) {
+    throw toApiError(err);
+  }
+  if (!res.ok) await parseProblemOrThrow(res);
+  return (await res.json()) as RebalanceRecommendation;
 }
 
 /** GET /work-units?reference= follows `nextCursor` until it is absent and

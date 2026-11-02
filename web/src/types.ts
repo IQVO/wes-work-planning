@@ -24,7 +24,7 @@ export interface LaborPlanView {
   observedAt: string;
 }
 
-/** GET /paths/{pathId}/rebalance -- RebalanceDecision (throttle vs
+/** POST /paths/{pathId}/rebalance-decisions -- RebalanceDecision (throttle vs
  *  reassign vs none), with the backlog/WIP snapshot it was decided from. */
 export interface RebalanceRecommendation {
   pathId: string;

@@ -118,7 +118,7 @@ sequenceDiagram
     WES->>WES: WorkUnitCompleted
     Note over WES: GET /paths/pick-a/telemetry?cutoffAt=
     WES->>WES: BacklogThresholdBreached if over threshold, PathCapacityChanged
-    Note over WES: GET /paths/pick-a/rebalance
+    Note over WES: POST /paths/pick-a/rebalance-decisions
     WES->>WES: PathThrottled or LaborReassignmentFlagged
 ```
 

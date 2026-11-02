@@ -40,7 +40,7 @@ not-ready first on graceful shutdown
 | 4 | `POST` | `/paths/{pathId}/work-releases` | ReleaseNextWork | `releaseNextWork` |
 | 5 | `POST` | `/work-units/{id}/completions` | RecordCompletion | `recordCompletion` |
 | 6 | `GET` | `/paths/{pathId}/telemetry` | SampleBacklog | `sampleBacklog` |
-| 7 | `GET` | `/paths/{pathId}/rebalance` | RebalanceDecision | `rebalanceDecision` |
+| 7 | `POST` | `/paths/{pathId}/rebalance-decisions` | RebalanceDecision | `rebalanceDecision` |
 | 8 | `GET` | `/paths/{pathId}/labor-plan-view` | LaborPlanView (projection) | `getLaborPlanView` |
 | 9 | `GET` | `/inventory-view/{sku}` | InventoryView (projection) | `getInventoryView` |
 | 10 | `GET` | `/work-units?reference=` | GetWorkUnitsByReference | `getWorkUnitsByReference` |

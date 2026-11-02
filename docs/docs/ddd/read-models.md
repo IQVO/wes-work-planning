@@ -19,7 +19,7 @@ are and why the rule holds.
 | Projection | Keyed by | Built from | Exposed at |
 |---|---|---|---|
 | **Backlog telemetry** | `path_id` | computed from `WorkPool.entries` on read | `GET /paths/{pathId}/telemetry` |
-| **Rebalance recommendation** | `path_id` | computed from the same pool snapshot on read | `GET /paths/{pathId}/rebalance` |
+| **Rebalance recommendation** | `path_id` | computed from the same pool snapshot when decided | `POST /paths/{pathId}/rebalance-decisions` |
 | **`LaborPlanObserved`** | `path_id` | `ShiftPlanCommitted` events from `workforce-management`, plus the drift outcome of comparing it with our `PathPlan` ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)) | `GET /paths/{pathId}/labor-plan-view` (`driftHeads`, `driftDetectedAt`) |
 | **`UsableInventoryObserved`** | **`sku`** | `StockReserved` / `ReservationRevoked` events from `inventory-storage` | `GET /inventory-view/{sku}` |
 | **Product classification copy** | **`sku`** | `ProductClassified` events from `product-master`, applied only when `version` is newer ([ADR-0035](../adr/0035-product-classification-local-copy.md)) | not exposed; read once per `WorkReleased` as `ProductClassificationView` |

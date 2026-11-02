@@ -222,7 +222,7 @@ alarm threshold. `Configure pool` raises no event
 | Release next work | Command | `usecases.ReleaseNextWork`, `POST /paths/{pathId}/work-releases`, MCP `release_next_work` |
 | Record completion | Command | `usecases.RecordCompletion`, `POST /work-units/{id}/completions` |
 | Sample backlog | Command (query that can emit events) | `usecases.SampleBacklog`, `GET /paths/{pathId}/telemetry` |
-| Decide rebalance | Command (query that can emit events) | `usecases.RebalanceDecision`, `GET /paths/{pathId}/rebalance` |
+| Decide rebalance | Command (computes a decision, emits events) | `usecases.RebalanceDecision`, `POST /paths/{pathId}/rebalance-decisions` |
 | Configure pool | Command | `usecases.ConfigurePool`, `PUT /paths/{pathId}/pool` ([ADR-0034](../adr/0034-configure-pool-command.md)); raises no event |
 | ChargeForecast, ShiftPlan, WorkPool, WorkUnit | Aggregate | `internal/domain/{charge,plan,release,workunit}` |
 | Charge forecast received … Path plan drift detected (11) | Domain event | `internal/domain/shared/events.go` |

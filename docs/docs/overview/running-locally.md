@@ -128,7 +128,7 @@ curl -s -X POST localhost:8080/paths/pick-a/work-releases -H "Idempotency-Key: $
 
 # 5 — telemetry, then the rebalance recommendation
 curl -s localhost:8080/paths/pick-a/telemetry
-curl -s localhost:8080/paths/pick-a/rebalance
+curl -s -X POST localhost:8080/paths/pick-a/rebalance-decisions -H "Idempotency-Key: $(uuidgen)"
 
 # 6 — complete it
 curl -s -X POST localhost:8080/work-units/wu-2/completions -H "Idempotency-Key: $(uuidgen)"

@@ -176,7 +176,7 @@ process-path catalogue (process-path-management).
 | Operator | `ConfigurePool` | Command | REST `PUT /paths/{pathId}/pool` (no MCP tool; [ADR-0034](../adr/0034-configure-pool-command.md)) | OHS |
 | Station / supervisor | `RecordCompletion` | Command | REST `POST /work-units/{id}/completions` | OHS |
 | Supervisor / warehouse-ops-agent | `SampleBacklog` | Query (may emit events) | REST `GET /paths/{pathId}/telemetry?cutoffAt=`; MCP tool `get_backlog_telemetry`; MCP resource `telemetry://{pathId}/backlog` | OHS |
-| Supervisor / warehouse-ops-agent | `RebalanceDecision` | Query (may emit events) | REST `GET /paths/{pathId}/rebalance`; MCP tool `get_rebalance_recommendation` | OHS |
+| Supervisor / warehouse-ops-agent | `RebalanceDecision` | Command (computes a decision, emits events) | REST `POST /paths/{pathId}/rebalance-decisions` (keyed); MCP tool `get_rebalance_recommendation` | OHS |
 | warehouse-ops-agent and UI | `GetWorkUnitsByReference`, `GetWorkUnit` | Query | REST `GET /work-units?reference=`, `GET /work-units/{id}` | OHS |
 | UI | `LaborPlanView`, `InventoryView` | Query | REST `GET /paths/{pathId}/labor-plan-view`, `GET /inventory-view/{sku}` | OHS |
 | warehouse-ops-agent | Release throughput report | Query | REST `GET /reports/throughput`, `GET /reports/throughput/freshness` (`cmd/wes-reports`); MCP tool `get_release_throughput_report` when `REPORTS_BASE_URL` is set | OHS |

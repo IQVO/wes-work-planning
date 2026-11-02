@@ -72,7 +72,7 @@ problem `type` it produces. Problem types are relative to
 | Status / `type` | Cause | Fix |
 |---|---|---|
 | `400 unknown-path-id` | `pathId` not in the process-path catalogue. Checked on the routes that can create an aggregate: `POST .../charge`, `.../plan`, `.../work-units`, `PUT .../pool` | use a declared path or add it to the catalogue |
-| `404 not-found` on `release`, `telemetry`, `rebalance` | no `WorkPool` exists for that path yet (created by the first enqueue or by `PUT /paths/{pathId}/pool`) | enqueue or configure first |
+| `404 not-found` on `work-releases`, `telemetry`, `rebalance-decisions` | no `WorkPool` exists for that path yet (created by the first enqueue or by `PUT /paths/{pathId}/pool`) | enqueue or configure first |
 | `404 not-found` on `labor-plan-view` / `inventory-view` | no event observed yet for that path/SKU | wait for the upstream event or check consumption |
 | `400 heads-exceed-installed-stations` | `plannedHeads > installedStations` | fix the plan |
 | `400 malformed-request-body` | invalid JSON, a missing required field (`cpt`, `plannedHeads`, `installedStations`, `wipLimit`, bucket `cpt`/`quantity`) or an empty/invalid `cutoffAt` | fix the request |

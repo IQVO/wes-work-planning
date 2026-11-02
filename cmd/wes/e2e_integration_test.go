@@ -387,7 +387,7 @@ func e2eRESTFlow(t *testing.T, ctx context.Context, env e2eEnv, pool *pgxpool.Po
 		t.Fatalf("idempotency_keys rows = %d, want 1 (the rejected NUL consumed no key)", n)
 	}
 
-	code, released, _ := e2eDo(t, ctx, http.MethodPost, env.url("/paths/pick-e2e/work-releases"), "", "")
+	code, released, _ := e2eDo(t, ctx, http.MethodPost, env.url("/paths/pick-e2e/work-releases"), "key-e2e-release", "")
 	if code != http.StatusOK || !strings.Contains(released, `"state":"Released"`) {
 		t.Fatalf("release = %d %s", code, released)
 	}
@@ -455,7 +455,7 @@ func e2eReplenishmentFlow(t *testing.T, ctx context.Context, env e2eEnv, pool *p
 	if code, resp, _ := e2eDo(t, ctx, http.MethodGet, env.url("/work-units/"+unitID), "", ""); code != http.StatusOK || !strings.Contains(resp, requestID) {
 		t.Fatalf("GET work unit = %d %s", code, resp)
 	}
-	if code, resp, _ := e2eDo(t, ctx, http.MethodPost, env.url("/paths/REPLENISH/work-releases"), "", ""); code != http.StatusOK || !strings.Contains(resp, unitID) {
+	if code, resp, _ := e2eDo(t, ctx, http.MethodPost, env.url("/paths/REPLENISH/work-releases"), "key-e2e-release-replenish", ""); code != http.StatusOK || !strings.Contains(resp, unitID) {
 		t.Fatalf("release REPLENISH = %d %s", code, resp)
 	}
 	events := e2eEventsOn(t, ctx, env.brokers, cloudevents.TopicWorkPlanningEvents, "WorkUnitCreated|"+unitID, "WorkReleased|"+unitID)

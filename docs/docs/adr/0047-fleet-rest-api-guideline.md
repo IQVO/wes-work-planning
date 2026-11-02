@@ -46,7 +46,7 @@ the idempotency middleware, key reuse answered `422`, and one unpaged collection
 
 ## Exemptions
 
-None. (`GET /paths/{pathId}/telemetry|rebalance|labor-plan-view` are single-path
+None. (`GET /paths/{pathId}/telemetry|labor-plan-view` are single-path
 views addressed by id and are not collections; the Spectral rule does not flag them.)
 
 ## Consumers changed
@@ -54,6 +54,26 @@ views addressed by id and are not collections; the Spectral rule does not flag t
 This repo's `web/` remote (`fetchWorkUnitsByReference` follows `nextCursor`).
 Outside this repo: e2e-tests (`warehouse-day` floor client), warehouse-ops-agent
 (`GET /work-units?reference=`), and any caller of the two renamed routes.
+
+## Amendment: `GET /paths/{pathId}/rebalance` becomes a keyed POST
+
+The rebalance route carried a verb in its path and published `PathThrottled` /
+`LaborReassignmentFlagged` as a side effect of a GET (unsafe for caches,
+prefetchers and polling). It is replaced, with no alias, by
+`POST /paths/{pathId}/rebalance-decisions` (guideline 1.3 e, a decision noun;
+operationId `rebalanceDecision` unchanged):
+
+- `Idempotency-Key` required (400 `idempotency-key-required` / `-invalid`), no
+  request body, 409 `idempotency-key-reused` on a different request.
+- Answers `201` with the same decision JSON, no `Location` (the decision is
+  computed, not stored), as pricing's `POST /price-quotes` answers a computed
+  result with `201`.
+- The first execution runs `RebalanceDecision` and publishes the events. A replay
+  of the same key returns the stored decision with `Idempotency-Replayed: true`
+  and publishes nothing. Callers (including pollers) must mint a new key per
+  decision: reusing one freezes the decision and silences the events.
+- `GET /paths/{pathId}/telemetry` still publishes events from a GET; it is a noun
+  route and out of scope here, recorded as a known concern.
 
 ## Consequences
 

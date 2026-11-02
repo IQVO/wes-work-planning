@@ -203,7 +203,7 @@ Jaeger and Grafana alongside HTTP.
   pool over its alarm threshold publishes `BacklogThresholdBreached`, and
   the rebalance recommendation publishes `PathThrottled` /
   `LaborReassignmentFlagged` alongside its answer — the same event side
-  effects the HTTP telemetry/rebalance endpoints have (the use cases are
+  effects the HTTP telemetry and rebalance-decisions endpoints have (the use cases are
   reused unchanged). Their descriptions name the event (§4.4). Until
   2026-10-12 they were annotated read-only; ADR-0037 corrected that so a
   host never skips a confirmation for a call that publishes.

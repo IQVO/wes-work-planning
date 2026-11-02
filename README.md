@@ -330,11 +330,16 @@ With the optional `cutoffAt` (RFC3339) it also returns
 `PathCapacityChanged` for that (path, CPT cutoff) pair — see
 [ADR-0018](docs/docs/adr/0018-path-capacity-changed.md).
 
-### `GET /paths/{pathId}/rebalance` — RebalanceDecision
+### `POST /paths/{pathId}/rebalance-decisions` — RebalanceDecision
 
 ```sh
-curl localhost:8080/paths/pick-a/rebalance
+curl -X POST localhost:8080/paths/pick-a/rebalance-decisions -H "Idempotency-Key: $(uuidgen)"
 ```
+
+Keyed POST with no body, answering `201` with the decision. The first execution
+publishes `PathThrottled` / `LaborReassignmentFlagged`; a replay of the same key
+returns the stored decision (`Idempotency-Replayed: true`) and publishes nothing,
+so send a new key for every new decision. The former `GET .../rebalance` is gone.
 
 Recommends `ThrottleUpstream` (flow-fed path over its alarm threshold) or
 `ReassignLabor` (release-fed path saturated at its WIP limit with backlog

@@ -162,7 +162,7 @@ func enqueueEntryState(wp *release.WorkPool, workUnitId string, cpt time.Time, s
 // holds every unit it ever saw, so by mid-day a save was hundreds of round
 // trips -- long enough that concurrent release/enqueue/completion saves
 // exhausted their optimistic-concurrency retry budget (observed live:
-// POST /paths/pick/release took 9.9s and failed). One statement keeps the
+// POST /paths/pick/work-releases took 9.9s and failed). One statement keeps the
 // race window, and the retry rate, small.
 func insertPoolEntries(ctx context.Context, tx querier, wp *release.WorkPool) error {
 	entries := wp.Entries()

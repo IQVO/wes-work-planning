@@ -172,9 +172,9 @@ process-path catalogue (process-path-management).
 | Planner / supervisor (warehouse-console MFE or any client) | `ReceiveChargeForecast` | Command | REST `POST /paths/{pathId}/charge` | OHS (we host) |
 | Planner / supervisor | `CommitShiftPlan` | Command | REST `POST /paths/{pathId}/plan` | OHS |
 | Any upstream caller | `EnqueueWorkUnit` | Command | REST `POST /paths/{pathId}/work-units` (`Idempotency-Key` required with Postgres) | OHS |
-| Supervisor / agent | `ReleaseNextWork` | Command | REST `POST /paths/{pathId}/release`; MCP tool `release_next_work` | OHS |
+| Supervisor / agent | `ReleaseNextWork` | Command | REST `POST /paths/{pathId}/work-releases`; MCP tool `release_next_work` | OHS |
 | Operator | `ConfigurePool` | Command | REST `PUT /paths/{pathId}/pool` (no MCP tool; [ADR-0034](../adr/0034-configure-pool-command.md)) | OHS |
-| Station / supervisor | `RecordCompletion` | Command | REST `POST /work-units/{id}/complete` | OHS |
+| Station / supervisor | `RecordCompletion` | Command | REST `POST /work-units/{id}/completions` | OHS |
 | Supervisor / warehouse-ops-agent | `SampleBacklog` | Query (may emit events) | REST `GET /paths/{pathId}/telemetry?cutoffAt=`; MCP tool `get_backlog_telemetry`; MCP resource `telemetry://{pathId}/backlog` | OHS |
 | Supervisor / warehouse-ops-agent | `RebalanceDecision` | Query (may emit events) | REST `GET /paths/{pathId}/rebalance`; MCP tool `get_rebalance_recommendation` | OHS |
 | warehouse-ops-agent and UI | `GetWorkUnitsByReference`, `GetWorkUnit` | Query | REST `GET /work-units?reference=`, `GET /work-units/{id}` | OHS |

@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { fetchWorkUnitsByReference, toApiError, type ApiError } from "../api";
 import { WES_API_BASE } from "../config";
 import type { BacklogSnapshot, RebalanceRecommendation, WorkUnit } from "../types";
 import { Card, StatusPill, DataTable, useFetch } from "@warehouse/ui-kit";
@@ -74,11 +75,22 @@ export function PlanningScreen() {
   const { data: rebalance, loading: rebalanceLoading, error: rebalanceError } =
     useFetch<RebalanceRecommendation>(rebalanceUrl);
 
-  const workUnitsUrl = reference
-    ? `${WES_API_BASE}/work-units?reference=${encodeURIComponent(reference)}`
-    : null;
-  const { data: workUnits, loading: workUnitsLoading, error: workUnitsError } =
-    useFetch<WorkUnit[]>(workUnitsUrl);
+  const [workUnits, setWorkUnits] = useState<WorkUnit[] | null>(null);
+  const [workUnitsLoading, setWorkUnitsLoading] = useState(false);
+  const [workUnitsError, setWorkUnitsError] = useState<ApiError | null>(null);
+  useEffect(() => {
+    if (!reference) return;
+    let cancelled = false;
+    setWorkUnitsLoading(true);
+    setWorkUnitsError(null);
+    fetchWorkUnitsByReference(reference)
+      .then((rows) => !cancelled && setWorkUnits(rows))
+      .catch((err) => !cancelled && setWorkUnitsError(toApiError(err)))
+      .finally(() => !cancelled && setWorkUnitsLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [reference]);
 
   function onSubmitPath(e: FormEvent) {
     e.preventDefault();

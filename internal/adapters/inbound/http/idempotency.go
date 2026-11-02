@@ -21,6 +21,26 @@ import (
 // route wrapped by RequireIdempotencyKey.
 const IdempotencyKeyHeader = "Idempotency-Key"
 
+// IdempotencyReplayedHeader is set to "true" on every replayed answer, and
+// only on a replay (REST guideline 2.3/2.4).
+const IdempotencyReplayedHeader = "Idempotency-Replayed"
+
+// maxIdempotencyKeyLen is the longest accepted Idempotency-Key.
+const maxIdempotencyKeyLen = 128
+
+// validIdempotencyKey reports whether key is 1-128 printable ASCII characters.
+func validIdempotencyKey(key string) bool {
+	if len(key) == 0 || len(key) > maxIdempotencyKeyLen {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		if key[i] < 0x20 || key[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 // RequireIdempotencyKey is route-scoped (chi's r.With(...)) transactional
 // idempotency-key middleware for a true resource-CREATION endpoint —
 // today, POST /paths/{pathId}/work-units (see router.go's wiring; it is
@@ -77,7 +97,7 @@ func RequireIdempotencyKey(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := r.Header.Get(IdempotencyKeyHeader)
 			if key == "" {
-				writeError(w, r, fmt.Errorf("%w: this endpoint creates a new resource on every call and requires a caller-supplied %s header so a retried request is never applied twice", errIdempotencyKeyRequired, IdempotencyKeyHeader))
+				writeError(w, r, fmt.Errorf("%w: this endpoint requires a caller-supplied %s header so a retried request is never applied twice", errIdempotencyKeyRequired, IdempotencyKeyHeader))
 				return
 			}
 
@@ -94,6 +114,11 @@ func RequireIdempotencyKey(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 			sum := sha256.Sum256(bodyBytes)
 			requestHash := hex.EncodeToString(sum[:])
+
+			if !validIdempotencyKey(key) {
+				writeError(w, r, fmt.Errorf("%w: %s must be 1-%d printable ASCII characters", errIdempotencyKeyInvalid, IdempotencyKeyHeader, maxIdempotencyKeyLen))
+				return
+			}
 
 			ctx := r.Context()
 			tx, err := pool.Begin(ctx)
@@ -158,21 +183,21 @@ type storedResponseHeaders = http.Header
 func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, key, requestHash string) {
 	ctx := r.Context()
 
-	var storedHash string
+	var storedHash, storedMethod, storedPath string
 	var statusCode *int
 	var responseBody []byte
 	var responseHeadersRaw []byte
 	err := pool.QueryRow(ctx, `
-		SELECT request_hash, status_code, response_body, response_headers
+		SELECT method, path, request_hash, status_code, response_body, response_headers
 		FROM idempotency_keys WHERE key = $1
-	`, key).Scan(&storedHash, &statusCode, &responseBody, &responseHeadersRaw)
+	`, key).Scan(&storedMethod, &storedPath, &storedHash, &statusCode, &responseBody, &responseHeadersRaw)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, internalErrorProblemDetails(r.URL.Path))
 		return
 	}
 
-	if storedHash != requestHash {
-		writeError(w, r, fmt.Errorf("%w: the %s header on this request was already used with a request that had a different body; use a new %s for a genuinely different request", errIdempotencyKeyReused, IdempotencyKeyHeader, IdempotencyKeyHeader))
+	if storedHash != requestHash || storedMethod != r.Method || storedPath != r.URL.Path {
+		writeError(w, r, fmt.Errorf("%w: the %s header on this request was already used with a different request (method, path or body); use a new %s for a genuinely different request", errIdempotencyKeyReused, IdempotencyKeyHeader, IdempotencyKeyHeader))
 		return
 	}
 
@@ -205,6 +230,7 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 			}
 		}
 	}
+	w.Header().Set(IdempotencyReplayedHeader, "true")
 	w.WriteHeader(*statusCode)
 	_, _ = w.Write(responseBody)
 }
@@ -238,7 +264,16 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 	rec := httptest.NewRecorder()
 	next.ServeHTTP(rec, r.WithContext(txCtx))
 
-	// Every NORMAL (non-panic) response is cached here, including a
+	// A 5xx is never stored (REST guideline 2.5): roll the whole
+	// transaction back (key row, aggregate change, outbox rows) and answer
+	// the 5xx, so the retry re-executes.
+	if rec.Code >= http.StatusInternalServerError {
+		_ = tx.Rollback(ctx)
+		copyRecorded(w, rec)
+		return
+	}
+
+	// Every other NORMAL (non-panic) response is cached here, including a
 	// business-logic error response (4xx from validation, etc.) — a
 	// deliberate v1 simplification (see the ADR): a client retrying the
 	// exact same key+body deterministically gets the exact same answer,
@@ -268,6 +303,11 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 
 	// Only after a successful commit does the real client see anything —
 	// the recorder's headers, then status, then body, VERBATIM.
+	copyRecorded(w, rec)
+}
+
+// copyRecorded writes a captured response onto the real ResponseWriter.
+func copyRecorded(w http.ResponseWriter, rec *httptest.ResponseRecorder) {
 	for k, vs := range rec.Header() {
 		for _, v := range vs {
 			w.Header().Add(k, v)

@@ -48,14 +48,14 @@ suffixes — for example `wes.work_units.released` is queried as
 | `pgxpool.acquires`, `pgxpool.acquire_duration`, `pgxpool.acquired_connections`, `pgxpool.canceled_acquires`, `pgxpool.constructing_connections`, `pgxpool.empty_acquire`, `pgxpool.empty_acquire_wait_time`, `pgxpool.idle_connections`, `pgxpool.max_connections`, `pgxpool.max_idle_destroys`, `pgxpool.max_lifetime_destroys`, `pgxpool.new_connections`, `pgxpool.total_connections` | observable counters/gauges | — | `db.system.name`, `db.client.connection.pool.name` (`host:port/db`) | **`cmd/wes-projector` and `cmd/wes-reports` only** (`analyticsstore.RecordPoolStats`); the OLTP pool of `cmd/wes`/`cmd/mcp` registers no pool-stats instruments | `otelpgx.RecordStats` |
 | `go.memory.used`, `go.memory.limit`, `go.memory.allocated`, `go.memory.allocations`, `go.memory.gc.goal`, `go.goroutine.count`, `go.processor.limit`, `go.config.gogc` | runtime | various | — | all four binaries | `go.opentelemetry.io/contrib/instrumentation/runtime` v0.71.0 |
 
-The `http.route` attribute is the chi route pattern (`/paths/{pathId}/release`),
+The `http.route` attribute is the chi route pattern (`/paths/{pathId}/work-releases`),
 never the raw path, so cardinality is bounded by the route table.
 
 ## Traces
 
 | Span name | Kind | Where | Notable attributes |
 |---|---|---|---|
-| chi route pattern, e.g. `/paths/{pathId}/release`, `/reports/throughput`, `/mcp` | server | otelchi middleware on the `cmd/wes`, `cmd/wes-reports` and `cmd/mcp` routers | HTTP semconv |
+| chi route pattern, e.g. `/paths/{pathId}/work-releases`, `/reports/throughput`, `/mcp` | server | otelchi middleware on the `cmd/wes`, `cmd/wes-reports` and `cmd/mcp` routers | HTTP semconv |
 | `kafka.publish warehouse.work-planning.events`, `kafka.publish warehouse.wes.analytics` | producer | `Publisher.Publish` / `AnalyticsPublisher.Publish` — **direct** publishing only (no `DATABASE_URL`) | `messaging.system=kafka`, `messaging.operation.name=publish`, `messaging.destination.name`, `messaging.batch.message_count`, `messaging.event_types` |
 | `kafka.consume <topic>` | consumer | integration consumer (5 topics), `ProductClassified` consumer, analytics projector | `messaging.kafka.offset`, partition, `messaging.message.id` (CloudEvents `id`), `cloudevents.event_type`, `cloudevents.event_source`; `product.sku` on the classification consumer |
 | `mcp.tool <name>` | internal | every MCP tool call | `mcp.tool.name` |
@@ -89,7 +89,7 @@ The per-request access log (`internal/adapters/inbound/http/logging.go`,
 `INFO` otherwise) has these fields — captured from a real run:
 
 ```json
-{"time":"2026-10-12T14:02:56.3234-03:00","level":"INFO","msg":"http request","method":"POST","path":"/paths/pick-a/release","route":"/paths/{pathId}/release","status":200,"duration_ms":0,"bytes":168,"request_id":"host/Ae6N1jNENb-000008","trace_id":"9b39de83f1dd803926e4b1a52e44b03c","span_id":"fbf313e269e1bec3"}
+{"time":"2026-10-12T14:02:56.3234-03:00","level":"INFO","msg":"http request","method":"POST","path":"/paths/pick-a/work-releases","route":"/paths/{pathId}/work-releases","status":200,"duration_ms":0,"bytes":168,"request_id":"host/Ae6N1jNENb-000008","trace_id":"9b39de83f1dd803926e4b1a52e44b03c","span_id":"fbf313e269e1bec3"}
 ```
 
 `path` has CR/LF stripped (log-injection guard); `request_id` comes from

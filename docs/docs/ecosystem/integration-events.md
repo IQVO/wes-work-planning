@@ -191,7 +191,7 @@ SKU-scoped, and a SKU-to-path mapping does not exist in the domain.
 
 `data.work_unit_id` maps to `RecordCompletionRequest.WorkUnitId` and reaches
 the **existing** `RecordCompletion` use case — the exact code path
-`POST /work-units/{id}/complete` uses — through `ApplyTaskCompleted`, which only
+`POST /work-units/{id}/completions` uses — through `ApplyTaskCompleted`, which only
 adds the atomic processed-event mark (see Idempotency below).
 
 `work_unit_id` is the completed task's `orderRef`. For a PICK task released by

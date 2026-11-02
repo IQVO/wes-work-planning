@@ -35,7 +35,7 @@ sequenceDiagram
     K->>WP: evt: OrderAllocated
     Note over WP: ApplyOrderAllocated enqueues one WorkUnit per line
     WP->>K: evt: com.warehouse.wes.work-planning.workunit.WorkUnitCreated
-    Sup->>WP: cmd: POST /paths/{pathId}/release or MCP release_next_work
+    Sup->>WP: cmd: POST /paths/{pathId}/work-releases or MCP release_next_work
     Note over WP: reads Hazmat and Fragile hints from the local copy
     WP->>K: evt: com.warehouse.wes.work-planning.workunit.WorkReleased
     K->>FE: evt: WorkReleased

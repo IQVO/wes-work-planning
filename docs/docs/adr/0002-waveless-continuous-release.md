@@ -51,7 +51,7 @@ that.
 earliest-CPT order, on demand, bounded by a per-pool WIP limit.**
 
 1. **No schedule.** Release happens when the floor asks (`POST
-   /paths/{pathId}/release`). There is no timer, batch window, wave identifier
+   /paths/{pathId}/work-releases`). There is no timer, batch window, wave identifier
    or cron entry anywhere in the service.
 2. **Priority is re-evaluated at every call.** `WorkPool.nextPendingIndex()`
    scans pending entries for the earliest CPT each time. A CPT that changes

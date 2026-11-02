@@ -118,6 +118,10 @@ func (r scopedWorkUnitRepo) FindByPathId(ctx context.Context, pathId shared.Path
 	return r.workUnits.FindByPathId(ctx, pathId)
 }
 
+func (r scopedWorkUnitRepo) FindByReferencePage(ctx context.Context, ref string, after *workunit.Cursor, limit int) ([]*workunit.WorkUnit, error) {
+	return r.workUnits.FindByReferencePage(ctx, ref, after, limit)
+}
+
 func (r scopedWorkUnitRepo) FindByReference(ctx context.Context, ref string) ([]*workunit.WorkUnit, error) {
 	return r.workUnits.FindByReference(ctx, ref)
 }

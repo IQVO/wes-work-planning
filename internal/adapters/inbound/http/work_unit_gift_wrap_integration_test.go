@@ -36,10 +36,13 @@ func TestGetWorkUnits_ReportsGiftWrapPersistedInPostgres(t *testing.T) {
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d, want 200 (%s)", getRec.Code, getRec.Body.String())
 	}
-	var units []map[string]any
-	if err := json.Unmarshal(getRec.Body.Bytes(), &units); err != nil {
+	var env struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode %s: %v", getRec.Body.String(), err)
 	}
+	units := env.Items
 	if len(units) != 1 || units[0]["giftWrap"] != true {
 		t.Fatalf("GET /work-units = %v, want one unit with giftWrap=true", units)
 	}

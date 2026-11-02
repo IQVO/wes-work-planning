@@ -76,13 +76,13 @@ func TestPutPool_LoweringBelowWIPNeverEvictsAndPausesRelease(t *testing.T) {
 			t.Fatalf("enqueue %s: %d %s", id, rec.Code, rec.Body.String())
 		}
 	}
-	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/release", nil); rec.Code != http.StatusOK {
+	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-releases", nil); rec.Code != http.StatusOK {
 		t.Fatalf("release 1: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := doJSON(t, router, http.MethodPut, "/paths/pick-a/pool", map[string]any{"mode": "ReleaseFed", "wipLimit": 5}); rec.Code != http.StatusOK {
 		t.Fatalf("configure 5: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/release", nil); rec.Code != http.StatusOK {
+	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-releases", nil); rec.Code != http.StatusOK {
 		t.Fatalf("release 2: %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -94,10 +94,10 @@ func TestPutPool_LoweringBelowWIPNeverEvictsAndPausesRelease(t *testing.T) {
 	if got.WIP != 2 || got.WIPLimit != 1 {
 		t.Fatalf("got wip=%d limit=%d, want wip=2 limit=1 (no eviction)", got.WIP, got.WIPLimit)
 	}
-	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/release", nil); rec.Code != http.StatusConflict {
+	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-releases", nil); rec.Code != http.StatusConflict {
 		t.Fatalf("release while over limit: got %d, want 409", rec.Code)
 	}
-	if rec := doJSON(t, router, http.MethodPost, "/work-units/wu-1/complete", nil); rec.Code != http.StatusOK {
+	if rec := doJSON(t, router, http.MethodPost, "/work-units/wu-1/completions", nil); rec.Code != http.StatusOK {
 		t.Fatalf("complete: %d %s", rec.Code, rec.Body.String())
 	}
 }

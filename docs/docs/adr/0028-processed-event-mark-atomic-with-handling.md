@@ -39,7 +39,7 @@ The consequences per path:
   `Completed` and its pool's WIP slot is never freed. That is exactly the
   failure mode the e2e `soak_backlog_ramp` run already found once (see
   `RecordCompletion`'s doc comment): a release-fed pool's WIP only ever ratchets
-  up until `wipLimit` is reached and every `POST /paths/{pathId}/release` 409s
+  up until `wipLimit` is reached and every `POST /paths/{pathId}/work-releases` 409s
   for the rest of the shift, with zero Kafka lag to show for it. That run's root
   cause was fixed by `WorkPool.Complete`; this bug made the same wedge reachable
   again from **any** transient error.

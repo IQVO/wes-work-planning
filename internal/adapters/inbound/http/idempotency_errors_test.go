@@ -20,7 +20,7 @@ func TestIdempotencyProblems_RouteThroughTheCatalogue(t *testing.T) {
 		wantTitle  string
 	}{
 		{"required", errIdempotencyKeyRequired, http.StatusBadRequest, "idempotency-key-required", "Idempotency-Key header is required"},
-		{"reused", errIdempotencyKeyReused, http.StatusUnprocessableEntity, "idempotency-key-reused", "Idempotency-Key was already used with a different request"},
+		{"reused", errIdempotencyKeyReused, http.StatusConflict, "idempotency-key-reused", "Idempotency-Key was already used with a different request"},
 		{"required wrapped", fmt.Errorf("ctx: %w", errIdempotencyKeyRequired), http.StatusBadRequest, "idempotency-key-required", "Idempotency-Key header is required"},
 	}
 	for _, tc := range cases {

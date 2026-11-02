@@ -1696,6 +1696,38 @@ components:
             OPTIONAL (ADR-0045). Makes the unit a `BREAK_CASE`; needs `sku`
             and excludes `quantity`, `pickUnit` and `fromBin` (otherwise
             `400 invalid-case-break`).
+      allOf:
+        # The pack-aware rules of the handler (packAwareOf), which OpenAPI 3.0
+        # can only state as negations. A body that breaks one is 400
+        # invalid-pick-plan / invalid-case-break.
+        - description: A sealed-case break (`caseBreak`) excludes the pick fields.
+          not:
+            anyOf:
+              - required: [caseBreak, quantity]
+              - required: [caseBreak, pickUnit]
+              - required: [caseBreak, fromBin]
+        - description: '`pickUnit` or `fromBin` needs `quantity` (eaches).'
+          not:
+            allOf:
+              - anyOf:
+                  - required: [pickUnit]
+                  - required: [fromBin]
+              - not:
+                  required: [quantity]
+        - description: A pick plan or a case break needs a non-blank `sku` (null counts as absent).
+          not:
+            allOf:
+              - anyOf:
+                  - required: [caseBreak]
+                  - required: [quantity]
+                  - required: [pickUnit]
+                  - required: [fromBin]
+              - not:
+                  required: [sku]
+                  properties:
+                    sku:
+                      type: string
+                      pattern: '\S'
       required: [workUnitId, cpt, reference]
 
     WorkUnitPage:

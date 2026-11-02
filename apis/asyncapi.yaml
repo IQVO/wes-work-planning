@@ -64,10 +64,10 @@ info:
     (`internal/adapters/outbound/kafka/publisher.go`) only sees the events
     that application use cases actually hand to `EventPublisher.Publish`. Any
     message that is not wired to the outbound adapter says so explicitly in
-    its own `description`. Note also that Kafka publication is opt-in at
-    runtime via the `EVENT_PUBLISHER=kafka` environment variable; with the
-    default `EVENT_PUBLISHER=log` the same events are only written to the log
-    publisher.
+    its own `description`. Every raised event is written to the transactional
+    outbox in the same transaction as the aggregate change and relayed to both
+    Kafka topics (ADR-0014); there is no log-only publisher
+    (`EVENT_PUBLISHER` accepts only `kafka`, ADR-0044).
 
     ## What this service consumes from other bounded contexts
 
@@ -240,6 +240,91 @@ channels:
           - $ref: "#/components/messages/PathCapacityChangedAnalytics"
           - $ref: "#/components/messages/PathPlanDriftDetectedAnalytics"
 
+  warehouse.workforce.events:
+    description: >-
+      workforce-management's integration topic, CONSUMED by this service
+      (owned by that bounded context; listed here read-only for orientation).
+      Read by the main consumer under `KAFKA_CONSUMER_GROUP` with a
+      `warehouse.workforce.events.dlq`. Only ShiftPlanCommitted is consumed;
+      every other type is ignored.
+    publish:
+      operationId: consumeWorkforceShiftPlanCommitted
+      summary: Project workforce-management's ShiftPlanCommitted into the LaborPlanObserved view.
+      description: >-
+        ObserveLaborPlan upserts the read-only `LaborPlanObserved` view keyed
+        by `path_id` (served by `GET /paths/{pathId}/labor-plan-view`) and
+        reconciles it against this service's own committed PathPlan, raising
+        `PathPlanDriftDetected` on a heads mismatch (ADR-0019). It is
+        deliberately NOT fed into this service's own ShiftPlan aggregate
+        (ADR-0006). The CloudEvents `id` is claimed in the same transaction
+        as the effect. A message that is not a valid CloudEvent is published
+        raw to the DLQ without retry.
+      message:
+        $ref: "#/components/messages/WorkforceShiftPlanCommitted"
+
+  warehouse.fulfillment.events:
+    description: >-
+      fulfillment-execution's integration topic, CONSUMED by this service
+      (owned by that bounded context; listed here read-only for orientation).
+      Read by the main consumer under `KAFKA_CONSUMER_GROUP` with a
+      `warehouse.fulfillment.events.dlq`. Only TaskCompleted is consumed.
+    publish:
+      operationId: consumeTaskCompleted
+      summary: Close the execution feedback loop by completing the named work unit.
+      description: >-
+        ApplyTaskCompleted wraps `RecordCompletion` for the event's
+        `work_unit_id`. A `work_unit_id` this context never planned (for
+        example a PACK task created during rebin consolidation, which carries
+        the order id) is an INFO-logged, processed skip; a NEW event id for an
+        already-completed work unit is a stale fact, marked processed
+        (ADR-0043). Neither is retried or dead-lettered. Any other failure is
+        retried and then dead-lettered.
+      message:
+        $ref: "#/components/messages/TaskCompleted"
+
+  warehouse.order-management.events:
+    description: >-
+      order-management's integration topic, CONSUMED by this service (owned
+      by that bounded context; listed here read-only for orientation). Read
+      by the main consumer under `KAFKA_CONSUMER_GROUP` with a
+      `warehouse.order-management.events.dlq`. Only OrderAllocated and
+      OrderPartiallyAllocated are consumed (identical payload shape).
+    publish:
+      operationId: consumeOrderAllocated
+      summary: Enqueue one work unit per allocated order line.
+      description: >-
+        ApplyOrderAllocated feeds each line into `EnqueueWorkUnit` under the
+        deterministic id `<order_id>-line-<line_no>` (reference = order id,
+        `lineNo` = `line_no`, ADR-0031, ADR-0036). Fire-and-forget: no reply
+        event is published. The CloudEvents `id` is claimed in the same
+        transaction as the enqueue; a failure is retried and then
+        dead-lettered.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/OrderAllocated"
+          - $ref: "#/components/messages/OrderPartiallyAllocated"
+
+  warehouse.process-path-management.events:
+    description: >-
+      process-path-management's integration topic, CONSUMED by this service
+      only when `PATH_CATALOGUE_SOURCE=kafka` (owned by that bounded context;
+      listed here read-only for orientation). Replayed from the earliest
+      offset under a per-process consumer group (NOT `KAFKA_CONSUMER_GROUP`)
+      into the in-memory process-path catalogue (ADR-0012). With the default
+      `PATH_CATALOGUE_SOURCE=file` nothing is read from this topic.
+    publish:
+      operationId: consumeProcessPathEvents
+      summary: Keep the process-path catalogue current.
+      description: >-
+        ProcessPathCreated and ProcessPathUpdated upsert a path definition;
+        ProcessPathDeactivated removes it. Invalid CloudEvents are WARN-logged
+        and skipped; unknown types are ignored. No DLQ.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ProcessPathCreated"
+          - $ref: "#/components/messages/ProcessPathUpdated"
+          - $ref: "#/components/messages/ProcessPathDeactivated"
+
   warehouse.network-inventory-planning.events:
     description: >-
       network-inventory-planning's integration topic, CONSUMED by this
@@ -302,8 +387,8 @@ channels:
       summary: Consume replenishment requests and plan them as REPLENISH work.
       description: >-
         A dedicated consumer reads this topic under the stable consumer group
-        `REPLENISHMENT_CONSUMER_GROUP` (only with `REPLENISHMENT_MODE=kafka`;
-        the default `permissive` consumes nothing) with its own
+        `REPLENISHMENT_CONSUMER_GROUP` (`REPLENISHMENT_MODE` unset or `kafka`;
+        `permissive`/`off` are boot errors, ADR-0044) with its own
         `warehouse.pick-face-replenishment.events.dlq`. Each
         ReplenishmentRequested becomes exactly ONE REPLENISH work unit (id
         `replenish-<request_id>`, ref = request_id, path REPLENISH, released
@@ -385,7 +470,7 @@ channels:
 components:
   messages:
     ChargeForecastReceived:
-      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
+      x-no-consumer-reason: "published for observability; no consumer in the fleet today"
       name: ChargeForecastReceived
       title: Charge Forecast Received
       summary: A shift's charge forecast was recorded for a process path.
@@ -417,7 +502,7 @@ components:
               path_id: pick-to-tote
 
     ShiftPlanCommitted:
-      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
+      x-no-consumer-reason: "published for observability; no consumer in the fleet today"
       name: ShiftPlanCommitted
       title: Shift Plan Committed
       summary: A path's headcount, rate and hours split was committed.
@@ -747,6 +832,213 @@ components:
               classification_source: native
               version: 3
 
+    WorkforceShiftPlanCommitted:
+      name: WorkforceShiftPlanCommitted
+      title: Shift Plan Committed (consumed)
+      summary: workforce-management committed a shift plan for a path.
+      description: >-
+        CONSUMED from `warehouse.workforce.events`, read-only mirror of the producer's contract. NOT this service's own ShiftPlanCommitted (a different model in a different bounded context, ADR-0006).
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/WorkforceShiftPlanCommittedEvent"
+      examples:
+        - name: workforceShiftPlanCommitted
+          payload:
+            specversion: "1.0"
+            id: 7c1d2e3f-4a5b-4c6d-8e7f-90a1b2c3d4e5
+            source: /warehouse/workforce-management
+            type: com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted
+            subject: pick-a
+            time: "2026-10-06T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:workforce-management:events:ShiftPlanCommitted:v1
+            data:
+              building_id: WH1
+              shift_id: shift-2026-10-06-day
+              path_id: pick-a
+              planned_heads: 6
+              planned_rate: 95.5
+              planned_hours: 8
+
+    TaskCompleted:
+      name: TaskCompleted
+      title: Task Completed (consumed)
+      summary: fulfillment-execution finished a task.
+      description: >-
+        CONSUMED from `warehouse.fulfillment.events`, read-only mirror of the producer's contract. Drives `RecordCompletion` for `work_unit_id`.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/TaskCompletedEvent"
+      examples:
+        - name: taskCompleted
+          payload:
+            specversion: "1.0"
+            id: 7c1d2e3f-4a5b-4c6d-8e7f-90a1b2c3d4e5
+            source: /warehouse/fulfillment-execution
+            type: com.warehouse.wes.fulfillment-execution.task.TaskCompleted
+            subject: task-1
+            time: "2026-10-06T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:fulfillment-execution:events:TaskCompleted:v1
+            data:
+              task_id: task-1
+              station_id: station-7
+              work_unit_id: order-77213-line-1
+              task_type: PICK
+
+    OrderAllocated:
+      name: OrderAllocated
+      title: Order Allocated (consumed)
+      summary: order-management allocated an order; its lines are ready to enqueue.
+      description: >-
+        CONSUMED from `warehouse.order-management.events`, read-only mirror of the producer's contract. One work unit is enqueued per line.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/OrderAllocatedEvent"
+      examples:
+        - name: orderAllocated
+          payload:
+            specversion: "1.0"
+            id: 7c1d2e3f-4a5b-4c6d-8e7f-90a1b2c3d4e5
+            source: /warehouse/order-management
+            type: com.warehouse.wes.order-management.order.OrderAllocated
+            subject: order-77213
+            time: "2026-10-06T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:order-management:events:OrderAllocated:v1
+            data:
+              order_id: order-77213
+              promise_date: "2026-10-08T00:00:00Z"
+              lines:
+                - line_no: 1
+                  sku: sku-482910
+                  path_id: pick-a
+                  gift_wrap: false
+
+    OrderPartiallyAllocated:
+      name: OrderPartiallyAllocated
+      title: Order Partially Allocated (consumed)
+      summary: order-management partially allocated an order; the allocated lines are ready to enqueue.
+      description: >-
+        CONSUMED from `warehouse.order-management.events`, read-only mirror of the producer's contract. Identical payload shape to OrderAllocated; handled identically.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/OrderPartiallyAllocatedEvent"
+      examples:
+        - name: orderPartiallyAllocated
+          payload:
+            specversion: "1.0"
+            id: 7c1d2e3f-4a5b-4c6d-8e7f-90a1b2c3d4e5
+            source: /warehouse/order-management
+            type: com.warehouse.wes.order-management.order.OrderPartiallyAllocated
+            subject: order-77213
+            time: "2026-10-06T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:order-management:events:OrderPartiallyAllocated:v1
+            data:
+              order_id: order-77213
+              promise_date: "2026-10-08T00:00:00Z"
+              lines:
+                - line_no: 1
+                  sku: sku-482910
+                  path_id: pick-a
+                  gift_wrap: false
+
+    ProcessPathCreated:
+      name: ProcessPathCreated
+      title: Process Path Created (consumed)
+      summary: process-path-management created a process path.
+      description: >-
+        CONSUMED from `warehouse.process-path-management.events` only with `PATH_CATALOGUE_SOURCE=kafka`, read-only mirror of the producer's contract.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProcessPathCreatedEvent"
+      examples:
+        - name: processPathCreated
+          payload:
+            specversion: "1.0"
+            id: 7c1d2e3f-4a5b-4c6d-8e7f-90a1b2c3d4e5
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: pick-a
+            time: "2026-10-06T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:process-path-management:events:ProcessPathCreated:v1
+            data:
+              path_id: pick-a
+              match_prefix: pick
+              direct: true
+              required_capabilities: []
+              intake: [ORDER]
+
+    ProcessPathUpdated:
+      name: ProcessPathUpdated
+      title: Process Path Updated (consumed)
+      summary: process-path-management updated a process path.
+      description: >-
+        CONSUMED from `warehouse.process-path-management.events` only with `PATH_CATALOGUE_SOURCE=kafka`, read-only mirror of the producer's contract.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProcessPathUpdatedEvent"
+      examples:
+        - name: processPathUpdated
+          payload:
+            specversion: "1.0"
+            id: 7c1d2e3f-4a5b-4c6d-8e7f-90a1b2c3d4e5
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated
+            subject: pick-a
+            time: "2026-10-06T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:process-path-management:events:ProcessPathUpdated:v1
+            data:
+              path_id: pick-a
+              match_prefix: pick
+              direct: true
+              required_capabilities: []
+              intake: [ORDER]
+
+    ProcessPathDeactivated:
+      name: ProcessPathDeactivated
+      title: Process Path Deactivated (consumed)
+      summary: process-path-management deactivated a process path.
+      description: >-
+        CONSUMED from `warehouse.process-path-management.events` only with `PATH_CATALOGUE_SOURCE=kafka`, read-only mirror of the producer's contract.
+      contentType: application/cloudevents+json
+      tags:
+        - name: work-planning
+      payload:
+        $ref: "#/components/schemas/ProcessPathDeactivatedEvent"
+      examples:
+        - name: processPathDeactivated
+          payload:
+            specversion: "1.0"
+            id: 7c1d2e3f-4a5b-4c6d-8e7f-90a1b2c3d4e5
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
+            subject: pick-a
+            time: "2026-10-06T09:00:00Z"
+            datacontenttype: application/json
+            dataschema: urn:warehouse:process-path-management:events:ProcessPathDeactivated:v1
+            data:
+              path_id: pick-a
+              match_prefix: pick
+              direct: true
+              required_capabilities: []
+              intake: [ORDER]
+
     WorkReleased:
       name: WorkReleased
       title: Work Released
@@ -885,7 +1177,7 @@ components:
                 priority: URGENT
 
     WorkUnitCompleted:
-      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
+      x-no-consumer-reason: "published for observability; no consumer in the fleet today"
       name: WorkUnitCompleted
       title: Work Unit Completed
       summary: A released work unit finished.
@@ -992,7 +1284,7 @@ components:
               path_id: pick-to-tote
 
     PathThrottled:
-      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
+      x-no-consumer-reason: "published for observability; no consumer in the fleet today"
       name: PathThrottled
       title: Path Throttled
       summary: Flow balancing decided to throttle upstream release into a path.
@@ -1023,7 +1315,7 @@ components:
               path_id: pack-singles
 
     LaborReassignmentFlagged:
-      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
+      x-no-consumer-reason: "published for observability; no consumer in the fleet today"
       name: LaborReassignmentFlagged
       title: Labor Reassignment Flagged
       summary: Flow balancing recommended moving labor to relieve a path.
@@ -1125,7 +1417,7 @@ components:
               known: false
 
     PathPlanDriftDetected:
-      x-no-consumer-reason: "reserved, not emitted today (ADR 0020)"
+      x-no-consumer-reason: "published for observability; no consumer in the fleet today"
       name: PathPlanDriftDetected
       title: Path Plan Drift Detected
       summary: >-
@@ -1919,6 +2211,305 @@ components:
                     than the stored version.
                   minimum: 1
 
+    WorkforceShiftPlanCommittedEvent:
+      title: ShiftPlanCommitted CloudEvent (consumed)
+      description: >-
+        Read-only mirror of workforce-management's ShiftPlanCommitted; this service consumes it and
+        never publishes it. Only the fields this service decodes are listed.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted"
+            dataschema:
+              type: string
+              const: "urn:warehouse:workforce-management:events:ShiftPlanCommitted:v1"
+            data:
+              type: object
+              required: [building_id, shift_id, path_id, planned_heads, planned_rate, planned_hours]
+              properties:
+                building_id:
+                  type: string
+                shift_id:
+                  type: string
+                path_id:
+                  type: string
+                  description: Key of the LaborPlanObserved view.
+                planned_heads:
+                  type: integer
+                planned_rate:
+                  type: number
+                  format: double
+                planned_hours:
+                  type: number
+                  format: double
+
+    TaskCompletedEvent:
+      title: TaskCompleted CloudEvent (consumed)
+      description: >-
+        Read-only mirror of fulfillment-execution's TaskCompleted; this service consumes it and
+        never publishes it. Only the fields this service decodes are listed.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.fulfillment-execution.task.TaskCompleted"
+            dataschema:
+              type: string
+              const: "urn:warehouse:fulfillment-execution:events:TaskCompleted:v1"
+            data:
+              type: object
+              required: [task_id, station_id, work_unit_id]
+              properties:
+                task_id:
+                  type: string
+                station_id:
+                  type: string
+                work_unit_id:
+                  type: string
+                  description: The work unit to complete.
+                task_type:
+                  type: string
+                  description: OPTIONAL. PICK, PACK, SLAM or REBIN; read for logging only.
+
+    OrderAllocatedEvent:
+      title: OrderAllocated CloudEvent (consumed)
+      description: >-
+        Read-only mirror of order-management's OrderAllocated; this service consumes it and
+        never publishes it. Only the fields this service decodes are listed.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.order-management.order.OrderAllocated"
+            dataschema:
+              type: string
+              const: "urn:warehouse:order-management:events:OrderAllocated:v1"
+            data:
+              type: object
+              required: [order_id, promise_date, lines]
+              properties:
+                order_id:
+                  type: string
+                  description: Becomes the work units' reference and the id prefix `<order_id>-line-<line_no>`.
+                promise_date:
+                  type: string
+                  format: date-time
+                  description: Becomes each work unit's CPT.
+                lines:
+                  type: array
+                  items:
+                    type: object
+                    required: [line_no, sku, path_id]
+                    properties:
+                      line_no:
+                        type: integer
+                        minimum: 1
+                      sku:
+                        type: string
+                      path_id:
+                        type: string
+                        description: Validated against the process-path catalogue.
+                      gift_wrap:
+                        type: boolean
+
+    OrderPartiallyAllocatedEvent:
+      title: OrderPartiallyAllocated CloudEvent (consumed)
+      description: >-
+        Read-only mirror of order-management's OrderPartiallyAllocated; this service consumes it and
+        never publishes it. Only the fields this service decodes are listed.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.order-management.order.OrderPartiallyAllocated"
+            dataschema:
+              type: string
+              const: "urn:warehouse:order-management:events:OrderPartiallyAllocated:v1"
+            data:
+              type: object
+              required: [order_id, promise_date, lines]
+              properties:
+                order_id:
+                  type: string
+                  description: Becomes the work units' reference and the id prefix `<order_id>-line-<line_no>`.
+                promise_date:
+                  type: string
+                  format: date-time
+                  description: Becomes each work unit's CPT.
+                lines:
+                  type: array
+                  items:
+                    type: object
+                    required: [line_no, sku, path_id]
+                    properties:
+                      line_no:
+                        type: integer
+                        minimum: 1
+                      sku:
+                        type: string
+                      path_id:
+                        type: string
+                        description: Validated against the process-path catalogue.
+                      gift_wrap:
+                        type: boolean
+
+    ProcessPathCreatedEvent:
+      title: ProcessPathCreated CloudEvent (consumed)
+      description: >-
+        Read-only mirror of process-path-management's ProcessPathCreated; this service consumes it and
+        never publishes it. Only the fields this service decodes are listed.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.process-path-management.processpath.ProcessPathCreated"
+            dataschema:
+              type: string
+              const: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
+            data:
+              type: object
+              description: Same shape on all three types (ProcessPathDeactivated needs only path_id).
+              required: [path_id]
+              properties:
+                path_id:
+                  type: string
+                match_prefix:
+                  type: string
+                direct:
+                  type: boolean
+                  description: Decoded and discarded.
+                required_capabilities:
+                  type: array
+                  items:
+                    type: string
+                destination_location_role:
+                  type: string
+                  description: OPTIONAL.
+                intake:
+                  type: array
+                  description: OPTIONAL. Declared demand sources; absent decodes to none.
+                  items:
+                    type: string
+
+    ProcessPathUpdatedEvent:
+      title: ProcessPathUpdated CloudEvent (consumed)
+      description: >-
+        Read-only mirror of process-path-management's ProcessPathUpdated; this service consumes it and
+        never publishes it. Only the fields this service decodes are listed.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated"
+            dataschema:
+              type: string
+              const: "urn:warehouse:process-path-management:events:ProcessPathUpdated:v1"
+            data:
+              type: object
+              description: Same shape on all three types (ProcessPathDeactivated needs only path_id).
+              required: [path_id]
+              properties:
+                path_id:
+                  type: string
+                match_prefix:
+                  type: string
+                direct:
+                  type: boolean
+                  description: Decoded and discarded.
+                required_capabilities:
+                  type: array
+                  items:
+                    type: string
+                destination_location_role:
+                  type: string
+                  description: OPTIONAL.
+                intake:
+                  type: array
+                  description: OPTIONAL. Declared demand sources; absent decodes to none.
+                  items:
+                    type: string
+
+    ProcessPathDeactivatedEvent:
+      title: ProcessPathDeactivated CloudEvent (consumed)
+      description: >-
+        Read-only mirror of process-path-management's ProcessPathDeactivated; this service consumes it and
+        never publishes it. Only the fields this service decodes are listed.
+      allOf:
+        - $ref: "#/components/schemas/CloudEventBase"
+        - type: object
+          required:
+            - type
+            - dataschema
+            - data
+          properties:
+            type:
+              type: string
+              const: "com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated"
+            dataschema:
+              type: string
+              const: "urn:warehouse:process-path-management:events:ProcessPathDeactivated:v1"
+            data:
+              type: object
+              description: Same shape on all three types (ProcessPathDeactivated needs only path_id).
+              required: [path_id]
+              properties:
+                path_id:
+                  type: string
+                match_prefix:
+                  type: string
+                direct:
+                  type: boolean
+                  description: Decoded and discarded.
+                required_capabilities:
+                  type: array
+                  items:
+                    type: string
+                destination_location_role:
+                  type: string
+                  description: OPTIONAL.
+                intake:
+                  type: array
+                  description: OPTIONAL. Declared demand sources; absent decodes to none.
+                  items:
+                    type: string
+
     WorkReleasedEvent:
       title: WorkReleased CloudEvent
       description: >-
@@ -2005,8 +2596,8 @@ components:
                     contains exactly `["hazmat"]`. Absent — not an empty
                     array — when the SKU is unclassified, not yet in the
                     local copy, or the copy is unreadable
-                    (PRODUCT_CLASSIFICATION_MODE=permissive, the default, or
-                    a lookup error). Consumers must treat an absent field
+                    or a lookup error; the fail-open lookup never
+                    blocks a release). Consumers must treat an absent field
                     identically to an empty array. See ADR-0009, ADR-0035.
                   example: ["hazmat"]
                 fragile:
@@ -2164,6 +2755,51 @@ components:
                         (default 8h) for NORMAL, so they sit in the front
                         band of every earliest-CPT-first queue.
                       example: URGENT
+                pick:
+                  type: object
+                  description: >-
+                    OPTIONAL (ADR-0045). Present only on a `CASE_PICK` /
+                    `EACH_PICK` work unit (enqueued with `quantity`,
+                    `pickUnit` or `fromBin`). Absent on every other unit.
+                  required: [sku, quantity, unit]
+                  properties:
+                    sku:
+                      type: string
+                      example: SKU-2
+                    quantity:
+                      type: integer
+                      minimum: 1
+                      description: Quantity in eaches.
+                      example: 36
+                    unit:
+                      type: string
+                      enum: [EACH, CASE]
+                      example: CASE
+                    from_bin:
+                      type: string
+                      description: Source bin; absent when none was given.
+                      example: BIN-A1
+                case_break:
+                  type: object
+                  description: >-
+                    OPTIONAL (ADR-0045). Present only on a `BREAK_CASE` work
+                    unit (enqueued with `caseBreak`). Absent on every other
+                    unit.
+                  required: [lpn, sku, loose_bin, pick_task_id]
+                  properties:
+                    lpn:
+                      type: string
+                      description: Licence plate of the sealed case.
+                      example: LPN-0001
+                    sku:
+                      type: string
+                      example: SKU-2
+                    loose_bin:
+                      type: string
+                      example: LOOSE-A1
+                    pick_task_id:
+                      type: string
+                      example: task-482910
 
     WorkUnitCompletedEvent:
       title: WorkUnitCompleted CloudEvent

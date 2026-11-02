@@ -534,9 +534,9 @@ Topic `warehouse.work-planning.events`:
 The other domain events are published to the same topic with a
 `{"path_id", ...}` payload; no other service consumes them today.
 
-Set `EVENT_PUBLISHER=kafka` (and `KAFKA_BROKERS`) to publish here instead of
-the default `log` publisher; `internal/adapters/outbound/kafka` implements the
-same `ports.EventPublisher` interface the log publisher does.
+Events are always written to the transactional outbox and relayed here;
+`KAFKA_BROKERS` is mandatory and `EVENT_PUBLISHER` accepts only `kafka`
+(there is no log-only publisher, ADR-0044).
 
 ### Consumes
 

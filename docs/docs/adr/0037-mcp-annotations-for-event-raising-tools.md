@@ -38,7 +38,7 @@ contexts and the analytics report count them, and a published event cannot be
 recalled. Every qualifying call publishes again, so a model that polls the
 telemetry tool in a loop publishes one alarm event per call. The REST
 endpoints behind the same use cases (`GET /paths/{pathId}/telemetry`,
-`GET /paths/{pathId}/rebalance`) behave the same way; this record is about the
+`POST /paths/{pathId}/rebalance-decisions`, formerly `GET .../rebalance`) behave the same way; this record is about the
 MCP annotations only.
 
 The governance charter (§4) has two classes: a read tool **MUST** be

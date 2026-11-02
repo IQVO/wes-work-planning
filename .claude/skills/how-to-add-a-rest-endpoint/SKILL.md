@@ -95,7 +95,7 @@ In `internal/adapters/inbound/http/`:
    ...)` block if it's path-scoped (mirroring `/charge`, `/plan`,
    `/work-units`, `/release`, `/telemetry`, `/rebalance`,
    `/labor-plan-view`), or as a top-level route otherwise (see
-   `/work-units/{id}/complete`, `/inventory-view/{sku}`).
+   `/work-units/{id}/completions`, `/inventory-view/{sku}`).
 3. `handlers.go` — add the handler function on `*Handlers`:
    - resolve path params via the existing helpers (`pathIdParam(r)`)
    - call `h.validatePathId(pathId)` FIRST if this handler seeds a NEW

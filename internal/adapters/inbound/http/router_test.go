@@ -580,7 +580,7 @@ func TestGetTelemetry_EmptyCutoffAtReturns400(t *testing.T) {
 	}
 }
 
-func TestGetRebalance(t *testing.T) {
+func TestPostRebalanceDecision(t *testing.T) {
 	router := newTestRouter()
 	enqueueBody := map[string]any{
 		"workUnitId": "wu-1",
@@ -589,15 +589,32 @@ func TestGetRebalance(t *testing.T) {
 	}
 	doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", enqueueBody)
 
-	rec := doJSON(t, router, http.MethodGet, "/paths/pick-a/rebalance", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("got status %d, want 200, body=%s", rec.Code, rec.Body.String())
+	rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/rebalance-decisions", nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("got status %d, want 201, body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestGetRebalance_UnknownPathReturns404(t *testing.T) {
+// TestRebalanceOldGetRouteIsGone pins the hard cutover: the side-effecting
+// GET /paths/{pathId}/rebalance no longer exists.
+func TestRebalanceOldGetRouteIsGone(t *testing.T) {
 	router := newTestRouter()
-	rec := doJSON(t, router, http.MethodGet, "/paths/unknown-path/rebalance", nil)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		rec := doJSON(t, router, method, "/paths/pick-a/rebalance", nil)
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s /paths/pick-a/rebalance: got %d, want 404 or 405", method, rec.Code)
+		}
+	}
+	// A GET on the new noun route is not allowed either.
+	rec := doJSON(t, router, http.MethodGet, "/paths/pick-a/rebalance-decisions", nil)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET rebalance-decisions: got %d, want 405", rec.Code)
+	}
+}
+
+func TestPostRebalanceDecision_UnknownPathReturns404(t *testing.T) {
+	router := newTestRouter()
+	rec := doJSON(t, router, http.MethodPost, "/paths/unknown-path/rebalance-decisions", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("got status %d, want 404, body=%s", rec.Code, rec.Body.String())
 	}
@@ -655,9 +672,9 @@ func TestGetLaborPlanView_ReturnsObservedPlanAndSurfacesInRebalance(t *testing.T
 		t.Fatalf("unexpected labor-plan-view body: %s", rec.Body.String())
 	}
 
-	rebalanceRec := doJSON(t, router, http.MethodGet, "/paths/pick-a/rebalance", nil)
-	if rebalanceRec.Code != http.StatusOK {
-		t.Fatalf("got status %d, want 200, body=%s", rebalanceRec.Code, rebalanceRec.Body.String())
+	rebalanceRec := doJSON(t, router, http.MethodPost, "/paths/pick-a/rebalance-decisions", nil)
+	if rebalanceRec.Code != http.StatusCreated {
+		t.Fatalf("got status %d, want 201, body=%s", rebalanceRec.Code, rebalanceRec.Body.String())
 	}
 	var rebalance map[string]any
 	if err := json.Unmarshal(rebalanceRec.Body.Bytes(), &rebalance); err != nil {

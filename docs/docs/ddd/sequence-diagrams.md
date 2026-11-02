@@ -351,7 +351,7 @@ sequenceDiagram
     end
     SB-->>Caller: BacklogSnapshot
 
-    Caller->>IN: GET /paths/{pathId}/rebalance
+    Caller->>IN: POST /paths/{pathId}/rebalance-decisions
     IN->>RD: Execute
     RD->>PoolRepo: FindByPathId
     alt FlowFed and over alarm threshold

@@ -67,7 +67,11 @@ func (h *Handlers) getTelemetry(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handlers) getRebalance(w http.ResponseWriter, r *http.Request) {
+// postRebalanceDecision computes the flow-balancing recommendation. It is a
+// keyed POST because the first execution publishes PathThrottled /
+// LaborReassignmentFlagged; the answer is computed, not stored, so 201 has no
+// Location.
+func (h *Handlers) postRebalanceDecision(w http.ResponseWriter, r *http.Request) {
 	pathId, err := pathIdParam(r)
 	if err != nil {
 		writeError(w, r, err)
@@ -95,7 +99,7 @@ func (h *Handlers) getRebalance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (h *Handlers) getLaborPlanView(w http.ResponseWriter, r *http.Request) {

@@ -56,9 +56,9 @@ func NewRouter(h *Handlers, serviceName string, logger *slog.Logger) *chi.Mux {
 		keyed(r).Post("/plan", h.postShiftPlan)
 		keyed(r).Post("/work-units", h.postWorkUnit)
 		keyed(r).Post("/work-releases", h.postRelease)
+		keyed(r).Post("/rebalance-decisions", h.postRebalanceDecision)
 		r.Put("/pool", h.putPool)
 		r.Get("/telemetry", h.getTelemetry)
-		r.Get("/rebalance", h.getRebalance)
 		r.Get("/labor-plan-view", h.getLaborPlanView)
 	})
 

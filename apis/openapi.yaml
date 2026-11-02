@@ -366,8 +366,8 @@ paths:
             Shift plan committed. `Location` identifies the committed plan's
             canonical resource path (no dedicated GET for a standalone plan
             today — `plannedThroughput` and the committed split are also
-            visible indirectly via `GET /paths/{pathId}/rebalance`'s labor
-            context).
+            visible indirectly via the `laborPlan` context of
+            `POST /paths/{pathId}/rebalance-decisions`).
           headers:
             Idempotency-Replayed:
               $ref: "#/components/headers/IdempotencyReplayed"
@@ -799,29 +799,39 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /paths/{pathId}/rebalance:
-    get:
+  /paths/{pathId}/rebalance-decisions:
+    post:
       operationId: rebalanceDecision
-      summary: Get the flow-balancing recommendation for a process path
+      summary: Decide the flow-balancing recommendation for a process path
       description: >
         Inspects a process path's live buffer telemetry (backlog vs. plan)
         and recommends `ThrottleUpstream` (a flow-fed path over its alarm
         threshold — slow admission upstream, Drum-Buffer-Rope with CPT as
         the drum), `ReassignLabor` (a release-fed path saturated at its WIP
         limit with backlog remaining — flag for headcount reassignment), or
-        `NoActionNeeded` — the RebalanceDecision use case. Side effect:
+        `NoActionNeeded` — the RebalanceDecision use case. This is a keyed
+        POST because the decision has an effect: the first execution
         publishes `PathThrottled` or `LaborReassignmentFlagged` when a
-        non-default action is recommended (same read-only-GET-with-telemetry-side-effect
-        pattern as `/telemetry`). When a labor plan has been observed for
-        this path (see Labor Plan View), the response additionally includes
-        it as extra context under `laborPlan` — this is additive and does
-        not change the throttle/reassign decision logic itself.
+        non-default action is recommended. The request has no body. The
+        decision is computed, not stored as a resource, so there is no
+        `Location` and no GET for it. A replay of the same
+        `Idempotency-Key` returns the stored decision with
+        `Idempotency-Replayed: true` and publishes nothing again; every new
+        decision (for example each poll of a dashboard) must send a new
+        key. When a labor plan has been observed for this path (see Labor
+        Plan View), the response additionally includes it as extra context
+        under `laborPlan` — this is additive and does not change the
+        throttle/reassign decision logic itself.
       tags: [Rebalance]
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/PathId"
       responses:
-        "200":
-          description: Rebalance recommendation.
+        "201":
+          description: The computed rebalance decision (not a stored resource; no `Location`).
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/json:
               schema:
@@ -841,6 +851,20 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: >
+            The `Idempotency-Key` was already used with a different request
+            (`idempotency-key-reused`; fingerprint = method + path + body hash).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://errors.wes-work-planning.warehouse-systems.dev/idempotency-key-reused
+                title: Idempotency-Key was already used with a different request
+                status: 409
+                detail: "idempotency key reused: the Idempotency-Key header on this request was already used with a different request; use a new Idempotency-Key for a genuinely different request"
+                instance: /paths/pick-a/rebalance-decisions
         "500":
           $ref: "#/components/responses/InternalError"
 

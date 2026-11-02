@@ -278,7 +278,7 @@ flow-fed only through `ConfigurePool` (W9); an unconfigured path keeps the
 | `ReleaseNextWork` | `POST /paths/{pathId}/work-releases`; MCP `release_next_work` | `ReleasePolicy.Apply` → `ReleaseNext`, plus `Reconcile` |
 | `RecordCompletion` | `POST /work-units/{id}/completions`; `ApplyTaskCompleted` from Kafka | `Reconcile` |
 | `SampleBacklog` | `GET /paths/{pathId}/telemetry`; MCP `get_backlog_telemetry` | read-only: `BacklogDepth`, `WIP`, `IsOverAlarmThreshold`, `RemainingCapacity` |
-| `RebalanceDecision` | `GET /paths/{pathId}/rebalance`; MCP `get_rebalance_recommendation` | read-only |
+| `RebalanceDecision` | `POST /paths/{pathId}/rebalance-decisions` (keyed); MCP `get_rebalance_recommendation` | computes a decision, publishes events (no aggregate write) |
 
 ### 7. Created events
 

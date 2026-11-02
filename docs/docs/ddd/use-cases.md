@@ -168,7 +168,7 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 
 ### RebalanceDecision
 
-- **Trigger**: `GET /paths/{pathId}/rebalance` → `200`; MCP tool
+- **Trigger**: `POST /paths/{pathId}/rebalance-decisions` (keyed) → `201`; MCP tool
   `get_rebalance_recommendation`.
 - **Output**: `NoActionNeeded`, `ThrottleUpstream` (a `FlowFed` pool over its
   alarm threshold) or `ReassignLabor` (a `ReleaseFed` pool at its WIP limit

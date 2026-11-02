@@ -250,7 +250,9 @@ paths:
                     receivedAt: "2026-08-21T08:00:00Z"
         "400":
           description: >
-            Malformed request body (invalid JSON), a missing required field,
+            The `Idempotency-Key` header is missing (`idempotency-key-required`)
+            or not 1-128 printable ASCII characters (`idempotency-key-invalid`),
+            or: malformed request body (invalid JSON), a missing required field,
             an invalid field value (e.g. negative quantity), a `pathId`
             outside the deployment's declared process-path families
             (`unknown-path-id`), or a NUL character (U+0000) in the body
@@ -339,7 +341,10 @@ paths:
         aggregate, distinct from the labor plan Workforce Management reports
         (see `GET /paths/{pathId}/labor-plan-view`) even though both are
         called "ShiftPlan" — classic same-term-different-bounded-context.
-        Publishes `ShiftPlanCommitted`.
+        Publishes `ShiftPlanCommitted`. The request may optionally name a
+        `sku` and a `pickUnit` (`EACH` | `CASE`, default `EACH`) for a
+        pack-aware plan (ADR-0045): the response then carries `handle`, the
+        load of one handle of that SKU and the carry estimate derived from it.
       tags: [Shift Plan]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -384,7 +389,11 @@ paths:
                 plannedThroughput: 4584
         "400":
           description: >
-            Malformed body, a missing required field (`plannedHeads`,
+            The `Idempotency-Key` header is missing (`idempotency-key-required`)
+            or malformed (`idempotency-key-invalid`), a `pathId` outside the
+            declared process-path families (`unknown-path-id`), a `pickUnit`
+            other than `EACH` / `CASE` (`unknown-pick-unit`), or: malformed
+            body, a missing required field (`plannedHeads`,
             `installedStations`, `rateUnitsPerHour`, `hours` — zero-valued
             defaults are never silently accepted), an invalid field value
             (e.g. non-positive rate or hours), the `plannedHeads <=
@@ -400,6 +409,21 @@ paths:
                 title: Planned heads exceed installed stations
                 status: 400
                 detail: "planned heads exceeds installed stations"
+                instance: /paths/pick-a/plan
+        "422":
+          description: >
+            `pickUnit` is `CASE` but the `sku` has no active CASE pack level in
+            this service's local copy (`no-active-case-level`; an unknown SKU
+            is the same). Nothing is committed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://errors.wes-work-planning.warehouse-systems.dev/no-active-case-level
+                title: The SKU has no active CASE pack level
+                status: 422
+                detail: "pick load: the SKU has no active CASE pack level in the local copy: sku-482910"
                 instance: /paths/pick-a/plan
         "409":
           description: >
@@ -435,6 +459,12 @@ paths:
         same ID is rejected, not silently accepted). If this is the first
         unit ever enqueued against the path, a `WorkPool` is auto-provisioned
         as release-fed with a default WIP limit. Publishes `WorkUnitCreated`.
+
+        A unit becomes a pack-aware pick (`workKind` `CASE_PICK` / `EACH_PICK`)
+        when the body carries `quantity` (eaches), `pickUnit` or `fromBin`, or
+        a `BREAK_CASE` when it carries `caseBreak` (ADR-0045); both need a
+        `sku` and the two never mix. A `CASE` pick needs an active CASE pack
+        level in the local copy and a whole number of cases.
 
 
         **Idempotency (ADR-0022).** This resource-creating POST requires a
@@ -491,9 +521,11 @@ paths:
         "400":
           description: >
             Either the `Idempotency-Key` header is missing
-            (`idempotency-key-required`), or the body is malformed / fails
-            validation / names an unknown `pathId` (the usual `400`
-            categories).
+            (`idempotency-key-required`) or malformed (`idempotency-key-invalid`),
+            or the body is malformed / fails validation (including a missing
+            `cpt`) / names an unknown `pathId` (`unknown-path-id`), or fails
+            the `lineNo` (`invalid-line-no`) or pack-aware checks
+            (`unknown-pick-unit`, `invalid-pick-plan`, `invalid-case-break`).
           content:
             application/problem+json:
               schema:
@@ -504,10 +536,27 @@ paths:
                 status: 400
                 detail: "idempotency key required: this endpoint creates a new resource on every call and requires a caller-supplied Idempotency-Key header so a retried request is never applied twice"
                 instance: /paths/pick-a/work-units
+        "422":
+          description: >
+            A `CASE` pick cannot be planned: the SKU has no active CASE pack
+            level in this service's local copy (`no-active-case-level`) or
+            `quantity` is not a whole number of cases
+            (`quantity-not-case-multiple`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://errors.wes-work-planning.warehouse-systems.dev/quantity-not-case-multiple
+                title: Quantity is not a whole number of cases
+                status: 422
+                detail: "pick load: quantity is not a whole number of cases: 35 eaches with 12 per case"
+                instance: /paths/pick-a/work-units
         "409":
           description: >
             A work unit with this `workUnitId` is already enqueued in this pool
-            (`work-unit-already-enqueued`), or the `Idempotency-Key` was already
+            (`work-unit-already-enqueued`), the pool was modified concurrently
+            (`concurrent-modification`), or the `Idempotency-Key` was already
             used with a different request (`idempotency-key-reused`;
             fingerprint = method + path + body hash). Distinguish by the problem `type`.
           content:
@@ -561,7 +610,14 @@ paths:
                 state: Released
                 giftWrap: false
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >
+            The `Idempotency-Key` header is missing
+            (`idempotency-key-required`) or malformed (`idempotency-key-invalid`),
+            or the `pathId` is invalid (`invalid-path-id`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "404":
           description: No work pool has been provisioned for this path yet (no work unit has ever been enqueued).
           content:
@@ -576,8 +632,11 @@ paths:
                 instance: /paths/pick-a/work-releases
         "409":
           description: >
-            The pool is empty (nothing pending to release) or a release-fed
-            pool is already at its WIP limit.
+            The pool is empty (`work-pool-empty`), a release-fed pool is
+            already at its WIP limit (`wip-limit-reached`), the pool was
+            modified concurrently (`concurrent-modification`), or the
+            `Idempotency-Key` was already used with a different request
+            (`idempotency-key-reused`). Distinguish by the problem `type`.
           content:
             application/problem+json:
               schema:
@@ -1007,7 +1066,13 @@ paths:
                 detail: "resource not found"
                 instance: /work-units/wu-482910/completions
         "409":
-          description: The work unit was never released, or was already completed.
+          description: >
+            The work unit was never released (`work-unit-not-released`), was
+            already completed (`work-unit-already-completed`), was cancelled
+            (`work-unit-cancelled`), the pool was modified concurrently
+            (`concurrent-modification`), or the `Idempotency-Key` was already
+            used with a different request (`idempotency-key-reused`).
+            Distinguish by the problem `type`.
           content:
             application/problem+json:
               schema:
@@ -1019,7 +1084,13 @@ paths:
                 detail: "work unit is already completed"
                 instance: /work-units/wu-482910/completions
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >
+            The `Idempotency-Key` header is missing
+            (`idempotency-key-required`) or malformed (`idempotency-key-invalid`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1387,6 +1458,24 @@ components:
             plan with a real travel-distance hint (ADR-0017). See
             fromLocationCode; null is treated exactly like omitted.
           example: WH1-STOR-AMB-A09-03-01-A
+        sku:
+          type: string
+          nullable: true
+          description: >-
+            OPTIONAL (ADR-0045, pack-aware plan). The SKU whose handle load the
+            plan records; the response then carries `handle`. Omit (or send
+            null) for a plain plan.
+          example: sku-482910
+        pickUnit:
+          type: string
+          nullable: true
+          enum: [EACH, CASE, null]
+          description: >-
+            OPTIONAL (ADR-0045), default `EACH` when `sku` is given. `CASE`
+            needs an active CASE pack level for the SKU (otherwise
+            `422 no-active-case-level`). Exact, case-sensitive match; any
+            other value is `400 unknown-pick-unit`.
+          example: CASE
       required: [plannedHeads, installedStations, rateUnitsPerHour, hours]
 
     ShiftPlanResponse:
@@ -1437,6 +1526,8 @@ components:
             field). Omitted together with travelDistanceM when no hint
             was recorded.
           example: false
+        handle:
+          $ref: "#/components/schemas/HandleLoad"
       required:
         - pathId
         - plannedHeads
@@ -1444,6 +1535,79 @@ components:
         - rateUnitsPerHour
         - hours
         - plannedThroughput
+
+    HandleLoad:
+      type: object
+      description: >-
+        The load of ONE handle (a whole case for `CASE`) of a pack-aware plan
+        and the carry estimate derived from it (ADR-0045). Omitted from the
+        plan response when the request named no `sku`.
+      properties:
+        pickUnit:
+          type: string
+          enum: [EACH, CASE]
+          example: CASE
+        weightG:
+          type: integer
+          format: int64
+          description: Weight of one handle in grams; omitted when the pack level has no weight on record.
+          example: 6500
+        cubeMm3:
+          type: integer
+          format: int64
+          description: Cube of one handle in cubic millimetres; omitted when the pack level has no size on record.
+          example: 24000000
+        carryKgM:
+          type: number
+          format: double
+          description: >-
+            Carry estimate in kilogram-metres; present only when the weight
+            AND a travel distance are both known, never zero-filled.
+          example: 28.6
+      required: [pickUnit]
+
+    CaseBreak:
+      type: object
+      description: The sealed-case break of a `BREAK_CASE` work unit (ADR-0045).
+      properties:
+        lpn:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9._-]+$'
+          description: The sealed case's licence plate.
+          example: LPN-0001
+        looseBin:
+          type: string
+          minLength: 1
+          description: The bin the loose eaches go to.
+          example: LOOSE-A1
+        pickTaskId:
+          type: string
+          minLength: 1
+          description: The pick task the break serves.
+          example: task-482910
+      required: [lpn, looseBin, pickTaskId]
+
+    PickPlan:
+      type: object
+      description: The pick plan of a `CASE_PICK` / `EACH_PICK` work unit; read-only.
+      properties:
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Quantity in eaches.
+          example: 36
+        unit:
+          type: string
+          enum: [EACH, CASE]
+          example: CASE
+        fromBin:
+          type: string
+          description: Omitted when no source bin was given.
+          example: BIN-A1
+      required: [quantity, unit]
 
     EnqueueWorkUnitRequest:
       type: object
@@ -1501,6 +1665,37 @@ components:
             `2147483647` (the 32-bit column limit) are rejected with `400`
             (`invalid-line-no`).
           example: 3
+        quantity:
+          type: integer
+          format: int32
+          nullable: true
+          description: >-
+            OPTIONAL (ADR-0045). Quantity in EACHES; with `pickUnit` or
+            `fromBin` it is required and makes the unit a pack-aware pick
+            (`CASE_PICK` / `EACH_PICK`). Needs `sku`; below 1 is
+            `400 invalid-pick-plan`.
+          example: 36
+        pickUnit:
+          type: string
+          nullable: true
+          enum: [EACH, CASE, null]
+          description: >-
+            OPTIONAL (ADR-0045), default `EACH` for a pick. `CASE` needs an
+            active CASE pack level and a whole number of cases (otherwise
+            `422`). Any other value is `400 unknown-pick-unit`.
+          example: CASE
+        fromBin:
+          type: string
+          nullable: true
+          description: OPTIONAL (ADR-0045). Source bin of the pick.
+          example: BIN-A1
+        caseBreak:
+          allOf:
+            - $ref: "#/components/schemas/CaseBreak"
+          description: >-
+            OPTIONAL (ADR-0045). Makes the unit a `BREAK_CASE`; needs `sku`
+            and excludes `quantity`, `pickUnit` and `fromBin` (otherwise
+            `400 invalid-case-break`).
       required: [workUnitId, cpt, reference]
 
     WorkUnitPage:
@@ -1591,6 +1786,17 @@ components:
           example: "2026-10-15T09:00:00Z"
         relocation:
           $ref: "#/components/schemas/RelocationMove"
+        workKind:
+          type: string
+          enum: [CASE_PICK, EACH_PICK, BREAK_CASE]
+          description: >-
+            Pack-aware kind (ADR-0045). Omitted on every other unit (order,
+            transfer, relocation).
+          example: CASE_PICK
+        pick:
+          $ref: "#/components/schemas/PickPlan"
+        caseBreak:
+          $ref: "#/components/schemas/CaseBreak"
       required: [id, pathId, cpt, reference, state, giftWrap]
 
     RelocationMove:

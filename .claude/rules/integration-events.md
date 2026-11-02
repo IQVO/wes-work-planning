@@ -13,14 +13,14 @@ paths:
 - `POST /paths/{pathId}/charge`            → receiveChargeForecast
 - `POST /paths/{pathId}/plan`              → commitShiftPlan
 - `POST /paths/{pathId}/work-units`        → enqueueWorkUnit (optional `lineNo`, ADR-0036)
-- `POST /paths/{pathId}/release`           → releaseNextWork
+- `POST /paths/{pathId}/work-releases`           → releaseNextWork
 - `PUT  /paths/{pathId}/pool`              → configurePool (ADR-0034)
 - `GET  /paths/{pathId}/telemetry`         → sampleBacklog
 - `GET  /paths/{pathId}/rebalance`         → rebalanceDecision
 - `GET  /paths/{pathId}/labor-plan-view`   → getLaborPlanView
 - `GET  /work-units?reference=`            → getWorkUnitsByReference
 - `GET  /work-units/{id}`                  → getWorkUnit
-- `POST /work-units/{id}/complete`         → recordCompletion
+- `POST /work-units/{id}/completions`         → recordCompletion
 - `GET  /inventory-view/{sku}`             → getInventoryView
 
 `GET /readyz` (readiness probe, flipped not-ready first on shutdown,
@@ -40,7 +40,7 @@ a WorkUnitId — e.g. an RF gun resolving a fulfillment-execution PICK task's
 `orderRef`, which is this service's deterministic `<orderId>-line-<lineNo>`
 WorkUnitId — can read sku/reference/pathId/cpt/state without parsing the id
 string. chi routes the static `/complete` suffix separately, so it does not
-shadow `POST /work-units/{id}/complete`.
+shadow `POST /work-units/{id}/completions`.
 
 Full request/response schemas, every status code, and the shared `Problem`
 error component: [`apis/openapi.yaml`](../../apis/openapi.yaml). The

@@ -44,13 +44,13 @@ func (p *Publisher) dataFor(ctx context.Context, e shared.DomainEvent) (json.Raw
 // pathOnlyData is the best-effort payload for event types that carry only
 // their process-path identity.
 func pathOnlyData(pathId shared.PathId) (json.RawMessage, error) {
-	return json.Marshal(map[string]any{"path_id": pathId.String()})
+	return json.Marshal(map[string]any{attrPathID: pathId.String()})
 }
 
 // workUnitData is the best-effort payload for event types that carry a
 // work-unit identity alongside their process path.
 func workUnitData(workUnitId string, pathId shared.PathId) (json.RawMessage, error) {
-	return json.Marshal(map[string]any{"path_id": pathId.String(), "work_unit_id": workUnitId})
+	return json.Marshal(map[string]any{attrPathID: pathId.String(), attrWorkUnitID: workUnitId})
 }
 
 // workUnitCreatedData is the WorkUnitCreated payload on the integration
@@ -60,7 +60,7 @@ func workUnitData(workUnitId string, pathId shared.PathId) (json.RawMessage, err
 // payload every consumer already reads. The analytics stream does not carry
 // them.
 func workUnitCreatedData(ev shared.WorkUnitCreated) (json.RawMessage, error) {
-	data := map[string]any{"path_id": ev.PathId.String(), "work_unit_id": ev.WorkUnitId}
+	data := map[string]any{attrPathID: ev.PathId.String(), attrWorkUnitID: ev.WorkUnitId}
 	if ev.Reference != "" {
 		data["reference"] = ev.Reference
 	}
@@ -74,7 +74,7 @@ func workUnitCreatedData(ev shared.WorkUnitCreated) (json.RawMessage, error) {
 // order-management (ADR-0018).
 func pathCapacityChangedData(ev shared.PathCapacityChanged) (json.RawMessage, error) {
 	return json.Marshal(map[string]any{
-		"path_id":         ev.PathId.String(),
+		attrPathID:        ev.PathId.String(),
 		"cutoff_at":       ev.CutoffAt.Format(time.RFC3339),
 		"remaining_units": ev.RemainingUnits,
 		"known":           ev.Known,
@@ -86,7 +86,7 @@ func pathCapacityChangedData(ev shared.PathCapacityChanged) (json.RawMessage, er
 // disagree. drift_heads is signed (observed - ours).
 func pathPlanDriftDetectedData(ev shared.PathPlanDriftDetected) json.RawMessage {
 	return mustMarshal(map[string]any{
-		"path_id":                ev.PathId.String(),
+		attrPathID:               ev.PathId.String(),
 		"wes_planned_heads":      ev.WesPlannedHeads,
 		"observed_planned_heads": ev.ObservedPlannedHeads,
 		"drift_heads":            ev.DriftHeads,

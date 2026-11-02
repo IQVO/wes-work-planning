@@ -13,6 +13,9 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
+// unknownReason is the fallback reason when an outcome cannot be classified.
+const unknownReason = "unknown"
+
 // ReplenishPathId is the process path every pick-face replenishment is
 // released on (ADR-0042): fulfillment-execution derives its REPLENISH task
 // type from it, and only accepts the `replenishment` object there.
@@ -68,7 +71,7 @@ func (o ReplenishmentOutcome) String() string {
 	case ReplenishmentNotCancellable:
 		return "not_cancellable"
 	default:
-		return "unknown"
+		return unknownReason
 	}
 }
 

@@ -107,7 +107,7 @@ func RequireIdempotencyKey(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			// exact same bytes it would have without this middleware.
 			bodyBytes, err := io.ReadAll(r.Body)
 			if err != nil {
-				writeError(w, r, fmt.Errorf("%w: %v", errMalformedBody, err))
+				writeError(w, r, fmt.Errorf("%w: %w", errMalformedBody, err))
 				return
 			}
 			_ = r.Body.Close()
@@ -161,7 +161,7 @@ func RequireIdempotencyKey(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 func internalErrorProblemDetails(instance string) problemDetails {
 	return problemDetails{
 		Type:     problemBaseURI + "internal-error",
-		Title:    "Internal server error",
+		Title:    titleInternalError,
 		Status:   http.StatusInternalServerError,
 		Detail:   "An unexpected internal error occurred",
 		Instance: instance,
@@ -212,7 +212,7 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 		// than a panic or a fabricated response if it is ever violated.
 		writeProblem(w, http.StatusInternalServerError, problemDetails{
 			Type:     problemBaseURI + "internal-error",
-			Title:    "Internal server error",
+			Title:    titleInternalError,
 			Status:   http.StatusInternalServerError,
 			Detail:   "idempotency row committed with no recorded outcome — this should be impossible",
 			Instance: r.URL.Path,

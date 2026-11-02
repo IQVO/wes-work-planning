@@ -8,6 +8,14 @@ import (
 	kafkago "github.com/segmentio/kafka-go"
 )
 
+// Kafka headers stamped on every dead-lettered message so operators can
+// trace a DLQ record back to its origin topic, failure and timestamp.
+const (
+	hdrDLQSourceTopic = "x-dlq-source-topic"
+	hdrDLQError       = "x-dlq-error"
+	hdrDLQFailedAt    = "x-dlq-failed-at"
+)
+
 // dlqTopicSuffix names the dead-letter topic a poison message is
 // published to, relative to its OWN source topic (never a fixed
 // constant): each of the four consumed topics gets its own
@@ -38,9 +46,9 @@ func (c *Consumer) dlqPublish(ctx context.Context, topic string, msg kafkago.Mes
 	}
 	headers := append([]kafkago.Header{}, msg.Headers...)
 	headers = append(headers,
-		kafkago.Header{Key: "x-dlq-source-topic", Value: []byte(topic)},
-		kafkago.Header{Key: "x-dlq-error", Value: []byte(cause.Error())},
-		kafkago.Header{Key: "x-dlq-failed-at", Value: []byte(time.Now().UTC().Format(time.RFC3339))},
+		kafkago.Header{Key: hdrDLQSourceTopic, Value: []byte(topic)},
+		kafkago.Header{Key: hdrDLQError, Value: []byte(cause.Error())},
+		kafkago.Header{Key: hdrDLQFailedAt, Value: []byte(time.Now().UTC().Format(time.RFC3339))},
 	)
 	return writeDLQ(ctx, writer, kafkago.Message{
 		Key:     msg.Key,

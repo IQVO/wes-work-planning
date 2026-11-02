@@ -39,8 +39,8 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 	requiredCapabilities, fragile := p.classificationHints(ctx, sku)
 
 	data := map[string]any{
-		"path_id":      ev.PathId.String(),
-		"work_unit_id": ev.WorkUnitId,
+		attrPathID:     ev.PathId.String(),
+		attrWorkUnitID: ev.WorkUnitId,
 		"cpt":          cpt,
 		"ref":          ref,
 	}
@@ -124,7 +124,7 @@ func pickData(unit *workunit.WorkUnit) map[string]any {
 		return nil
 	}
 	out := map[string]any{
-		"sku":      plan.SKU,
+		attrSKU:    plan.SKU,
 		"quantity": plan.Quantity,
 		"unit":     plan.Unit.String(),
 	}
@@ -143,7 +143,7 @@ func caseBreakData(unit *workunit.WorkUnit) map[string]any {
 	}
 	return map[string]any{
 		"lpn":          brk.LPN,
-		"sku":          brk.SKU,
+		attrSKU:        brk.SKU,
 		"loose_bin":    brk.LooseBin,
 		"pick_task_id": brk.PickTaskId,
 	}
@@ -159,7 +159,7 @@ func replenishmentData(unit *workunit.WorkUnit) map[string]any {
 	}
 	return map[string]any{
 		"request_id": move.RequestId,
-		"sku":        move.SKU,
+		attrSKU:      move.SKU,
 		"from_bin":   move.FromBin,
 		"to_bin":     move.ToBin,
 		"quantity":   move.Quantity,
@@ -180,7 +180,7 @@ func relocationData(unit *workunit.WorkUnit) map[string]any {
 		"plan_id":  move.PlanId,
 		"move_seq": move.MoveSeq,
 		"kind":     move.Kind.String(),
-		"sku":      unit.SKU(),
+		attrSKU:    unit.SKU(),
 	}
 	if move.FromSlot != "" {
 		out["from_bin"] = move.FromSlot

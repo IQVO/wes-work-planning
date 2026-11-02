@@ -37,7 +37,7 @@ func (h *Handlers) getTelemetry(w http.ResponseWriter, r *http.Request) {
 		}
 		cutoffAt, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			writeError(w, r, fmt.Errorf("%w: cutoffAt: %v", errMalformedBody, err))
+			writeError(w, r, fmt.Errorf("%w: cutoffAt: %w", errMalformedBody, err))
 			return
 		}
 		req.CutoffAt = cutoffAt

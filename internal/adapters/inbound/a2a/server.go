@@ -28,6 +28,9 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 )
 
+// contentTypeJSON is the A2A default content type for request/response bodies.
+const contentTypeJSON = "application/json"
+
 // Config carries the deployment-specific identity of this agent: the absolute
 // URL clients use to reach its JSON-RPC endpoint (advertised on the Agent
 // Card) and the card version. It is supplied by the composition root from
@@ -77,8 +80,8 @@ func Card(cfg Config) *a2a.AgentCard {
 		SupportedInterfaces: []*a2a.AgentInterface{
 			a2a.NewAgentInterface(cfg.AgentURL, a2a.TransportProtocolJSONRPC),
 		},
-		DefaultInputModes:  []string{"application/json", "text/plain"},
-		DefaultOutputModes: []string{"application/json", "text/plain"},
+		DefaultInputModes:  []string{contentTypeJSON, "text/plain"},
+		DefaultOutputModes: []string{contentTypeJSON, "text/plain"},
 		Capabilities:       a2a.AgentCapabilities{Streaming: false},
 		Skills: []a2a.AgentSkill{
 			{
@@ -86,7 +89,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				Name:        "Flow status for a process path",
 				Description: "Composed read for one process path: backlog telemetry (pending depth, released WIP, feed mode, alarm state) plus the flow-balancing recommendation (NoActionNeeded, ThrottleUpstream, or ReassignLabor). Side effect: telemetry sampling publishes BacklogThresholdBreached when the pool is over its alarm threshold, and every ThrottleUpstream/ReassignLabor answer publishes PathThrottled/LaborReassignmentFlagged to the work-planning and analytics topics.",
 				Tags:        []string{"wes", "flow-balancing", "telemetry", "read"},
-				InputModes:  []string{"application/json"},
+				InputModes:  []string{contentTypeJSON},
 				Examples: []string{
 					`{"skill":"flow_status","arguments":{"pathId":"pick-zone-a"}}`,
 				},
@@ -96,7 +99,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				Name:        "Release the next work unit",
 				Description: "Admits the next highest-priority (earliest CPT) pending work unit into a path's work pool, exactly as the REST and MCP surfaces do, and publishes WorkReleased through the transactional outbox. Safe by construction: at most one unit per call, rejected once the WIP limit is reached or the pool is empty.",
 				Tags:        []string{"wes", "release", "write"},
-				InputModes:  []string{"application/json"},
+				InputModes:  []string{contentTypeJSON},
 				Examples: []string{
 					`{"skill":"release_next_work","arguments":{"pathId":"pick-zone-a"}}`,
 				},

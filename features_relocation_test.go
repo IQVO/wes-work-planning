@@ -63,7 +63,7 @@ func (s *slotPlanSteps) redeliver() error { return s.apply() }
 
 func (s *slotPlanSteps) refusedAsPoison() error {
 	if s.lastErr == nil || !isSlotPlanPoison(s.lastErr) {
-		return fmt.Errorf("want a deterministic refusal (dead-lettered by the consumer), got %v", s.lastErr)
+		return fmt.Errorf("want a deterministic refusal (dead-lettered by the consumer), got %w", s.lastErr)
 	}
 	return nil
 }

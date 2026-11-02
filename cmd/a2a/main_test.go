@@ -160,7 +160,7 @@ func TestNewA2ADeps_WiresEveryUseCase(t *testing.T) {
 		pools:     memory.NewWorkPoolRepo(),
 		workUnits: memory.NewWorkUnitRepo(),
 	}
-	deps := newA2ADeps(slog.Default(), repos, events.NewLogPublisher(nil))
+	deps := newA2ADeps(repos, events.NewLogPublisher(nil))
 
 	if deps.SampleBacklog == nil || deps.RebalanceDecision == nil || deps.ReleaseNextWork == nil {
 		t.Fatal("every A2A use case must be wired")

@@ -82,7 +82,7 @@ func (o PackLevelOutcome) String() string {
 	case PackLevelRedelivered:
 		return "redelivered"
 	default:
-		return "unknown"
+		return unknownReason
 	}
 }
 

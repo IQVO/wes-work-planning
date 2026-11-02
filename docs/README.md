@@ -68,3 +68,7 @@ workflow`).
 3. Run `npm run build` before pushing. Broken internal links fail the build by
    design (`onBrokenLinks: 'throw'`); fix the link rather than lowering the
    setting.
+
+## Disclaimer
+
+This project is a domain-driven design study. It is not associated with, endorsed by or affiliated with any company, and it uses no company's code, data, logos or trademarks. All names, figures and examples are illustrative or synthetic.

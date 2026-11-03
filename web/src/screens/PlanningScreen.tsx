@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { decideRebalance, fetchWorkUnitsByReference, toApiError, type ApiError } from "../api";
 import { WES_API_BASE } from "../config";
 import type { BacklogSnapshot, RebalanceRecommendation, WorkUnit } from "../types";
 import { Card, StatusPill, DataTable, useFetch } from "@warehouse/ui-kit";
@@ -68,17 +69,46 @@ export function PlanningScreen() {
   const { data: telemetry, loading: telemetryLoading, error: telemetryError } =
     useFetch<BacklogSnapshot>(telemetryUrl);
 
-  const rebalanceUrl = pathId
-    ? `${WES_API_BASE}/paths/${encodeURIComponent(pathId)}/rebalance`
-    : null;
-  const { data: rebalance, loading: rebalanceLoading, error: rebalanceError } =
-    useFetch<RebalanceRecommendation>(rebalanceUrl);
+  // The rebalance decision is a keyed POST (it publishes events), so it does
+  // not go through the GET-only useFetch hook. Like the old fetch it runs once
+  // per looked-up path; every run mints its own Idempotency-Key (decideRebalance).
+  const [rebalance, setRebalance] = useState<RebalanceRecommendation | null>(null);
+  const [rebalanceLoading, setRebalanceLoading] = useState(false);
+  const [rebalanceError, setRebalanceError] = useState<ApiError | null>(null);
+  useEffect(() => {
+    setRebalance(null);
+    setRebalanceError(null);
+    if (!pathId) {
+      setRebalanceLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setRebalanceLoading(true);
+    decideRebalance(pathId)
+      .then((rec) => !cancelled && setRebalance(rec))
+      .catch((err) => !cancelled && setRebalanceError(toApiError(err)))
+      .finally(() => !cancelled && setRebalanceLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [pathId]);
 
-  const workUnitsUrl = reference
-    ? `${WES_API_BASE}/work-units?reference=${encodeURIComponent(reference)}`
-    : null;
-  const { data: workUnits, loading: workUnitsLoading, error: workUnitsError } =
-    useFetch<WorkUnit[]>(workUnitsUrl);
+  const [workUnits, setWorkUnits] = useState<WorkUnit[] | null>(null);
+  const [workUnitsLoading, setWorkUnitsLoading] = useState(false);
+  const [workUnitsError, setWorkUnitsError] = useState<ApiError | null>(null);
+  useEffect(() => {
+    if (!reference) return;
+    let cancelled = false;
+    setWorkUnitsLoading(true);
+    setWorkUnitsError(null);
+    fetchWorkUnitsByReference(reference)
+      .then((rows) => !cancelled && setWorkUnits(rows))
+      .catch((err) => !cancelled && setWorkUnitsError(toApiError(err)))
+      .finally(() => !cancelled && setWorkUnitsLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [reference]);
 
   function onSubmitPath(e: FormEvent) {
     e.preventDefault();

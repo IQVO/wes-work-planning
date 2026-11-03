@@ -18,14 +18,20 @@ resource-creation endpoints."
 
 ## Context
 
+> **Superseded in part by [ADR-0047](./0047-fleet-rest-api-guideline.md).** The
+> v1 scope below (only `POST .../work-units` keyed) and the `422` for key reuse
+> are historical: every POST is now behind this middleware, reuse is
+> `409 idempotency-key-reused`, a replay carries `Idempotency-Replayed: true`,
+> and a malformed key is `400 idempotency-key-invalid`.
+
 This service has four mutating `POST` routes:
 
 - `POST /paths/{pathId}/charge` (`postChargeForecast` → `ReceiveChargeForecast`)
 - `POST /paths/{pathId}/plan` (`postShiftPlan` → `CommitShiftPlan`)
 - `POST /paths/{pathId}/work-units` (`postWorkUnit` → `EnqueueWorkUnit`)
-- `POST /paths/{pathId}/release` (`postRelease` → `ReleaseNextWork`)
+- `POST /paths/{pathId}/work-releases` (`postRelease` → `ReleaseNextWork`)
 
-(A fifth, `POST /work-units/{id}/complete`, acts on an existing id and is
+(A fifth, `POST /work-units/{id}/completions`, acts on an existing id and is
 out of scope by construction — the same class of route order-management's
 ADR rules out for `retry-allocation`/`release`.)
 
@@ -227,7 +233,7 @@ re-validating. Proven by
   without a full table scan. The in-process housekeeper now deletes keys older
   than `IDEMPOTENCY_KEY_TTL` (default 24h).
 - `POST /paths/{pathId}/charge`, `POST /paths/{pathId}/plan`, and
-  `POST /paths/{pathId}/release` remain unprotected by this middleware —
+  `POST /paths/{pathId}/work-releases` remain unprotected by this middleware —
   ruled out explicitly in Context above, not simply left for "later" the
   way order-management deferred its `{id}`-scoped routes.
 

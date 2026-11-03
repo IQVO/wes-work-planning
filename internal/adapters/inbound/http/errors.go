@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/claudioed/wes-work-planning/internal/adapters/inbound/http/page"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/domain/charge"
 	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
@@ -14,6 +15,9 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
+
+// titleInternalError is the RFC 7807 title for unclassified internal errors.
+const titleInternalError = "Internal server error"
 
 // errMalformedBody is a sentinel wrapped around request-body decode failures
 // (invalid JSON) so statusFor routes them to 400 instead of falling through
@@ -29,20 +33,25 @@ var errMissingReference = errors.New("reference query parameter is required")
 // errIdempotencyKeyRequired / errIdempotencyKeyReused are raised by
 // RequireIdempotencyKey (ADR-0022) and routed through the same
 // statusFor/problemFor catalogue as every other problem type (ADR-0005):
-// 400 idempotency-key-required and 422 idempotency-key-reused. The middleware
+// 400 idempotency-key-required / idempotency-key-invalid and 409 idempotency-key-reused. The middleware
 // wraps them with the occurrence-level `detail` text.
 var (
 	errIdempotencyKeyRequired = errors.New("idempotency key required")
+	errIdempotencyKeyInvalid  = errors.New("idempotency key invalid")
 	errIdempotencyKeyReused   = errors.New("idempotency key reused")
+	errUnknownQueryParameter  = errors.New("unknown query parameter")
 )
 
 // statusFor maps a domain/application error to an HTTP status code.
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, errMalformedBody), errors.Is(err, errMissingReference), errors.Is(err, errIdempotencyKeyRequired):
+	case errors.Is(err, errMalformedBody), errors.Is(err, errMissingReference), errors.Is(err, errIdempotencyKeyRequired),
+		errors.Is(err, errIdempotencyKeyInvalid), errors.Is(err, errUnknownQueryParameter),
+		errors.Is(err, page.ErrInvalidLimit), errors.Is(err, page.ErrInvalidCursor):
 		return http.StatusBadRequest
-	case errors.Is(err, errIdempotencyKeyReused),
-		errors.Is(err, pickload.ErrNoActiveCaseLevel),
+	case errors.Is(err, errIdempotencyKeyReused):
+		return http.StatusConflict
+	case errors.Is(err, pickload.ErrNoActiveCaseLevel),
 		errors.Is(err, pickload.ErrNotCaseMultiple):
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, ports.ErrNotFound):
@@ -107,6 +116,10 @@ var problemCatalog = []problemCategory{
 	{errMalformedBody, "malformed-request-body", "Malformed request body"},
 	{errMissingReference, "reference-required", "Reference query parameter is required"},
 	{errIdempotencyKeyRequired, "idempotency-key-required", "Idempotency-Key header is required"},
+	{errIdempotencyKeyInvalid, "idempotency-key-invalid", "Idempotency-Key header is invalid"},
+	{errUnknownQueryParameter, "unknown-query-parameter", "Unknown query parameter"},
+	{page.ErrInvalidLimit, "invalid-limit", "Invalid limit"},
+	{page.ErrInvalidCursor, "invalid-cursor", "Invalid cursor"},
 	{errIdempotencyKeyReused, "idempotency-key-reused", "Idempotency-Key was already used with a different request"},
 	{ports.ErrNotFound, "not-found", "Resource not found"},
 	{ports.ErrConcurrentModification, "concurrent-modification", "The work pool was modified concurrently; retry the request"},
@@ -152,7 +165,7 @@ func problemFor(err error) (typeURI, title string) {
 			return problemBaseURI + category.slug, category.title
 		}
 	}
-	return problemBaseURI + "internal-error", "Internal server error"
+	return problemBaseURI + "internal-error", titleInternalError
 }
 
 // writeError writes a domain/application error as an RFC 7807

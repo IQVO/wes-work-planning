@@ -367,7 +367,7 @@ func TestPostRelease(t *testing.T) {
 		t.Fatalf("setup: got status %d, want 201, body=%s", rec.Code, rec.Body.String())
 	}
 
-	rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/release", nil)
+	rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-releases", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got status %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
@@ -383,11 +383,11 @@ func TestPostRelease_EmptyPoolReturns409(t *testing.T) {
 	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", enqueueBody); rec.Code != http.StatusCreated {
 		t.Fatalf("setup: got status %d, want 201, body=%s", rec.Code, rec.Body.String())
 	}
-	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/release", nil); rec.Code != http.StatusOK {
+	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-releases", nil); rec.Code != http.StatusOK {
 		t.Fatalf("setup: got status %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
 
-	rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/release", nil)
+	rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-releases", nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("got status %d, want 409, body=%s", rec.Code, rec.Body.String())
 	}
@@ -403,11 +403,11 @@ func TestPostComplete(t *testing.T) {
 	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", enqueueBody); rec.Code != http.StatusCreated {
 		t.Fatalf("setup: got status %d, want 201, body=%s", rec.Code, rec.Body.String())
 	}
-	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/release", nil); rec.Code != http.StatusOK {
+	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-releases", nil); rec.Code != http.StatusOK {
 		t.Fatalf("setup: got status %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
 
-	rec := doJSON(t, router, http.MethodPost, "/work-units/wu-1/complete", nil)
+	rec := doJSON(t, router, http.MethodPost, "/work-units/wu-1/completions", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got status %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
@@ -421,10 +421,10 @@ func TestPostComplete_DoubleCompleteReturns409(t *testing.T) {
 		"reference":  "order-line-1",
 	}
 	doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", enqueueBody)
-	doJSON(t, router, http.MethodPost, "/paths/pick-a/release", nil)
-	doJSON(t, router, http.MethodPost, "/work-units/wu-1/complete", nil)
+	doJSON(t, router, http.MethodPost, "/paths/pick-a/work-releases", nil)
+	doJSON(t, router, http.MethodPost, "/work-units/wu-1/completions", nil)
 
-	rec := doJSON(t, router, http.MethodPost, "/work-units/wu-1/complete", nil)
+	rec := doJSON(t, router, http.MethodPost, "/work-units/wu-1/completions", nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("got status %d, want 409, body=%s", rec.Code, rec.Body.String())
 	}
@@ -444,8 +444,8 @@ func TestPostComplete_DoubleCompleteReturns409(t *testing.T) {
 	if problem.Status != http.StatusConflict {
 		t.Fatalf("got problem.status %d, want 409", problem.Status)
 	}
-	if problem.Instance != "/work-units/wu-1/complete" {
-		t.Fatalf("got instance %q, want /work-units/wu-1/complete", problem.Instance)
+	if problem.Instance != "/work-units/wu-1/completions" {
+		t.Fatalf("got instance %q, want /work-units/wu-1/completions", problem.Instance)
 	}
 }
 
@@ -580,7 +580,7 @@ func TestGetTelemetry_EmptyCutoffAtReturns400(t *testing.T) {
 	}
 }
 
-func TestGetRebalance(t *testing.T) {
+func TestPostRebalanceDecision(t *testing.T) {
 	router := newTestRouter()
 	enqueueBody := map[string]any{
 		"workUnitId": "wu-1",
@@ -589,15 +589,32 @@ func TestGetRebalance(t *testing.T) {
 	}
 	doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", enqueueBody)
 
-	rec := doJSON(t, router, http.MethodGet, "/paths/pick-a/rebalance", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("got status %d, want 200, body=%s", rec.Code, rec.Body.String())
+	rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/rebalance-decisions", nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("got status %d, want 201, body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestGetRebalance_UnknownPathReturns404(t *testing.T) {
+// TestRebalanceOldGetRouteIsGone pins the hard cutover: the side-effecting
+// GET /paths/{pathId}/rebalance no longer exists.
+func TestRebalanceOldGetRouteIsGone(t *testing.T) {
 	router := newTestRouter()
-	rec := doJSON(t, router, http.MethodGet, "/paths/unknown-path/rebalance", nil)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		rec := doJSON(t, router, method, "/paths/pick-a/rebalance", nil)
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s /paths/pick-a/rebalance: got %d, want 404 or 405", method, rec.Code)
+		}
+	}
+	// A GET on the new noun route is not allowed either.
+	rec := doJSON(t, router, http.MethodGet, "/paths/pick-a/rebalance-decisions", nil)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET rebalance-decisions: got %d, want 405", rec.Code)
+	}
+}
+
+func TestPostRebalanceDecision_UnknownPathReturns404(t *testing.T) {
+	router := newTestRouter()
+	rec := doJSON(t, router, http.MethodPost, "/paths/unknown-path/rebalance-decisions", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("got status %d, want 404, body=%s", rec.Code, rec.Body.String())
 	}
@@ -655,9 +672,9 @@ func TestGetLaborPlanView_ReturnsObservedPlanAndSurfacesInRebalance(t *testing.T
 		t.Fatalf("unexpected labor-plan-view body: %s", rec.Body.String())
 	}
 
-	rebalanceRec := doJSON(t, router, http.MethodGet, "/paths/pick-a/rebalance", nil)
-	if rebalanceRec.Code != http.StatusOK {
-		t.Fatalf("got status %d, want 200, body=%s", rebalanceRec.Code, rebalanceRec.Body.String())
+	rebalanceRec := doJSON(t, router, http.MethodPost, "/paths/pick-a/rebalance-decisions", nil)
+	if rebalanceRec.Code != http.StatusCreated {
+		t.Fatalf("got status %d, want 201, body=%s", rebalanceRec.Code, rebalanceRec.Body.String())
 	}
 	var rebalance map[string]any
 	if err := json.Unmarshal(rebalanceRec.Body.Bytes(), &rebalance); err != nil {
@@ -733,10 +750,13 @@ func TestGetWorkUnitsByReference_ReturnsMatches(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got status %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
-	var units []map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &units); err != nil {
+	var env struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	units := env.Items
 	if len(units) != 2 {
 		t.Fatalf("got %d units, want 2, body=%s", len(units), rec.Body.String())
 	}
@@ -765,10 +785,13 @@ func TestGetWorkUnitsByReference_NoMatchesReturnsEmptyArray(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got status %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
-	var units []map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &units); err != nil {
+	var env struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	units := env.Items
 	if len(units) != 0 {
 		t.Fatalf("got %d units, want 0", len(units))
 	}
@@ -870,7 +893,7 @@ func TestGetWorkUnit_ReflectsReleasedState(t *testing.T) {
 	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-units", body); rec.Code != http.StatusCreated {
 		t.Fatalf("setup: got status %d, want 201, body=%s", rec.Code, rec.Body.String())
 	}
-	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/release", nil); rec.Code != http.StatusOK {
+	if rec := doJSON(t, router, http.MethodPost, "/paths/pick-a/work-releases", nil); rec.Code != http.StatusOK {
 		t.Fatalf("setup: got status %d, want 200, body=%s", rec.Code, rec.Body.String())
 	}
 
@@ -924,7 +947,7 @@ func TestGetWorkUnit_UnknownIdReturns404Problem(t *testing.T) {
 }
 
 // TestGetWorkUnit_DoesNotShadowComplete pins the chi route ordering: adding
-// GET /work-units/{id} must leave POST /work-units/{id}/complete routed to
+// GET /work-units/{id} must leave POST /work-units/{id}/completions routed to
 // RecordCompletion (a 409 work-unit-not-released for a Pending unit, not a
 // 405 or the GET handler's 200).
 func TestGetWorkUnit_DoesNotShadowComplete(t *testing.T) {
@@ -938,10 +961,10 @@ func TestGetWorkUnit_DoesNotShadowComplete(t *testing.T) {
 		t.Fatalf("setup: got status %d, want 201, body=%s", rec.Code, rec.Body.String())
 	}
 
-	if rec := doJSON(t, router, http.MethodPost, "/work-units/wu-shadow/complete", nil); rec.Code != http.StatusConflict {
+	if rec := doJSON(t, router, http.MethodPost, "/work-units/wu-shadow/completions", nil); rec.Code != http.StatusConflict {
 		t.Fatalf("POST complete: got status %d, want 409, body=%s", rec.Code, rec.Body.String())
 	}
-	if rec := doJSON(t, router, http.MethodGet, "/work-units/wu-shadow/complete", nil); rec.Code != http.StatusMethodNotAllowed {
+	if rec := doJSON(t, router, http.MethodGet, "/work-units/wu-shadow/completions", nil); rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET complete: got status %d, want 405, body=%s", rec.Code, rec.Body.String())
 	}
 	if rec := doJSON(t, router, http.MethodGet, "/work-units/wu-shadow", nil); rec.Code != http.StatusOK {

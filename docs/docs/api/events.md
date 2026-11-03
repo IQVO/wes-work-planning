@@ -198,7 +198,7 @@ Keyed by SKU, not by path — Inventory reservations are SKU-scoped.
 
 This closes the control loop's feedback edge. `ApplyTaskCompleted` only adds
 the atomic processed-event mark around exactly the same code path that
-`POST /work-units/{id}/complete` runs.
+`POST /work-units/{id}/completions` runs.
 
 ### `warehouse.order-management.events` — from `order-management`
 

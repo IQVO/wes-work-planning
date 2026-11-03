@@ -122,7 +122,7 @@ func (g *Readiness) Failing(ctx context.Context) []string {
 // value) always reports ready.
 func (h *Handlers) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	if !h.Readiness.Ready() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{statusKey: "not_ready"})
 		return
 	}
 	if failing := h.Readiness.Failing(r.Context()); len(failing) > 0 {
@@ -135,5 +135,5 @@ func (h *Handlers) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "ready"})
 }

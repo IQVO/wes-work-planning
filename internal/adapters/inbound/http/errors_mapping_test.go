@@ -13,7 +13,7 @@ import (
 
 // A WorkPool optimistic-concurrency conflict that outlived the use case's
 // retry budget is a transient 409 the caller can retry, never a 500.
-// Observed live: POST /paths/pick/release answered 500 "concurrent
+// Observed live: POST /paths/pick/work-releases answered 500 "concurrent
 // modification" under a busy floor.
 func TestWriteError_ConcurrentModificationIs409(t *testing.T) {
 	err := fmt.Errorf("release: %w", ports.ErrConcurrentModification)
@@ -21,7 +21,7 @@ func TestWriteError_ConcurrentModificationIs409(t *testing.T) {
 		t.Fatalf("statusFor = %d, want 409", got)
 	}
 	rr := httptest.NewRecorder()
-	writeError(rr, httptest.NewRequest(nethttp.MethodPost, "/paths/pick/release", nil), err)
+	writeError(rr, httptest.NewRequest(nethttp.MethodPost, "/paths/pick/work-releases", nil), err)
 	if rr.Code != nethttp.StatusConflict {
 		t.Fatalf("status = %d, want 409", rr.Code)
 	}

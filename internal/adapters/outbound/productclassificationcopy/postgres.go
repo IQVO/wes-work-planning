@@ -86,7 +86,7 @@ func (s *Store) GetClassification(ctx context.Context, sku string) (productclass
 	view, err := s.read(ctx, sku)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.WarnContext(ctx, "product classification copy unreadable; releasing without hints", "sku", sku, "error", err)
+			s.logger.WarnContext(ctx, "product classification copy unreadable; releasing without hints", "sku", sanitizeLog(sku), "error", err)
 		}
 		return unknown(sku), nil
 	}

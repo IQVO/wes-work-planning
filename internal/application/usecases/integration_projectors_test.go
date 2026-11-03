@@ -2,6 +2,7 @@ package usecases_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -133,7 +134,7 @@ func TestInventoryView_UnknownSKUReturnsNotFound(t *testing.T) {
 	views := memory.NewInventoryViewRepo()
 	uc := usecases.NewInventoryView(views)
 
-	if _, err := uc.Execute(context.Background(), usecases.InventoryViewRequest{SKU: "does-not-exist"}); err != ports.ErrNotFound {
+	if _, err := uc.Execute(context.Background(), usecases.InventoryViewRequest{SKU: "does-not-exist"}); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
@@ -143,7 +144,7 @@ func TestLaborPlanView_UnknownPathReturnsNotFound(t *testing.T) {
 	uc := usecases.NewLaborPlanView(views)
 
 	pathId, _ := shared.NewPathId("unknown-path")
-	if _, err := uc.Execute(context.Background(), usecases.LaborPlanViewRequest{PathId: pathId}); err != ports.ErrNotFound {
+	if _, err := uc.Execute(context.Background(), usecases.LaborPlanViewRequest{PathId: pathId}); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }

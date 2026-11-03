@@ -13,7 +13,7 @@
 #     total and a Location of /paths/{id}/charge; 400 for an invalid body
 #   - docs/docs/adr/0017-travel-distance-lookup-on-commit-shift-plan.md: a
 #     travel distance hint is only present when one was requested
-#   - GET /paths/{pathId}/rebalance: the labor plan is part of the answer
+#   - POST /paths/{pathId}/rebalance-decisions: the labor plan is part of the answer
 #     only when Workforce Management reported one
 #   - apis/openapi.yaml /healthz and /readyz (ADR-0023 graceful shutdown):
 #     liveness never flips; readiness flips to not-ready first on shutdown
@@ -112,14 +112,14 @@ Feature: Rejecting invalid plans and forecasts, and reporting health
     And the charge forecast reports a total quantity of 250 units
 
   @bdd
-  Scenario: A rebalance read does not invent a labor plan
+  Scenario: A rebalance decision does not invent a labor plan
     Given a WorkUnit "wu-1" with CPT "2026-08-21T10:00:00Z" and reference "order-line-1" is enqueued to process path "pick-zone-a"
     When the rebalance decision is requested for process path "pick-zone-a"
-    Then the request is accepted with status 200
+    Then the request is accepted with status 201
     And the rebalance recommendation carries no labor plan
 
   @bdd
-  Scenario: A rebalance read includes the labor plan Workforce Management reported
+  Scenario: A rebalance decision includes the labor plan Workforce Management reported
     Given a WorkUnit "wu-1" with CPT "2026-08-21T10:00:00Z" and reference "order-line-1" is enqueued to process path "pick-zone-a"
     And Workforce Management committed a labor plan of 6 heads at 90 units per hour for 8 hours for process path "pick-zone-a"
     When the rebalance decision is requested for process path "pick-zone-a"

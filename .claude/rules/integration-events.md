@@ -13,14 +13,14 @@ paths:
 - `POST /paths/{pathId}/charge`            → receiveChargeForecast
 - `POST /paths/{pathId}/plan`              → commitShiftPlan
 - `POST /paths/{pathId}/work-units`        → enqueueWorkUnit (optional `lineNo`, ADR-0036)
-- `POST /paths/{pathId}/release`           → releaseNextWork
+- `POST /paths/{pathId}/work-releases`      → releaseNextWork (keyed)
 - `PUT  /paths/{pathId}/pool`              → configurePool (ADR-0034)
 - `GET  /paths/{pathId}/telemetry`         → sampleBacklog
 - `GET  /paths/{pathId}/rebalance`         → rebalanceDecision
 - `GET  /paths/{pathId}/labor-plan-view`   → getLaborPlanView
 - `GET  /work-units?reference=`            → getWorkUnitsByReference
 - `GET  /work-units/{id}`                  → getWorkUnit
-- `POST /work-units/{id}/complete`         → recordCompletion
+- `POST /work-units/{id}/completions`       → recordCompletion (keyed)
 - `GET  /inventory-view/{sku}`             → getInventoryView
 
 `GET /readyz` (readiness probe, flipped not-ready first on shutdown,
@@ -30,8 +30,8 @@ ADR-0023) is declared as `readinessCheck` in `apis/openapi.yaml`.
 cross-service Order Lifecycle console screen — see ADR-0002 in
 `warehouse-ops-agent`'s docs and this repo's own adoption-record ADR under
 `docs/docs/adr/`. It returns every WorkUnit ever enqueued against a
-caller-supplied `reference` (order-management's `OrderId`), array-shaped,
-side-effect-free.
+caller-supplied `reference` (order-management's `OrderId`),
+`{items,nextCursor}`-shaped (fleet REST guideline paging), side-effect-free.
 
 `GET /work-units/{id}` is the identity lookup (GetWorkUnit use case, reuses
 `WorkUnitRepo.FindById`): one `WorkUnitResponse` (same schema as the other
@@ -39,8 +39,8 @@ work-unit endpoints) or `404 not-found`. It exists so a client holding only
 a WorkUnitId — e.g. an RF gun resolving a fulfillment-execution PICK task's
 `orderRef`, which is this service's deterministic `<orderId>-line-<lineNo>`
 WorkUnitId — can read sku/reference/pathId/cpt/state without parsing the id
-string. chi routes the static `/complete` suffix separately, so it does not
-shadow `POST /work-units/{id}/complete`.
+string. chi routes the static `/completions` suffix separately, so it does not
+shadow `POST /work-units/{id}/completions`.
 
 Full request/response schemas, every status code, and the shared `Problem`
 error component: [`apis/openapi.yaml`](../../apis/openapi.yaml). The

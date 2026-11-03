@@ -105,7 +105,7 @@ See [ADR-0003](../adr/0003-flow-balancing-as-domain-service.md).
 
 ## Optional labour context
 
-`GET /paths/{pathId}/rebalance` may include a `laborPlan` object: the
+The `POST /paths/{pathId}/rebalance-decisions` answer may include a `laborPlan` object: the
 `LaborPlanObserved` projection of what Workforce Management last committed for
 this path. It is **additive context for the reader** — the decision logic above
 does not consult it. A `ReassignLabor` flag is far more actionable next to

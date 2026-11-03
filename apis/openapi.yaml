@@ -1692,6 +1692,7 @@ components:
         quantity:
           type: integer
           format: int32
+          minimum: 1
           nullable: true
           description: >-
             OPTIONAL (ADR-0045). Quantity in EACHES; with `pickUnit` or

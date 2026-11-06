@@ -19,6 +19,7 @@
       "sku": "SKU-2",
       "to_bin": "WH1-FWD-A01-01-02-A"
     },
+    "site_id": "SITE-1",
     "work_unit_id": "plan-3b0e8d2a-move-1"
   }
 }

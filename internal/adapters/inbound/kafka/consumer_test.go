@@ -245,6 +245,59 @@ func TestHandleOrderManagementEvent_PartiallyAllocatedBehavesIdentically(t *test
 	}
 }
 
+// ADR-0048: order-management's additive top-level site_id (the order's
+// fulfillment site) threads onto EVERY line's work unit, on both event
+// types, so the WorkReleased publisher can state it at release time.
+func TestHandleOrderManagementEvent_SiteIdThreadsOntoEveryLine(t *testing.T) {
+	for _, eventType := range []string{cloudevents.TypeOrderAllocated, cloudevents.TypeOrderPartiallyAllocated} {
+		f := newOrderManagementFixture()
+		lines := []orderLineData{
+			{LineNo: 1, SKU: "SKU-1", PathId: "pick-a", GiftWrap: false},
+			{LineNo: 2, SKU: "SKU-2", PathId: "pick-a", GiftWrap: false},
+		}
+		env := testEvent(t, "evt-order-site", eventType, "/warehouse/order-management", "order-site", orderAllocatedData{
+			OrderId:     "order-site",
+			SiteId:      "WH1",
+			PromiseDate: time.Date(2026, 8, 21, 23, 0, 0, 0, time.UTC),
+			Lines:       lines,
+		})
+
+		if err := f.consumer.handleOrderManagementEvent(context.Background(), env); err != nil {
+			t.Fatalf("handleOrderManagementEvent (%s): %v", eventType, err)
+		}
+		for _, id := range []string{"order-site-line-1", "order-site-line-2"} {
+			unit, err := f.workUnits.FindById(context.Background(), id)
+			if err != nil {
+				t.Fatalf("FindById %s: %v", id, err)
+			}
+			if unit.SiteId() != "WH1" {
+				t.Fatalf("%s siteId = %q, want WH1", id, unit.SiteId())
+			}
+		}
+	}
+}
+
+// ADR-0048's defensive half: a payload that predates the additive
+// site_id — or an order with no fulfillment site — decodes as "" and
+// behaves exactly as before: the units carry no site.
+func TestHandleOrderManagementEvent_AbsentSiteIdKeepsUnitsSiteless(t *testing.T) {
+	f := newOrderManagementFixture()
+	lines := []orderLineData{{LineNo: 1, SKU: "SKU-1", PathId: "pick-a", GiftWrap: false}}
+	env := orderAllocatedEnvelope(t, "evt-order-nosite", cloudevents.TypeOrderAllocated, "order-nosite", lines)
+
+	if err := f.consumer.handleOrderManagementEvent(context.Background(), env); err != nil {
+		t.Fatalf("handleOrderManagementEvent: %v", err)
+	}
+
+	unit, err := f.workUnits.FindById(context.Background(), "order-nosite-line-1")
+	if err != nil {
+		t.Fatalf("FindById: %v", err)
+	}
+	if unit.SiteId() != "" {
+		t.Fatalf("siteId = %q, want empty for a payload without site_id", unit.SiteId())
+	}
+}
+
 func TestHandleOrderManagementEvent_IgnoresOtherEventTypes(t *testing.T) {
 	f := newOrderManagementFixture()
 	lines := []orderLineData{{LineNo: 1, SKU: "SKU-1", PathId: "pick-a"}}

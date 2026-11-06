@@ -201,9 +201,11 @@ func WithWorkKind(kind WorkKind) Option {
 	}
 }
 
-// SiteId is the optional network site (NIP's site_id — the transfer's
-// origin for a pick/dispatch leg, destination for an arrival leg) this
-// unit is anchored to. Empty when not transfer work.
+// SiteId is the optional site this unit is anchored to (ADR-0048): a
+// transfer leg's network site (NIP's site_id — the transfer's origin for
+// a pick/dispatch leg, destination for an arrival leg), an order unit's
+// fulfillment site (OrderAllocated's additive site_id), a RELOCATE unit's
+// plan site or a REPLENISH unit's request site. Empty when none is known.
 func (w *WorkUnit) SiteId() string { return w.siteId }
 
 // WithSiteId records the optional site id at construction.

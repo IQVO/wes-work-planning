@@ -106,6 +106,36 @@ func (r *WorkUnitRepo) PendingBlockedBy(ctx context.Context, workUnitId string) 
 	}), nil
 }
 
+// ForwardPickFaceBySKU implements ports.ForwardPickFaceLookup (ADR-0048)
+// over the in-memory units: the to_slot of the SKU's newest non-cancelled
+// RELOCATE move with one, or "" when there is none. Test doubles carry no
+// plan approval time, so recency falls back to the greater plan id — the
+// same tie-break relocation.Receipt.Supersedes uses; the Postgres adapter
+// is the one that orders by approved_at.
+func (r *WorkUnitRepo) ForwardPickFaceBySKU(ctx context.Context, siteId, sku string) (string, error) {
+	var best workunit.RelocationMove
+	found := false
+	for _, u := range r.filter(func(u *workunit.WorkUnit) bool {
+		return u.WorkKind() == workunit.WorkKindRelocate &&
+			u.SKU() == sku &&
+			u.State() != workunit.Cancelled &&
+			(siteId == "" || u.SiteId() == siteId)
+	}) {
+		move, ok := u.Relocation()
+		if !ok || move.ToSlot == "" {
+			continue
+		}
+		if !found || move.PlanId > best.PlanId ||
+			(move.PlanId == best.PlanId && move.MoveSeq < best.MoveSeq) {
+			best, found = move, true
+		}
+	}
+	if !found {
+		return "", nil
+	}
+	return best.ToSlot, nil
+}
+
 func (r *WorkUnitRepo) filter(keep func(*workunit.WorkUnit) bool) []*workunit.WorkUnit {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

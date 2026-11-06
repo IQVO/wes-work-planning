@@ -148,6 +148,7 @@ func (c *Consumer) handleOrderManagementEvent(ctx context.Context, env ce.Event)
 		EventId:     env.ID(),
 		OccurredAt:  env.Time(),
 		OrderId:     data.OrderId,
+		SiteId:      data.SiteId,
 		PromiseDate: data.PromiseDate,
 		Lines:       lines,
 	})

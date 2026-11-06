@@ -111,11 +111,15 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 	orderId := fmt.Sprintf("integration-kafka-order-%d", time.Now().UnixNano())
 	orderManagementWriter := &kafkago.Writer{Addr: kafkago.TCP(brokers...), Topic: cloudevents.TopicOrderManagementEvents, AllowAutoTopicCreation: false}
 	defer orderManagementWriter.Close()
+	// ADR-0048: the fixture carries the additive top-level site_id the
+	// concurrent order-management producer change publishes, proving the
+	// real-broker consumer path threads it onto the order's units.
+	orderSiteId := "WH1"
 	if err := orderManagementWriter.WriteMessages(publishCtx, kafkago.Message{
 		Key:     []byte("evt-order-" + orderId),
 		Headers: cloudEventHeaders(),
 		Value: mustCloudEventJSON(t, "evt-order-"+orderId, cloudevents.TypeOrderAllocated, "order-management", map[string]any{
-			"order_id": orderId, "promise_date": time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339),
+			"order_id": orderId, "site_id": orderSiteId, "promise_date": time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339),
 			"lines": []map[string]any{{"line_no": 1, "sku": sku, "path_id": pathIdValue, "gift_wrap": false}},
 		}),
 	}); err != nil {
@@ -203,6 +207,9 @@ func TestConsumer_ProjectsRealBrokerMessages(t *testing.T) {
 		if err == nil {
 			if unit.SKU() != sku {
 				t.Fatalf("got sku %q, want %q", unit.SKU(), sku)
+			}
+			if unit.SiteId() != orderSiteId {
+				t.Fatalf("got siteId %q, want %q threaded off the event's site_id", unit.SiteId(), orderSiteId)
 			}
 			break
 		}

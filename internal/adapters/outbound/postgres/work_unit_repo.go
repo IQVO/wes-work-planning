@@ -112,7 +112,9 @@ func missingTimestamp(id string, st workunit.State, column string) error {
 }
 
 // scanWorkUnit rehydrates one stored row into the aggregate, validating the
-// enum columns (state, work_kind, relocation_kind) on the way in.
+// enum columns (state, work_kind, relocation_kind) and the lifecycle
+// timestamps on the way in, then rebuilding via workunit.Rehydrate — which
+// trusts persistence and performs no transitions.
 func (r *WorkUnitRepo) scanWorkUnit(row workUnitRow) (*workunit.WorkUnit, error) {
 	st, err := workunit.ParseState(row.state)
 	if err != nil {
@@ -122,75 +124,105 @@ func (r *WorkUnitRepo) scanWorkUnit(row workUnitRow) (*workunit.WorkUnit, error)
 	if err != nil {
 		return nil, err
 	}
-	unit, err := workunit.NewWorkUnit(row.id, pathId, shared.NewCPT(row.cpt), row.reference)
+	if err := checkLifecycleTimestamps(row, st); err != nil {
+		return nil, err
+	}
+	snap, err := descriptiveSnapshot(row, st, pathId)
 	if err != nil {
 		return nil, err
 	}
-	if err := applyDescriptiveColumns(unit, row); err != nil {
-		return nil, err
-	}
-	if err := replayLifecycle(unit, st, row); err != nil {
-		return nil, err
-	}
-	return unit, nil
+	return workunit.Rehydrate(snap), nil
 }
 
-// applyDescriptiveColumns sets the additive, non-lifecycle fields.
-func applyDescriptiveColumns(unit *workunit.WorkUnit, row workUnitRow) error {
-	// work_kind is validated on the way in (the inverse of the setter), so
-	// a corrupt stored value fails loud instead of rehydrating an invalid
-	// WorkKind — the same contract ParseState gives `state`.
+// checkLifecycleTimestamps refuses a stored row whose state contradicts its
+// transition timestamp columns (a Released row without released_at, etc.).
+func checkLifecycleTimestamps(row workUnitRow, st workunit.State) error {
+	switch st {
+	case workunit.Pending:
+		return nil
+	case workunit.Cancelled:
+		if row.cancelledAt == nil {
+			return missingTimestamp(row.id, st, "cancelled_at")
+		}
+		return nil
+	default:
+		if row.releasedAt == nil {
+			return missingTimestamp(row.id, st, "released_at")
+		}
+		if st == workunit.Completed && row.completedAt == nil {
+			return missingTimestamp(row.id, st, "completed_at")
+		}
+		return nil
+	}
+}
+
+// descriptiveSnapshot maps the additive, non-lifecycle columns onto a
+// workunit.Snapshot, validating the enum columns on the way in (the inverse
+// of the wire form), so a corrupt stored value fails loud instead of
+// rehydrating an invalid WorkKind — the same contract ParseState gives
+// `state`.
+func descriptiveSnapshot(row workUnitRow, st workunit.State, pathId shared.PathId) (workunit.Snapshot, error) {
+	snap := workunit.Snapshot{
+		ID:          row.id,
+		PathId:      pathId,
+		CPT:         shared.NewCPT(row.cpt),
+		Reference:   row.reference,
+		SKU:         row.sku,
+		GiftWrap:    row.giftWrap,
+		TransferRef: row.transferRef,
+		SiteId:      row.siteId,
+		Quantity:    row.quantity,
+		LineNo:      lineNoFromColumn(row.lineNo),
+		BlockedBy:   row.blockedBy,
+		State:       st,
+		ReleasedAt:  row.releasedAt,
+		CompletedAt: row.completedAt,
+		CancelledAt: row.cancelledAt,
+	}
 	if row.workKind != "" {
 		kind, err := workunit.ParseWorkKind(row.workKind)
 		if err != nil {
-			return fmt.Errorf("rehydrate work unit %q: %w", row.id, err)
+			return snap, fmt.Errorf("rehydrate work unit %q: %w", row.id, err)
 		}
-		unit.SetWorkKind(kind)
+		snap.WorkKind = kind
 	}
-	unit.SetSKU(row.sku)
-	unit.SetGiftWrap(row.giftWrap)
-	unit.SetTransferRef(row.transferRef)
-	unit.SetSiteId(row.siteId)
-	unit.SetQuantity(row.quantity)
-	unit.SetLineNo(lineNoFromColumn(row.lineNo))
-	unit.SetBlockedBy(row.blockedBy)
-	if err := applyRelocationColumns(unit, row); err != nil {
-		return err
+	if err := relocationColumn(&snap, row); err != nil {
+		return snap, err
 	}
-	if err := applyReplenishmentColumns(unit, row); err != nil {
-		return err
+	if err := replenishmentColumns(&snap, row); err != nil {
+		return snap, err
 	}
-	return applyPackAwareColumns(unit, row)
+	return snap, packAwareColumns(&snap, row)
 }
 
-// applyPackAwareColumns rehydrates the pick plan of a CASE_PICK / EACH_PICK
-// row and the case break of a BREAK_CASE row (ADR-0045) from their own
-// columns plus the unit's sku and quantity; a corrupt unit or an incomplete
-// value fails loud, like the other kinds.
-func applyPackAwareColumns(unit *workunit.WorkUnit, row workUnitRow) error {
+// packAwareColumns rehydrates the pick plan of a CASE_PICK / EACH_PICK row
+// and the case break of a BREAK_CASE row (ADR-0045) from their own columns
+// plus the row's sku and quantity; a corrupt unit or an incomplete value
+// fails loud, like the other kinds.
+func packAwareColumns(snap *workunit.Snapshot, row workUnitRow) error {
 	if row.pickUnit != "" {
 		plan, err := workunit.NewPickPlan(row.sku, row.quantity, row.pickUnit, row.pickFromBin)
 		if err != nil {
 			return fmt.Errorf("rehydrate work unit %q: %w", row.id, err)
 		}
-		unit.SetPick(plan)
-	} else if unit.WorkKind().IsPickKind() {
-		return fmt.Errorf("rehydrate work unit %q: %s row without its pick columns: %w", row.id, unit.WorkKind(), workunit.ErrInvalidPickPlan)
+		snap.Pick = &plan
+	} else if snap.WorkKind.IsPickKind() {
+		return fmt.Errorf("rehydrate work unit %q: %s row without its pick columns: %w", row.id, snap.WorkKind, workunit.ErrInvalidPickPlan)
 	}
 	if row.caseBreakLPN != "" {
 		brk, err := workunit.NewCaseBreak(row.caseBreakLPN, row.sku, row.caseBreakLooseBin, row.caseBreakPickTaskId)
 		if err != nil {
 			return fmt.Errorf("rehydrate work unit %q: %w", row.id, err)
 		}
-		unit.SetCaseBreak(brk)
-	} else if unit.WorkKind() == workunit.WorkKindBreakCase {
+		snap.CaseBreak = &brk
+	} else if snap.WorkKind == workunit.WorkKindBreakCase {
 		return fmt.Errorf("rehydrate work unit %q: BREAK_CASE row without its case break columns: %w", row.id, workunit.ErrInvalidCaseBreak)
 	}
 	return nil
 }
 
-// applyRelocationColumns rehydrates the slot-plan move of a RELOCATE row.
-func applyRelocationColumns(unit *workunit.WorkUnit, row workUnitRow) error {
+// relocationColumn rehydrates the slot-plan move of a RELOCATE row.
+func relocationColumn(snap *workunit.Snapshot, row workUnitRow) error {
 	if row.relocationKind == "" {
 		return nil
 	}
@@ -198,16 +230,16 @@ func applyRelocationColumns(unit *workunit.WorkUnit, row workUnitRow) error {
 	if err != nil {
 		return fmt.Errorf("rehydrate work unit %q: %w", row.id, err)
 	}
-	unit.SetRelocation(move)
+	snap.Relocation = &move
 	return nil
 }
 
-// applyReplenishmentColumns rehydrates the pick-face replenishment of a
-// REPLENISH row (ADR-0042) from its own columns plus the unit's sku and
+// replenishmentColumns rehydrates the pick-face replenishment of a
+// REPLENISH row (ADR-0042) from its own columns plus the row's sku and
 // quantity; a corrupt priority or an incomplete move fails loud.
-func applyReplenishmentColumns(unit *workunit.WorkUnit, row workUnitRow) error {
+func replenishmentColumns(snap *workunit.Snapshot, row workUnitRow) error {
 	if row.replenishmentPriority == "" {
-		if unit.WorkKind() == workunit.WorkKindReplenish {
+		if snap.WorkKind == workunit.WorkKindReplenish {
 			return fmt.Errorf("rehydrate work unit %q: REPLENISH row without its replenishment columns: %w", row.id, workunit.ErrInvalidReplenishmentMove)
 		}
 		return nil
@@ -216,34 +248,8 @@ func applyReplenishmentColumns(unit *workunit.WorkUnit, row workUnitRow) error {
 	if err != nil {
 		return fmt.Errorf("rehydrate work unit %q: %w", row.id, err)
 	}
-	unit.SetReplenishment(move)
+	snap.Replenish = &move
 	return nil
-}
-
-// replayLifecycle replays the stored state onto a fresh Pending unit.
-func replayLifecycle(unit *workunit.WorkUnit, st workunit.State, row workUnitRow) error {
-	if st == workunit.Cancelled {
-		if row.cancelledAt == nil {
-			return missingTimestamp(row.id, st, "cancelled_at")
-		}
-		return unit.Cancel(*row.cancelledAt)
-	}
-	if st == workunit.Pending {
-		return nil
-	}
-	if row.releasedAt == nil {
-		return missingTimestamp(row.id, st, "released_at")
-	}
-	if err := unit.Release(*row.releasedAt); err != nil {
-		return err
-	}
-	if st == workunit.Released {
-		return nil
-	}
-	if row.completedAt == nil {
-		return missingTimestamp(row.id, st, "completed_at")
-	}
-	return unit.Complete(*row.completedAt)
 }
 
 func (r *WorkUnitRepo) FindById(ctx context.Context, id string) (*workunit.WorkUnit, error) {

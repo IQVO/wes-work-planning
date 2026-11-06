@@ -243,18 +243,24 @@ func (uc *ApplySlotPlanApproved) planUnits(pool *release.WorkPool, plan *relocat
 	pred := plan.Predecessors()
 	units := make([]*workunit.WorkUnit, 0, len(plan.Moves()))
 	for _, m := range plan.Moves() {
-		unit, err := workunit.NewWorkUnit(relocation.WorkUnitId(plan.Id(), m.Move.MoveSeq), pathId, cpt, plan.Id())
+		opts := []workunit.Option{
+			workunit.WithWorkKind(workunit.WorkKindRelocate),
+			workunit.WithSiteId(plan.SiteId()),
+			workunit.WithSKU(m.SKU),
+			workunit.WithRelocation(m.Move),
+		}
+		a, waits := pred[m.Move.MoveSeq]
+		if waits {
+			opts = append(opts, workunit.WithBlockedBy(relocation.WorkUnitId(plan.Id(), a)))
+		}
+		unit, err := workunit.NewWorkUnit(relocation.WorkUnitId(plan.Id(), m.Move.MoveSeq), pathId, cpt, plan.Id(), opts...)
 		if err != nil {
 			return nil, err
 		}
-		unit.SetWorkKind(workunit.WorkKindRelocate)
-		unit.SetSiteId(plan.SiteId())
-		unit.SetSKU(m.SKU)
-		unit.SetRelocation(m.Move)
-		if a, waits := pred[m.Move.MoveSeq]; waits {
-			unit.SetBlockedBy(relocation.WorkUnitId(plan.Id(), a))
-		} else if err := pool.Enqueue(unit.Id(), cpt); err != nil {
-			return nil, err
+		if !waits {
+			if err := pool.Enqueue(unit.Id(), cpt); err != nil {
+				return nil, err
+			}
 		}
 		units = append(units, unit)
 	}

@@ -27,13 +27,11 @@ func newReleasedLineUnit(t *testing.T, id string, lineNo int) *memory.WorkUnitRe
 		t.Fatalf("NewPathId: %v", err)
 	}
 	cpt := shared.NewCPT(time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC))
-	unit, err := workunit.NewWorkUnit(id, pathId, cpt, "ref-1")
+	unit, err := workunit.NewWorkUnit(id, pathId, cpt, "ref-1",
+		workunit.WithSKU("sku-plain"), workunit.WithGiftWrap(true), workunit.WithLineNo(lineNo))
 	if err != nil {
 		t.Fatalf("NewWorkUnit: %v", err)
 	}
-	unit.SetSKU("sku-plain")
-	unit.SetGiftWrap(true)
-	unit.SetLineNo(lineNo)
 	if err := unit.Release(time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("Release: %v", err)
 	}

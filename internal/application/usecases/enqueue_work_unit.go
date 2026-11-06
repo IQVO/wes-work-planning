@@ -131,21 +131,23 @@ func (uc *EnqueueWorkUnit) Execute(ctx context.Context, req EnqueueWorkUnitReque
 // else is written -- the retry then starts clean even without a
 // transactional UnitOfWork.
 func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitRequest) (*workunit.WorkUnit, error) {
-	unit, err := workunit.NewWorkUnit(req.WorkUnitId, req.PathId, req.CPT, req.Reference)
+	packOpts, err := uc.packAwareOptions(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	if err := workunit.ValidateLineNo(req.LineNo); err != nil {
-		return nil, err
+	// The unit is complete and valid at construction: every optional
+	// attribute is a functional option, validated on the way in.
+	opts := []workunit.Option{
+		workunit.WithLineNo(req.LineNo),
+		workunit.WithSKU(req.SKU),
+		workunit.WithGiftWrap(req.GiftWrap),
 	}
-	unit.SetLineNo(req.LineNo)
-	unit.SetSKU(req.SKU)
-	unit.SetGiftWrap(req.GiftWrap)
-	unit.SetTransferRef(req.TransferRef)
-	unit.SetWorkKind(req.WorkKind)
-	unit.SetSiteId(req.SiteId)
-	unit.SetQuantity(req.Quantity)
-	if err := uc.applyPackAware(ctx, unit, req); err != nil {
+	if req.WorkKind != "" {
+		opts = append(opts, workunit.WithTransferLeg(req.TransferRef, req.WorkKind, req.SiteId, req.Quantity))
+	}
+	opts = append(opts, packOpts...)
+	unit, err := workunit.NewWorkUnit(req.WorkUnitId, req.PathId, req.CPT, req.Reference, opts...)
+	if err != nil {
 		return nil, err
 	}
 
@@ -175,44 +177,45 @@ func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitR
 	return unit, nil
 }
 
-// applyPackAware validates and records the pack-aware parts of req on unit
-// (ADR-0045): a pick plan makes it CASE_PICK / EACH_PICK, a case break makes
-// it BREAK_CASE. A request with neither is untouched, except that a BREAK_CASE
-// path with no case break is refused (it could never be executed).
-func (uc *EnqueueWorkUnit) applyPackAware(ctx context.Context, unit *workunit.WorkUnit, req EnqueueWorkUnitRequest) error {
+// packAwareOptions validates the pack-aware parts of req (ADR-0045) and
+// returns them as construction options: a pick plan makes the unit
+// CASE_PICK / EACH_PICK, a case break makes it BREAK_CASE. A request with
+// neither carries no pack option, except that a BREAK_CASE path with no
+// case break is refused (it could never be executed).
+func (uc *EnqueueWorkUnit) packAwareOptions(ctx context.Context, req EnqueueWorkUnitRequest) ([]workunit.Option, error) {
 	if req.Pick != nil && req.CaseBreak != nil {
-		return fmt.Errorf("%w: a work unit is either a pick or a case break", workunit.ErrInvalidPickPlan)
+		return nil, fmt.Errorf("%w: a work unit is either a pick or a case break", workunit.ErrInvalidPickPlan)
 	}
 	canonical, err := uc.canonicalPathId(req.PathId)
 	if err != nil {
 		// A plain request keeps its pre-ADR-0045 behaviour (the callers
 		// validate the path themselves); only pack-aware work needs it.
 		if req.Pick == nil && req.CaseBreak == nil {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
 	onBreakCase := strings.EqualFold(canonical, breakCaseCanonicalPathId)
 	switch {
 	case req.CaseBreak != nil:
 		if uc.catalogue != nil && !onBreakCase {
-			return fmt.Errorf("%w: a case break is released on the %s path, not %q", workunit.ErrInvalidCaseBreak, breakCaseCanonicalPathId, req.PathId.String())
+			return nil, fmt.Errorf("%w: a case break is released on the %s path, not %q", workunit.ErrInvalidCaseBreak, breakCaseCanonicalPathId, req.PathId.String())
 		}
-		unit.SetCaseBreak(*req.CaseBreak)
+		return []workunit.Option{workunit.WithCaseBreak(*req.CaseBreak)}, nil
 	case req.Pick != nil:
 		if uc.catalogue != nil && !strings.EqualFold(canonical, pickCanonicalPathId) {
-			return fmt.Errorf("%w: a pick plan is released on the %s path, not %q", workunit.ErrInvalidPickPlan, pickCanonicalPathId, req.PathId.String())
+			return nil, fmt.Errorf("%w: a pick plan is released on the %s path, not %q", workunit.ErrInvalidPickPlan, pickCanonicalPathId, req.PathId.String())
 		}
 		if req.Pick.Unit == workunit.PickUnitCase {
 			if err := uc.verifyCasePick(ctx, *req.Pick); err != nil {
-				return err
+				return nil, err
 			}
 		}
-		unit.SetPick(*req.Pick)
+		return []workunit.Option{workunit.WithPick(*req.Pick)}, nil
 	case onBreakCase:
-		return fmt.Errorf("%w: work on the %s path carries a case break", workunit.ErrInvalidCaseBreak, breakCaseCanonicalPathId)
+		return nil, fmt.Errorf("%w: work on the %s path carries a case break", workunit.ErrInvalidCaseBreak, breakCaseCanonicalPathId)
 	}
-	return nil
+	return nil, nil
 }
 
 // canonicalPathId resolves the catalogue's canonical id of pathId; "" when no

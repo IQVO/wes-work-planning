@@ -117,7 +117,10 @@ func TestWorkUnit_RelocationValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRelocationMove: %v", err)
 	}
-	unit.SetRelocation(m)
+	unit, err = NewWorkUnit("plan-1-move-0", unit.PathId(), unit.CPT(), unit.Reference(), WithRelocation(m))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 	got, ok := unit.Relocation()
 	if !ok || got != m {
 		t.Fatalf("Relocation = (%+v, %v), want %+v", got, ok, m)
@@ -129,7 +132,10 @@ func TestWorkUnit_BlockedByAndUnblock(t *testing.T) {
 	if unit.BlockedBy() != "" || unit.IsBlocked() {
 		t.Fatal("a fresh unit must not be blocked")
 	}
-	unit.SetBlockedBy("plan-1-move-3")
+	unit, err := NewWorkUnit("plan-1-move-0", unit.PathId(), unit.CPT(), unit.Reference(), WithBlockedBy("plan-1-move-3"))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 	if unit.BlockedBy() != "plan-1-move-3" || !unit.IsBlocked() {
 		t.Fatalf("BlockedBy = %q", unit.BlockedBy())
 	}

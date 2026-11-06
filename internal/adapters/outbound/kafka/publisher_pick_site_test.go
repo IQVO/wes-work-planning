@@ -28,13 +28,14 @@ func newReleasedOrderUnit(t *testing.T, id, siteId string) *memory.WorkUnitRepo 
 		t.Fatalf("NewPathId: %v", err)
 	}
 	cpt := shared.NewCPT(time.Date(2026, 11, 5, 23, 0, 0, 0, time.UTC))
-	unit, err := workunit.NewWorkUnit(id, pathId, cpt, "order-"+id)
+	opts := []workunit.Option{workunit.WithSKU("sku-order"), workunit.WithLineNo(3)}
+	if siteId != "" {
+		opts = append(opts, workunit.WithSiteId(siteId))
+	}
+	unit, err := workunit.NewWorkUnit(id, pathId, cpt, "order-"+id, opts...)
 	if err != nil {
 		t.Fatalf("NewWorkUnit: %v", err)
 	}
-	unit.SetSKU("sku-order")
-	unit.SetLineNo(3)
-	unit.SetSiteId(siteId)
 	if err := unit.Release(time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
@@ -58,12 +59,14 @@ func newReleasedPickUnit(t *testing.T, id, siteId, fromBin string) *memory.WorkU
 		t.Fatalf("NewPathId: %v", err)
 	}
 	cpt := shared.NewCPT(time.Date(2026, 11, 5, 23, 0, 0, 0, time.UTC))
-	unit, err := workunit.NewWorkUnit(id, pathId, cpt, "order-"+id)
+	opts := []workunit.Option{workunit.WithPick(plan)}
+	if siteId != "" {
+		opts = append(opts, workunit.WithSiteId(siteId))
+	}
+	unit, err := workunit.NewWorkUnit(id, pathId, cpt, "order-"+id, opts...)
 	if err != nil {
 		t.Fatalf("NewWorkUnit: %v", err)
 	}
-	unit.SetPick(plan)
-	unit.SetSiteId(siteId)
 	if err := unit.Release(time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("Release: %v", err)
 	}

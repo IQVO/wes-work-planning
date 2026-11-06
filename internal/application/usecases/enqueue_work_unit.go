@@ -29,6 +29,7 @@ type EnqueueWorkUnit struct {
 	uow       ports.UnitOfWork
 	packs     ports.ProductClassificationLookup
 	catalogue ports.PathCatalogue
+	pickFaces ports.ForwardPickFaceLookup
 }
 
 func NewEnqueueWorkUnit(workUnits ports.WorkUnitRepo, pools ports.WorkPoolRepo, publisher ports.EventPublisher, clock ports.Clock) *EnqueueWorkUnit {
@@ -39,6 +40,14 @@ func NewEnqueueWorkUnit(workUnits ports.WorkUnitRepo, pools ports.WorkPoolRepo, 
 // (ADR-0014). Optional: nil keeps the calls running back to back.
 func (uc *EnqueueWorkUnit) WithUnitOfWork(u ports.UnitOfWork) *EnqueueWorkUnit {
 	uc.uow = u
+	return uc
+}
+
+// WithPickFaces wires the local slot-plan copy's forward-pick faces
+// (ADR-0048). Optional: without it, a pick plan whose caller stated no
+// FromBin is enqueued as-is (omit-when-unknown, fail-open).
+func (uc *EnqueueWorkUnit) WithPickFaces(f ports.ForwardPickFaceLookup) *EnqueueWorkUnit {
+	uc.pickFaces = f
 	return uc
 }
 
@@ -148,6 +157,12 @@ func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitR
 		workunit.WithSKU(req.SKU),
 		workunit.WithGiftWrap(req.GiftWrap),
 	}
+	// The optional site (ADR-0048) applies to EVERY work kind whose
+	// request carries one — order units (from OrderAllocated's additive
+	// site_id) exactly like transfer legs, RELOCATE and REPLENISH.
+	if req.SiteId != "" {
+		opts = append(opts, workunit.WithSiteId(req.SiteId))
+	}
 	if req.WorkKind != "" {
 		opts = append(opts, workunit.WithTransferLeg(req.TransferRef, req.WorkKind, req.SiteId, req.Quantity))
 	}
@@ -181,6 +196,25 @@ func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitR
 		return nil, err
 	}
 	return unit, nil
+}
+
+// deriveForwardPickFace fills a pick plan's FromBin with the SKU's
+// forward-pick face from the local slot-plan copy (ADR-0048) at ENQUEUE
+// time — the unit is immutable after construction (PR #261), so the face
+// is resolved before NewWorkUnit. It never overrides a caller-stated bin
+// and treats every miss, unwired port or lookup error as "no face"
+// (omit-when-unknown, fail-open): the enqueue proceeds exactly as it
+// would have without it.
+func (uc *EnqueueWorkUnit) deriveForwardPickFace(ctx context.Context, siteId string, plan workunit.PickPlan) workunit.PickPlan {
+	if plan.FromBin != "" || plan.SKU == "" || uc.pickFaces == nil {
+		return plan
+	}
+	face, err := uc.pickFaces.ForwardPickFaceBySKU(ctx, siteId, plan.SKU)
+	if err != nil || face == "" {
+		return plan
+	}
+	plan.FromBin = face
+	return plan
 }
 
 // packAwareOptions validates the pack-aware parts of req (ADR-0045) and
@@ -217,7 +251,8 @@ func (uc *EnqueueWorkUnit) packAwareOptions(ctx context.Context, req EnqueueWork
 				return nil, err
 			}
 		}
-		return []workunit.Option{workunit.WithPick(*req.Pick)}, nil
+		plan := uc.deriveForwardPickFace(ctx, req.SiteId, *req.Pick)
+		return []workunit.Option{workunit.WithPick(plan)}, nil
 	case onBreakCase:
 		return nil, fmt.Errorf("%w: work on the %s path carries a case break", workunit.ErrInvalidCaseBreak, breakCaseCanonicalPathId)
 	}

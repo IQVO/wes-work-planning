@@ -18,7 +18,6 @@ type ReleaseNextWork struct {
 	clock     ports.Clock
 	policy    release.ReleasePolicy
 	metrics   ports.ReleaseMetrics
-	pickFaces ports.ForwardPickFaceLookup
 	uow       ports.UnitOfWork
 }
 
@@ -43,14 +42,10 @@ func (uc *ReleaseNextWork) WithMetrics(m ports.ReleaseMetrics) *ReleaseNextWork 
 	return uc
 }
 
-// WithPickFaces wires the local slot-plan copy's forward-pick faces
-// (ADR-0048), used to derive a released pick plan's FromBin when the
-// caller stated none. Optional: nil derives nothing — exactly the
-// pre-ADR-0048 behaviour.
-func (uc *ReleaseNextWork) WithPickFaces(f ports.ForwardPickFaceLookup) *ReleaseNextWork {
-	uc.pickFaces = f
-	return uc
-}
+// derivePickFace was removed with ADR-0048's move to enqueue-time
+// derivation: WorkUnit is immutable after construction (PR #261), so the
+// forward-pick face is resolved in EnqueueWorkUnit.packAwareOptions
+// BEFORE NewWorkUnit. See enqueue_work_unit.go.
 
 // WithUnitOfWork brackets both Saves + Publish in one atomic scope
 // (ADR-0014). Optional: nil keeps the calls running back to back.
@@ -99,10 +94,9 @@ func (uc *ReleaseNextWork) releaseOnce(ctx context.Context, req ReleaseNextWorkR
 	if err := unit.Release(now); err != nil {
 		return nil, err
 	}
-	// Forward-pick-face derivation (ADR-0048): fill a pick plan's FromBin
-	// from the local slot-plan copy when the caller stated none. Fail-open
-	// by construction — a miss or error only omits an optional enrichment.
-	uc.derivePickFace(ctx, unit)
+	// Forward-pick-face derivation moved to enqueue time (ADR-0048 +
+	// PR #261): the unit is immutable after construction, so the face
+	// was resolved before NewWorkUnit in EnqueueWorkUnit.
 	// The WorkUnit Save precedes Publish INSIDE the scope on purpose: the
 	// integration publisher enriches WorkReleased by reading the work unit
 	// back, and under the outbox that read must see this transaction's row.
@@ -149,24 +143,9 @@ func (uc *ReleaseNextWork) nextReleasableUnit(ctx context.Context, pool *release
 	}
 }
 
-// derivePickFace fills the released unit's pick plan FromBin with the
-// SKU's forward-pick face from the local slot-plan copy (ADR-0048): the
-// approximation a v1 cluster pick walks anyway. It never overrides a
-// caller-stated bin, touches nothing but a pick plan, and treats every
-// miss, unwired port or lookup error as "no face" — the release, and the
-// task, proceed exactly as they would have without it (omit-when-unknown).
-func (uc *ReleaseNextWork) derivePickFace(ctx context.Context, unit *workunit.WorkUnit) {
-	if uc.pickFaces == nil {
-		return
-	}
-	plan, ok := unit.Pick()
-	if !ok || plan.FromBin != "" || plan.SKU == "" {
-		return
-	}
-	face, err := uc.pickFaces.ForwardPickFaceBySKU(ctx, unit.SiteId(), plan.SKU)
-	if err != nil || face == "" {
-		return
-	}
-	plan.FromBin = face
-	unit.SetPick(plan)
-}
+// derivePickFace was removed (ADR-0048 + PR #261): WorkUnit is immutable
+// after construction, so the forward-pick face is resolved at ENQUEUE time
+// in EnqueueWorkUnit.packAwareOptions, before NewWorkUnit. The historical
+// contract (never override a caller-stated bin; every miss, unwired port or
+// lookup error is "no face" — omit-when-unknown, the release proceeds
+// exactly as without it) now lives in that derivation block.

@@ -20,5 +20,6 @@ func memoryRepositories() repositories {
 		processedEvts:  memory.NewProcessedEventRepo(),
 		relocations:    workUnits,
 		slotPlans:      memory.NewSlotPlanRepo(),
+		pickFaces:      workUnits,
 	}
 }

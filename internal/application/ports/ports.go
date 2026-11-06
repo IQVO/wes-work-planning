@@ -70,6 +70,21 @@ type RelocationWorkRepo interface {
 	PendingBlockedBy(ctx context.Context, workUnitId string) ([]*workunit.WorkUnit, error)
 }
 
+// ForwardPickFaceLookup reads the forward-pick faces of this context's
+// LOCAL copy of slotting-optimization's approved slot plans — the copy the
+// RELOCATE work units themselves are (ADR-0040/0048). It is an optional
+// enrichment port: a nil implementation on ReleaseNextWork means "derive
+// no pick face", and every lookup miss or error degrades to omitting
+// `pick.from_bin`, never to blocking a release.
+type ForwardPickFaceLookup interface {
+	// ForwardPickFaceBySKU returns sku's forward-pick face at siteId —
+	// the to_slot of its newest non-cancelled RELOCATE move, per the
+	// latest-approved slot plan recorded for it — or "" when the SKU has
+	// none at that site. An empty siteId matches any site (the fleet's
+	// single-building reality today).
+	ForwardPickFaceBySKU(ctx context.Context, siteId, sku string) (string, error)
+}
+
 // SlotPlanRepo records the approved slot plans this context has applied,
 // per site, so a newer plan can supersede an older one regardless of the
 // order the events arrive in (ADR-0040).

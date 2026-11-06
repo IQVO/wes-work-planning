@@ -82,6 +82,7 @@ no scheduler).
 | [0045](./0045-pack-aware-work-units.md) | Pack-aware work units: `CASE_PICK` / `EACH_PICK` / `BREAK_CASE` released as the `pick` / `case_break` objects fulfillment-execution consumes; local copy of product-master pack-level events (own `PACK_VIEW_CONSUMER_GROUP`); case-based charge and travel estimates | Accepted |
 | [0046](./0046-a2a-inbound-adapter.md) | Agent2Agent as an inbound adapter: this context as an A2A agent (official a2a-go SDK, JSON-RPC 2.0 over HTTP, Agent Card at the well-known path, curated goal-shaped skills, delegation only — facts still travel as CloudEvents) | Accepted |
 | [0047](./0047-fleet-rest-api-guideline.md) | Adopt the fleet REST API guideline: noun routes, idempotent POST on a global `Idempotency-Key` (409 on reuse, `Idempotency-Replayed`), keyset-paged collections, Spectral-enforced | Accepted |
+| [0048](./0048-site-and-forward-pick-face-on-released-work.md) | `WorkReleased` publishes top-level `site_id` for every work kind that has one (order work's site from OrderAllocated/OrderPartiallyAllocated's additive `site_id`); pick plans gain `from_bin` derived from the local slot-plan forward-pick face | Accepted |
 
 ## The template
 

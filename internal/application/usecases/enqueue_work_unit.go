@@ -86,16 +86,22 @@ type EnqueueWorkUnitRequest struct {
 	// another service; it is exactly what the caller supplied. False by
 	// default — not every caller requests gift wrap.
 	GiftWrap bool
-	// TransferRef, WorkKind, SiteId and Quantity are the optional
-	// transfer metadata of a network-inventory-planning work demand
-	// (ADR-0033), threaded through to the WorkUnit so the outbound
-	// WorkReleased publisher can stamp them onto the published event at
-	// release time. Zero values mean "not transfer work" — the fields are
-	// additive, exactly like SKU/GiftWrap, never new invariants.
+	// TransferRef, WorkKind and Quantity are the optional transfer
+	// metadata of a network-inventory-planning work demand (ADR-0033),
+	// threaded through to the WorkUnit so the outbound WorkReleased
+	// publisher can stamp them onto the published event at release time.
+	// Zero values mean "not transfer work" — the fields are additive,
+	// exactly like SKU/GiftWrap, never new invariants.
 	TransferRef string
 	WorkKind    workunit.WorkKind
-	SiteId      string
-	Quantity    int
+	// SiteId is the optional site of the work (ADR-0048): a transfer
+	// demand's anchor site (ADR-0033), an order line's fulfillment site,
+	// a slot plan's site (ADR-0040) or a replenishment request's site
+	// (ADR-0042). Threaded through to the WorkUnit so the outbound
+	// WorkReleased publisher can stamp it at release time; "" means none
+	// known — additive, never a new invariant.
+	SiteId   string
+	Quantity int
 	// LineNo is optional: the 1-based order line this work unit is for
 	// (ADR-0036). 0 means "unknown"; a negative value or one above
 	// workunit.MaxLineNo (2147483647) is rejected with

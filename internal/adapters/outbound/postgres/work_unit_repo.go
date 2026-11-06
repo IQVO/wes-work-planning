@@ -303,6 +303,35 @@ func (r *WorkUnitRepo) PendingBlockedBy(ctx context.Context, workUnitId string) 
 		WHERE blocked_by = $1 AND state = 'Pending' ORDER BY id`, workUnitId)
 }
 
+// ForwardPickFaceBySKU implements ports.ForwardPickFaceLookup (ADR-0048):
+// the to_slot of the SKU's newest non-cancelled RELOCATE move, per the
+// latest-approved slot plan recorded for its site (the slot_plans receipt
+// carries approved_at, the move itself does not), or "" when the SKU has
+// no forward-pick face. A Cancelled move belongs to a superseded plan and
+// never wins; an empty siteId matches any site.
+func (r *WorkUnitRepo) ForwardPickFaceBySKU(ctx context.Context, siteId, sku string) (string, error) {
+	var face string
+	err := querierFrom(ctx, r.pool).QueryRow(ctx, `
+		SELECT w.to_slot
+		FROM work_units w
+		JOIN slot_plans p ON p.plan_id = w.relocation_plan_id
+		WHERE w.work_kind = 'RELOCATE'
+			AND w.sku = $1
+			AND w.to_slot <> ''
+			AND w.state <> 'Cancelled'
+			AND ($2 = '' OR w.site_id = $2)
+		ORDER BY p.approved_at DESC, p.plan_id DESC, w.relocation_move_seq ASC
+		LIMIT 1
+	`, sku, siteId).Scan(&face)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return face, nil
+}
+
 // query runs a SELECT of workUnitColumns and rehydrates every row; an empty
 // slice when nothing matches.
 func (r *WorkUnitRepo) query(ctx context.Context, sql string, args ...any) ([]*workunit.WorkUnit, error) {

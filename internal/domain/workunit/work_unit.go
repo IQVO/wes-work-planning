@@ -150,9 +150,11 @@ func (w *WorkUnit) WorkKind() WorkKind { return w.workKind }
 // itself does not re-validate, mirroring SetSKU/SetGiftWrap.
 func (w *WorkUnit) SetWorkKind(kind WorkKind) { w.workKind = kind }
 
-// SiteId is the optional network site (NIP's site_id — the transfer's
-// origin for a pick/dispatch leg, destination for an arrival leg) this
-// unit is anchored to. Empty when not transfer work.
+// SiteId is the optional site this unit is anchored to (ADR-0048): a
+// transfer leg's network site (NIP's site_id — the transfer's origin for
+// a pick/dispatch leg, destination for an arrival leg), an order unit's
+// fulfillment site (OrderAllocated's additive site_id), a RELOCATE unit's
+// plan site or a REPLENISH unit's request site. Empty when none is known.
 func (w *WorkUnit) SiteId() string { return w.siteId }
 
 // SetSiteId records the optional site id after construction.

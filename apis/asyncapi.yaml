@@ -2652,10 +2652,15 @@ components:
                 site_id:
                   type: string
                   description: >-
-                    OPTIONAL (ADR-0033). The network site anchoring this
-                    transfer leg — origin for pick/dispatch, destination for
-                    arrival. Present only on a transfer-referenced unit.
-                  example: site-north-1
+                    OPTIONAL (ADR-0048). The site the released work happens
+                    at, published for EVERY work kind whose unit carries a
+                    site: a transfer leg's network site (ADR-0033), an order
+                    unit's fulfillment site (read from OrderAllocated /
+                    OrderPartiallyAllocated's additive site_id), a RELOCATE
+                    unit's plan site, a REPLENISH unit's request site.
+                    Absent — never an empty string — when the unit has none;
+                    consumers must treat absent as "site unknown".
+                  example: WH1
                 quantity:
                   type: integer
                   description: >-
@@ -2775,9 +2780,21 @@ components:
                       type: string
                       enum: [EACH, CASE]
                       example: CASE
+                    site_id:
+                      type: string
+                      description: >-
+                        OPTIONAL (ADR-0048). The site the pick happens at —
+                        the released unit's site, repeated here so a pick
+                        consumer reads one object. Absent when the unit has
+                        none.
+                      example: WH1
                     from_bin:
                       type: string
-                      description: Source bin; absent when none was given.
+                      description: >-
+                        Source bin: caller-given at enqueue, or derived at
+                        release from the local slot-plan copy (the SKU's
+                        forward-pick face, ADR-0048). Absent when neither
+                        exists — the unit then completes exactly as before.
                       example: BIN-A1
                 case_break:
                   type: object

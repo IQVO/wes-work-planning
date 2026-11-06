@@ -29,3 +29,14 @@ include-operation-id = "getWorkUnitsByReference"
 
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", "400", "401", "403", "404", "409", "429", "5xx"]
+
+# enqueueWorkUnit carries the same pack-aware state rejections as
+# receiveChargeForecast (ADR-0045): pickUnit CASE for a SKU with no active
+# CASE pack level in the empty contract-run store answers 422
+# no-active-case-level, and the cross-field "pickUnit needs a sku" rule
+# (invalid-pick-plan) answers 400 — neither is expressible in OpenAPI 3.0.
+[[operations]]
+include-operation-id = "enqueueWorkUnit"
+
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", "400", "401", "403", "404", "409", "422", "429", "5xx"]

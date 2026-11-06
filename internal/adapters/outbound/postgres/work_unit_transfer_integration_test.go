@@ -20,15 +20,12 @@ import (
 func newTransferUnit(t *testing.T, id string) *workunit.WorkUnit {
 	t.Helper()
 	cpt := shared.NewCPT(time.Now().Add(time.Hour).Truncate(time.Microsecond))
-	unit, err := workunit.NewWorkUnit(id, mustPath(t, "pick-transfer-gw"), cpt, "demand-gw")
+	unit, err := workunit.NewWorkUnit(id, mustPath(t, "pick-transfer-gw"), cpt, "demand-gw",
+		workunit.WithSKU("sku-transfer"),
+		workunit.WithTransferLeg("TRF-2026-042", workunit.WorkKindTransferPick, "site-north-1", 17))
 	if err != nil {
 		t.Fatalf("new work unit: %v", err)
 	}
-	unit.SetSKU("sku-transfer")
-	unit.SetTransferRef("TRF-2026-042")
-	unit.SetWorkKind(workunit.WorkKindTransferPick)
-	unit.SetSiteId("site-north-1")
-	unit.SetQuantity(17)
 	return unit
 }
 

@@ -112,17 +112,17 @@ func releasedReplenishUnit(t *testing.T, requestId, sku, from, to string, quanti
 	if err != nil {
 		t.Fatalf("NewPathId: %v", err)
 	}
-	unit, err := workunit.NewWorkUnit(workunit.ReplenishmentWorkUnitId(requestId), pathId, shared.NewCPT(cpt), requestId)
-	if err != nil {
-		t.Fatalf("NewWorkUnit: %v", err)
-	}
 	move, err := workunit.NewReplenishmentMove(requestId, sku, from, to, quantity, priority)
 	if err != nil {
 		t.Fatalf("NewReplenishmentMove: %v", err)
 	}
-	unit.SetWorkKind(workunit.WorkKindReplenish)
-	unit.SetSiteId("WH1")
-	unit.SetReplenishment(move)
+	unit, err := workunit.NewWorkUnit(workunit.ReplenishmentWorkUnitId(requestId), pathId, shared.NewCPT(cpt), requestId,
+		workunit.WithWorkKind(workunit.WorkKindReplenish),
+		workunit.WithSiteId("WH1"),
+		workunit.WithReplenishment(move))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 	if err := unit.Release(replReleasedAt); err != nil {
 		t.Fatalf("Release: %v", err)
 	}

@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -19,11 +20,10 @@ import (
 func newLineNoUnit(t *testing.T, id string, lineNo int) *workunit.WorkUnit {
 	t.Helper()
 	cpt := shared.NewCPT(time.Now().Add(time.Hour).Truncate(time.Microsecond))
-	unit, err := workunit.NewWorkUnit(id, mustPath(t, "pick-line-no"), cpt, "order-line-ref")
+	unit, err := workunit.NewWorkUnit(id, mustPath(t, "pick-line-no"), cpt, "order-line-ref", workunit.WithLineNo(lineNo))
 	if err != nil {
 		t.Fatalf("new work unit: %v", err)
 	}
-	unit.SetLineNo(lineNo)
 	return unit
 }
 
@@ -62,7 +62,9 @@ func TestWorkUnitRepo_LineNoRoundTripsThroughEveryFinder(t *testing.T) {
 }
 
 // The column is a 32-bit INTEGER: MaxInt32 round-trips, and a larger value
-// (which would fail with "integer out of range") never reaches it.
+// (which would fail with "integer out of range") never reaches it — it
+// fails construction with ErrInvalidLineNo, so an invalid WorkUnit cannot
+// exist to be saved.
 func TestWorkUnitRepo_LineNoUpperBoundAgainstTheInt32Column(t *testing.T) {
 	pool := outboxDB(t)
 	ctx := context.Background()
@@ -79,16 +81,11 @@ func TestWorkUnitRepo_LineNoUpperBoundAgainstTheInt32Column(t *testing.T) {
 		t.Fatalf("LineNo = %d, want 2147483647", got.LineNo())
 	}
 
-	for id, lineNo := range map[string]int{"wu-line-over": 2147483648, "wu-line-int64": 9223372036854775807} {
-		if err := repo.Save(ctx, newLineNoUnit(t, id, lineNo)); err != nil {
-			t.Fatalf("save %d must not hit \"integer out of range\": %v", lineNo, err)
-		}
-		over, err := repo.FindById(ctx, id)
-		if err != nil {
-			t.Fatalf("FindById %s: %v", id, err)
-		}
-		if over.LineNo() != 0 {
-			t.Fatalf("%s: LineNo = %d, want 0 (unknown)", id, over.LineNo())
+	for _, lineNo := range []int{2147483648, 9223372036854775807} {
+		cpt := shared.NewCPT(time.Now().Add(time.Hour).Truncate(time.Microsecond))
+		_, err := workunit.NewWorkUnit("wu-line-over", mustPath(t, "pick-line-no"), cpt, "order-line-ref", workunit.WithLineNo(lineNo))
+		if !errors.Is(err, workunit.ErrInvalidLineNo) {
+			t.Fatalf("NewWorkUnit(WithLineNo(%d)) = %v, want ErrInvalidLineNo (the value must never reach the column)", lineNo, err)
 		}
 	}
 }
@@ -147,8 +144,7 @@ func TestWorkUnitRepo_SaveUpdatesLineNo(t *testing.T) {
 	if err := repo.Save(ctx, unit); err != nil {
 		t.Fatalf("save 1: %v", err)
 	}
-	unit.SetLineNo(5)
-	if err := repo.Save(ctx, unit); err != nil {
+	if err := repo.Save(ctx, newLineNoUnit(t, "wu-upsert", 5)); err != nil {
 		t.Fatalf("save 2: %v", err)
 	}
 	got, err := repo.FindById(ctx, "wu-upsert")

@@ -149,44 +149,48 @@ func (r *WorkUnitRepo) filter(keep func(*workunit.WorkUnit) bool) []*workunit.Wo
 }
 
 // cloneWorkUnit returns an independent copy of u, rebuilt exactly the way
-// the Postgres adapter rehydrates a row. Handing out the stored pointer let
-// concurrent use cases mutate one aggregate in place -- a data race no
-// real database exhibits, which hid lost-update bugs from the tests.
+// the Postgres adapter rehydrates a row: through workunit.Snapshot and
+// workunit.Rehydrate. Handing out the stored pointer let concurrent use
+// cases mutate one aggregate in place -- a data race no real database
+// exhibits, which hid lost-update bugs from the tests.
 func cloneWorkUnit(u *workunit.WorkUnit) *workunit.WorkUnit {
-	cp, err := workunit.NewWorkUnit(u.Id(), u.PathId(), u.CPT(), u.Reference())
-	if err != nil {
-		return u // unreachable: u was itself built by NewWorkUnit
+	return workunit.Rehydrate(snapshotOf(u))
+}
+
+// snapshotOf reads every persisted attribute off u into its Snapshot, the
+// same shape the Postgres adapter scans from a work_units row.
+func snapshotOf(u *workunit.WorkUnit) workunit.Snapshot {
+	s := workunit.Snapshot{
+		ID:          u.Id(),
+		PathId:      u.PathId(),
+		CPT:         u.CPT(),
+		Reference:   u.Reference(),
+		SKU:         u.SKU(),
+		GiftWrap:    u.GiftWrap(),
+		TransferRef: u.TransferRef(),
+		WorkKind:    u.WorkKind(),
+		SiteId:      u.SiteId(),
+		Quantity:    u.Quantity(),
+		LineNo:      u.LineNo(),
+		BlockedBy:   u.BlockedBy(),
+		State:       u.State(),
+		ReleasedAt:  u.ReleasedAt(),
+		CompletedAt: u.CompletedAt(),
+		CancelledAt: u.CancelledAt(),
 	}
-	cp.SetSKU(u.SKU())
-	cp.SetGiftWrap(u.GiftWrap())
-	cp.SetTransferRef(u.TransferRef())
-	cp.SetWorkKind(u.WorkKind())
-	cp.SetSiteId(u.SiteId())
-	cp.SetQuantity(u.Quantity())
-	cp.SetLineNo(u.LineNo())
 	if m, ok := u.Relocation(); ok {
-		cp.SetRelocation(m)
+		s.Relocation = &m
 	}
 	if m, ok := u.Replenishment(); ok {
-		cp.SetReplenishment(m)
+		s.Replenish = &m
 	}
 	if p, ok := u.Pick(); ok {
-		cp.SetPick(p)
+		s.Pick = &p
 	}
 	if b, ok := u.CaseBreak(); ok {
-		cp.SetCaseBreak(b)
+		s.CaseBreak = &b
 	}
-	cp.SetBlockedBy(u.BlockedBy())
-	if at := u.ReleasedAt(); at != nil {
-		_ = cp.Release(*at)
-	}
-	if at := u.CompletedAt(); at != nil {
-		_ = cp.Complete(*at)
-	}
-	if at := u.CancelledAt(); at != nil {
-		_ = cp.Cancel(*at)
-	}
-	return cp
+	return s
 }
 
 // keysetAfter reports whether u sorts strictly after the cursor in (cpt, id) order.

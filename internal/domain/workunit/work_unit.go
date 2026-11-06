@@ -78,16 +78,34 @@ type WorkUnit struct {
 	cancelledAt *time.Time
 }
 
+// Option customises a WorkUnit at construction (the functional-options
+// pattern). Options are applied in order, after the base invariants
+// (non-empty id and reference) hold, and the first failure aborts
+// construction — an invalid WorkUnit cannot exist, and no exported setter
+// may mutate one afterwards. When two options touch the same field the
+// later one wins; the pack-aware options (WithPick, WithCaseBreak) and
+// WithReplenishment deliberately overwrite sku/quantity/kind because the
+// move/plan is their single source.
+type Option func(*WorkUnit) error
+
 // NewWorkUnit constructs a Pending WorkUnit for a path, carrying its CPT and
-// an external reference (e.g. the pick task's source order line).
-func NewWorkUnit(id string, pathId shared.PathId, cpt shared.CPT, reference string) (*WorkUnit, error) {
+// an external reference (e.g. the pick task's source order line). Every
+// other attribute arrives as an Option, so the aggregate is complete and
+// valid at construction.
+func NewWorkUnit(id string, pathId shared.PathId, cpt shared.CPT, reference string, opts ...Option) (*WorkUnit, error) {
 	if id == "" {
 		return nil, ErrEmptyId
 	}
 	if reference == "" {
 		return nil, ErrEmptyReference
 	}
-	return &WorkUnit{id: id, pathId: pathId, cpt: cpt, reference: reference, state: Pending}, nil
+	w := &WorkUnit{id: id, pathId: pathId, cpt: cpt, reference: reference, state: Pending}
+	for _, opt := range opts {
+		if err := opt(w); err != nil {
+			return nil, err
+		}
+	}
+	return w, nil
 }
 
 func (w *WorkUnit) Id() string            { return w.id }
@@ -107,10 +125,13 @@ func (w *WorkUnit) State() State          { return w.state }
 // this aggregate's own invariants depends on it.
 func (w *WorkUnit) SKU() string { return w.sku }
 
-// SetSKU records the optional SKU after construction. A separate setter,
-// rather than a NewWorkUnit parameter, keeps every existing caller and test
-// fixture compiling unchanged — SKU is additive, not a new invariant.
-func (w *WorkUnit) SetSKU(sku string) { w.sku = sku }
+// WithSKU records the optional SKU at construction (ADR-0009).
+func WithSKU(sku string) Option {
+	return func(w *WorkUnit) error {
+		w.sku = sku
+		return nil
+	}
+}
 
 // GiftWrap is an optional, caller-stated characteristic of this work unit:
 // the requester asked the warehouse to produce a gift package for it,
@@ -121,11 +142,14 @@ func (w *WorkUnit) SetSKU(sku string) { w.sku = sku }
 // release time. False by default when the caller did not request it.
 func (w *WorkUnit) GiftWrap() bool { return w.giftWrap }
 
-// SetGiftWrap records the optional gift-wrap request after construction. A
-// separate setter, rather than a NewWorkUnit parameter, keeps every
-// existing caller and test fixture compiling unchanged — GiftWrap is
-// additive, not a new invariant.
-func (w *WorkUnit) SetGiftWrap(giftWrap bool) { w.giftWrap = giftWrap }
+// WithGiftWrap records the optional gift-wrap request at construction
+// (ADR-0010).
+func WithGiftWrap(giftWrap bool) Option {
+	return func(w *WorkUnit) error {
+		w.giftWrap = giftWrap
+		return nil
+	}
+}
 
 // TransferRef is the optional network transfer reference (NIP's
 // transfer_ref) this work unit executes a leg of. Empty on every
@@ -136,19 +160,46 @@ func (w *WorkUnit) SetGiftWrap(giftWrap bool) { w.giftWrap = giftWrap }
 // lifecycle depends on it.
 func (w *WorkUnit) TransferRef() string { return w.transferRef }
 
-// SetTransferRef records the optional transfer reference after
-// construction, mirroring SetSKU's additive-setter discipline.
-func (w *WorkUnit) SetTransferRef(ref string) { w.transferRef = ref }
-
 // WorkKind returns the transfer leg this unit executes (TRANSFER_PICK,
 // TRANSFER_DISPATCH or TRANSFER_ARRIVAL), or "" for a plain order-driven
 // unit — "" must be read as "not transfer work", not an error.
 func (w *WorkUnit) WorkKind() WorkKind { return w.workKind }
 
-// SetWorkKind records the validated transfer leg after construction.
-// The wire form must already have gone through ParseWorkKind; the setter
-// itself does not re-validate, mirroring SetSKU/SetGiftWrap.
-func (w *WorkUnit) SetWorkKind(kind WorkKind) { w.workKind = kind }
+// WithTransferLeg records the transfer context of a
+// network-inventory-planning work demand (ADR-0033) at construction: the
+// transfer reference, the validated leg (ParseWorkKind must already have
+// accepted it), the anchoring site and the quantity moved. kind must be a
+// transfer leg — anything else is ErrUnknownWorkKind, so a transfer context
+// can never be stamped on a non-transfer kind.
+func WithTransferLeg(transferRef string, kind WorkKind, siteId string, quantity int) Option {
+	return func(w *WorkUnit) error {
+		if !kind.IsTransfer() {
+			return ErrUnknownWorkKind
+		}
+		w.transferRef = transferRef
+		w.workKind = kind
+		w.siteId = siteId
+		w.quantity = quantity
+		return nil
+	}
+}
+
+// WithWorkKind records a validated non-transfer work kind (RELOCATE,
+// REPLENISH) at construction. The pack-aware kinds arrive through
+// WithPick/WithCaseBreak instead — the plan/break is their single source.
+// A kind ParseWorkKind would reject is ErrUnknownWorkKind.
+func WithWorkKind(kind WorkKind) Option {
+	return func(w *WorkUnit) error {
+		if kind == "" {
+			return nil
+		}
+		if _, err := ParseWorkKind(kind.String()); err != nil {
+			return err
+		}
+		w.workKind = kind
+		return nil
+	}
+}
 
 // SiteId is the optional site this unit is anchored to (ADR-0048): a
 // transfer leg's network site (NIP's site_id — the transfer's origin for
@@ -157,16 +208,18 @@ func (w *WorkUnit) SetWorkKind(kind WorkKind) { w.workKind = kind }
 // plan site or a REPLENISH unit's request site. Empty when none is known.
 func (w *WorkUnit) SiteId() string { return w.siteId }
 
-// SetSiteId records the optional site id after construction.
-func (w *WorkUnit) SetSiteId(siteId string) { w.siteId = siteId }
+// WithSiteId records the optional site id at construction.
+func WithSiteId(siteId string) Option {
+	return func(w *WorkUnit) error {
+		w.siteId = siteId
+		return nil
+	}
+}
 
 // Quantity is the optional number of units (per SKU) this transfer leg
 // moves. Zero when the caller did not supply one — read as "no quantity
 // known", not an error.
 func (w *WorkUnit) Quantity() int { return w.quantity }
-
-// SetQuantity records the optional transfer quantity after construction.
-func (w *WorkUnit) SetQuantity(quantity int) { w.quantity = quantity }
 
 // LineNo is the optional order line number (1-based) this work unit was
 // created for — the value OrderAllocated carries per line and that is also
@@ -178,10 +231,19 @@ func (w *WorkUnit) SetQuantity(quantity int) { w.quantity = quantity }
 // this aggregate's own invariants depends on it.
 func (w *WorkUnit) LineNo() int { return w.lineNo }
 
-// SetLineNo records the optional order line number after construction,
-// mirroring SetSKU's additive-setter discipline. Callers validate the
-// value with ValidateLineNo; the setter itself does not re-validate.
-func (w *WorkUnit) SetLineNo(lineNo int) { w.lineNo = lineNo }
+// WithLineNo records the optional order line number at construction
+// (ADR-0036). The value is validated by ValidateLineNo: an out-of-range
+// line fails construction with ErrInvalidLineNo instead of existing on an
+// invalid aggregate.
+func WithLineNo(lineNo int) Option {
+	return func(w *WorkUnit) error {
+		if err := ValidateLineNo(lineNo); err != nil {
+			return err
+		}
+		w.lineNo = lineNo
+		return nil
+	}
+}
 
 // MaxLineNo is the largest valid line number: every line_no column in the
 // fleet is a 32-bit INTEGER, so it is math.MaxInt32.
@@ -205,9 +267,14 @@ func (w *WorkUnit) Relocation() (move RelocationMove, ok bool) {
 	return *w.relocation, true
 }
 
-// SetRelocation records the validated slot-plan move after construction
-// (built by NewRelocationMove), mirroring the additive-setter discipline.
-func (w *WorkUnit) SetRelocation(move RelocationMove) { w.relocation = &move }
+// WithRelocation records the validated slot-plan move (built by
+// NewRelocationMove) at construction (ADR-0040).
+func WithRelocation(move RelocationMove) Option {
+	return func(w *WorkUnit) error {
+		w.relocation = &move
+		return nil
+	}
+}
 
 // Replenishment returns the pick-face replenishment a REPLENISH unit
 // executes (ADR-0042); ok is false for every other unit.
@@ -218,13 +285,17 @@ func (w *WorkUnit) Replenishment() (move ReplenishmentMove, ok bool) {
 	return *w.replenish, true
 }
 
-// SetReplenishment records the validated replenishment (built by
-// NewReplenishmentMove) after construction. The move is the single source of
-// the unit's SKU and quantity, so both are set from it and can never drift.
-func (w *WorkUnit) SetReplenishment(move ReplenishmentMove) {
-	w.replenish = &move
-	w.sku = move.SKU
-	w.quantity = move.Quantity
+// WithReplenishment records the validated replenishment (built by
+// NewReplenishmentMove) at construction (ADR-0042). The move is the single
+// source of the unit's SKU and quantity, so both are set from it and can
+// never drift.
+func WithReplenishment(move ReplenishmentMove) Option {
+	return func(w *WorkUnit) error {
+		w.replenish = &move
+		w.sku = move.SKU
+		w.quantity = move.Quantity
+		return nil
+	}
 }
 
 // Pick returns the pick plan of a CASE_PICK / EACH_PICK unit (ADR-0045); ok
@@ -236,15 +307,18 @@ func (w *WorkUnit) Pick() (plan PickPlan, ok bool) {
 	return *w.pick, true
 }
 
-// SetPick records the validated pick plan (built by NewPickPlan) after
-// construction. The plan is the single source of the unit's SKU, quantity
-// (eaches) and pack-aware kind, so all three are set from it and can never
-// drift (the SetReplenishment discipline).
-func (w *WorkUnit) SetPick(plan PickPlan) {
-	w.pick = &plan
-	w.sku = plan.SKU
-	w.quantity = plan.Quantity
-	w.workKind = plan.Unit.WorkKind()
+// WithPick records the validated pick plan (built by NewPickPlan) at
+// construction (ADR-0045). The plan is the single source of the unit's SKU,
+// quantity (eaches) and pack-aware kind, so all three are set from it and
+// can never drift (the WithReplenishment discipline).
+func WithPick(plan PickPlan) Option {
+	return func(w *WorkUnit) error {
+		w.pick = &plan
+		w.sku = plan.SKU
+		w.quantity = plan.Quantity
+		w.workKind = plan.Unit.WorkKind()
+		return nil
+	}
 }
 
 // CaseBreak returns the sealed-case break of a BREAK_CASE unit (ADR-0045);
@@ -256,12 +330,16 @@ func (w *WorkUnit) CaseBreak() (brk CaseBreak, ok bool) {
 	return *w.caseBreak, true
 }
 
-// SetCaseBreak records the validated case break (built by NewCaseBreak)
-// after construction; it sets the unit's SKU and BREAK_CASE kind from it.
-func (w *WorkUnit) SetCaseBreak(brk CaseBreak) {
-	w.caseBreak = &brk
-	w.sku = brk.SKU
-	w.workKind = WorkKindBreakCase
+// WithCaseBreak records the validated case break (built by NewCaseBreak) at
+// construction (ADR-0045); it sets the unit's SKU and BREAK_CASE kind from
+// it.
+func WithCaseBreak(brk CaseBreak) Option {
+	return func(w *WorkUnit) error {
+		w.caseBreak = &brk
+		w.sku = brk.SKU
+		w.workKind = WorkKindBreakCase
+		return nil
+	}
 }
 
 // BlockedBy is the id of the work unit this unit waits on: a slot-plan move
@@ -272,8 +350,13 @@ func (w *WorkUnit) BlockedBy() string { return w.blockedBy }
 // IsBlocked reports whether the unit still waits on another unit.
 func (w *WorkUnit) IsBlocked() bool { return w.blockedBy != "" }
 
-// SetBlockedBy records the work unit this one waits on.
-func (w *WorkUnit) SetBlockedBy(workUnitId string) { w.blockedBy = workUnitId }
+// WithBlockedBy records at construction the work unit this one waits on.
+func WithBlockedBy(workUnitId string) Option {
+	return func(w *WorkUnit) error {
+		w.blockedBy = workUnitId
+		return nil
+	}
+}
 
 // Unblock clears the wait: the unit it waited on has completed.
 func (w *WorkUnit) Unblock() { w.blockedBy = "" }

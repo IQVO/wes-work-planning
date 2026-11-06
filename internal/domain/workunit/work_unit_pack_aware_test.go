@@ -67,33 +67,31 @@ func TestNewCaseBreak(t *testing.T) {
 	}
 }
 
-func newUnit(t *testing.T) *workunit.WorkUnit {
+func newUnit(t *testing.T, opts ...workunit.Option) *workunit.WorkUnit {
 	t.Helper()
 	path, err := shared.NewPathId("pick-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := workunit.NewWorkUnit("wu-1", path, shared.NewCPT(time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)), "order-1")
+	u, err := workunit.NewWorkUnit("wu-1", path, shared.NewCPT(time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)), "order-1", opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return u
 }
 
-// SetPick is the single source of the unit's sku, quantity (eaches) and kind.
-func TestSetPick_SetsSkuQuantityAndPackAwareKind(t *testing.T) {
+// WithPick is the single source of the unit's sku, quantity (eaches) and kind.
+func TestWithPick_SetsSkuQuantityAndPackAwareKind(t *testing.T) {
 	for unit, kind := range map[workunit.PickUnit]workunit.WorkKind{
 		workunit.PickUnitCase: workunit.WorkKindCasePick,
 		workunit.PickUnitEach: workunit.WorkKindEachPick,
 	} {
-		u := newUnit(t)
-		u.SetSKU("stale")
-		u.SetQuantity(1)
 		plan, err := workunit.NewPickPlan("SKU-9", 36, unit.String(), "FWD-02")
 		if err != nil {
 			t.Fatal(err)
 		}
-		u.SetPick(plan)
+		// The plan wins over any plain sku/quantity context given first.
+		u := newUnit(t, workunit.WithSKU("stale"), workunit.WithPick(plan))
 		got, ok := u.Pick()
 		if !ok || got != plan || u.SKU() != "SKU-9" || u.Quantity() != 36 || u.WorkKind() != kind || !kind.IsPickKind() {
 			t.Fatalf("%s: pick %+v ok=%v sku=%q qty=%d kind=%q", unit, got, ok, u.SKU(), u.Quantity(), u.WorkKind())
@@ -104,13 +102,12 @@ func TestSetPick_SetsSkuQuantityAndPackAwareKind(t *testing.T) {
 	}
 }
 
-func TestSetCaseBreak_SetsSkuAndBreakCaseKind(t *testing.T) {
-	u := newUnit(t)
+func TestWithCaseBreak_SetsSkuAndBreakCaseKind(t *testing.T) {
 	brk, err := workunit.NewCaseBreak("LPN-1", "SKU-1", "FWD-01", "task-9")
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.SetCaseBreak(brk)
+	u := newUnit(t, workunit.WithCaseBreak(brk))
 	got, ok := u.CaseBreak()
 	if !ok || got != brk || u.SKU() != "SKU-1" || u.WorkKind() != workunit.WorkKindBreakCase || u.WorkKind().IsPickKind() {
 		t.Fatalf("case break %+v ok=%v sku=%q kind=%q", got, ok, u.SKU(), u.WorkKind())

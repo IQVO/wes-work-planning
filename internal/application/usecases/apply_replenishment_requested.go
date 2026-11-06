@@ -229,13 +229,13 @@ func (uc *ApplyReplenishmentRequested) planOnce(ctx context.Context, req ApplyRe
 		return ReplenishmentPlanned, err
 	}
 	cpt := uc.cptFor(req.RequestedAt, move.Priority)
-	unit, err := workunit.NewWorkUnit(unitId, pathId, cpt, move.RequestId)
+	unit, err := workunit.NewWorkUnit(unitId, pathId, cpt, move.RequestId,
+		workunit.WithWorkKind(workunit.WorkKindReplenish),
+		workunit.WithSiteId(strings.TrimSpace(req.SiteId)),
+		workunit.WithReplenishment(move))
 	if err != nil {
 		return ReplenishmentPlanned, err
 	}
-	unit.SetWorkKind(workunit.WorkKindReplenish)
-	unit.SetSiteId(strings.TrimSpace(req.SiteId))
-	unit.SetReplenishment(move)
 
 	pool, err := loadOrNewPool(ctx, uc.pools, pathId)
 	if err != nil {

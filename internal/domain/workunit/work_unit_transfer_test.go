@@ -62,12 +62,13 @@ func TestWorkUnit_TransferMetadataDefaultsToZeroValues(t *testing.T) {
 	}
 }
 
-func TestWorkUnit_SetTransferMetadata(t *testing.T) {
-	unit := newTransferHostUnit(t)
-	unit.SetTransferRef("TRF-2026-001")
-	unit.SetWorkKind(WorkKindTransferPick)
-	unit.SetSiteId("site-north-1")
-	unit.SetQuantity(42)
+func TestWorkUnit_WithTransferLeg(t *testing.T) {
+	cpt := shared.NewCPT(time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	unit, err := NewWorkUnit("wu-xfer-1", mustTransferPath(t), cpt, "demand-1",
+		WithTransferLeg("TRF-2026-001", WorkKindTransferPick, "site-north-1", 42))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 
 	if unit.TransferRef() != "TRF-2026-001" {
 		t.Fatalf("TransferRef = %q", unit.TransferRef())

@@ -22,15 +22,12 @@ func newReleasedTransferUnit(t *testing.T, id string) *memory.WorkUnitRepo {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	cpt := shared.NewCPT(time.Date(2026, 10, 6, 23, 0, 0, 0, time.UTC))
-	unit, err := workunit.NewWorkUnit(id, pathId, cpt, "demand-"+id)
+	unit, err := workunit.NewWorkUnit(id, pathId, cpt, "demand-"+id,
+		workunit.WithSKU("sku-transfer"),
+		workunit.WithTransferLeg("TRF-2026-042", workunit.WorkKindTransferPick, "site-north-1", 17))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	unit.SetSKU("sku-transfer")
-	unit.SetTransferRef("TRF-2026-042")
-	unit.SetWorkKind(workunit.WorkKindTransferPick)
-	unit.SetSiteId("site-north-1")
-	unit.SetQuantity(17)
 	if err := unit.Release(time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -71,7 +71,7 @@ func (p PathPlan) PlannedThroughput() float64 {
 // construction. A separate setter, rather than a NewPathPlan parameter,
 // keeps every existing caller and test fixture compiling unchanged —
 // travel distance is additive, not a new invariant (mirrors
-// WorkUnit.SetSKU, ADR-0009).
+// workunit.WithSKU, ADR-0009).
 func (p *PathPlan) SetTravelDistance(metresM float64, estimated bool) {
 	p.travelDistanceKnown = true
 	p.travelDistanceM = metresM

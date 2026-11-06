@@ -48,7 +48,7 @@ func TestWorkUnitRepo_ForwardPickFaceBySKU(t *testing.T) {
 			INSERT INTO work_units (id, path_id, cpt, reference, sku, gift_wrap, state, work_kind, site_id,
 				relocation_plan_id, relocation_move_seq, relocation_kind, from_slot, to_slot)
 			VALUES ($1, 'RELOCATE', now(), $2, $3, false, $4, 'RELOCATE', $5, $2, 0, $6, $7, $8)
-		`, p.planId+"-move-0", p.planId, p.sku, p.state, p.siteId, p.kind, p.from, p.to); err != nil {
+		`, p.planId+"-move-0-"+p.kind, p.planId, p.sku, p.state, p.siteId, p.kind, p.from, p.to); err != nil {
 			t.Fatalf("seed relocate %s: %v", p.planId, err)
 		}
 	}

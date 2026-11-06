@@ -68,12 +68,11 @@ func newReleasedWorkUnitWithGiftWrap(t *testing.T, id, sku string, giftWrap bool
 		t.Fatalf("unexpected error: %v", err)
 	}
 	cpt := shared.NewCPT(time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC))
-	unit, err := workunit.NewWorkUnit(id, pathId, cpt, "ref-1")
+	unit, err := workunit.NewWorkUnit(id, pathId, cpt, "ref-1",
+		workunit.WithSKU(sku), workunit.WithGiftWrap(giftWrap))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	unit.SetSKU(sku)
-	unit.SetGiftWrap(giftWrap)
 	if err := unit.Release(time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

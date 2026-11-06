@@ -32,17 +32,17 @@ var replAt = time.Date(2026, 10, 17, 9, 30, 0, 0, time.UTC)
 func replUnit(t *testing.T, requestId, priority string) *workunit.WorkUnit {
 	t.Helper()
 	cpt := shared.NewCPT(replAt.Add(8 * time.Hour))
-	unit, err := workunit.NewWorkUnit(workunit.ReplenishmentWorkUnitId(requestId), mustPath(t, "REPLENISH"), cpt, requestId)
-	if err != nil {
-		t.Fatalf("NewWorkUnit: %v", err)
-	}
 	move, err := workunit.NewReplenishmentMove(requestId, "SKU-PG", "WH1-RSV-A07-03-02-B", "WH1-FWD-A01-01-01-A", 24, priority)
 	if err != nil {
 		t.Fatalf("NewReplenishmentMove: %v", err)
 	}
-	unit.SetWorkKind(workunit.WorkKindReplenish)
-	unit.SetSiteId("WH1")
-	unit.SetReplenishment(move)
+	unit, err := workunit.NewWorkUnit(workunit.ReplenishmentWorkUnitId(requestId), mustPath(t, "REPLENISH"), cpt, requestId,
+		workunit.WithWorkKind(workunit.WorkKindReplenish),
+		workunit.WithSiteId("WH1"),
+		workunit.WithReplenishment(move))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 	return unit
 }
 

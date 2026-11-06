@@ -359,34 +359,6 @@ func WithBlockedBy(workUnitId string) Option {
 // Unblock clears the wait: the unit it waited on has completed.
 func (w *WorkUnit) Unblock() { w.blockedBy = "" }
 
-// Deprecated setters: kept only until every caller has moved to the
-// construction options; removed in the final slice of this refactor.
-func (w *WorkUnit) SetSKU(sku string)                 { w.sku = sku }
-func (w *WorkUnit) SetGiftWrap(giftWrap bool)         { w.giftWrap = giftWrap }
-func (w *WorkUnit) SetTransferRef(ref string)         { w.transferRef = ref }
-func (w *WorkUnit) SetWorkKind(kind WorkKind)         { w.workKind = kind }
-func (w *WorkUnit) SetSiteId(siteId string)           { w.siteId = siteId }
-func (w *WorkUnit) SetQuantity(quantity int)          { w.quantity = quantity }
-func (w *WorkUnit) SetLineNo(lineNo int)              { w.lineNo = lineNo }
-func (w *WorkUnit) SetRelocation(move RelocationMove) { w.relocation = &move }
-func (w *WorkUnit) SetReplenishment(move ReplenishmentMove) {
-	w.replenish = &move
-	w.sku = move.SKU
-	w.quantity = move.Quantity
-}
-func (w *WorkUnit) SetPick(plan PickPlan) {
-	w.pick = &plan
-	w.sku = plan.SKU
-	w.quantity = plan.Quantity
-	w.workKind = plan.Unit.WorkKind()
-}
-func (w *WorkUnit) SetCaseBreak(brk CaseBreak) {
-	w.caseBreak = &brk
-	w.sku = brk.SKU
-	w.workKind = WorkKindBreakCase
-}
-func (w *WorkUnit) SetBlockedBy(workUnitId string) { w.blockedBy = workUnitId }
-
 // Cancel withdraws a Pending unit for good (ADR-0040: a superseded slot
 // plan's not-yet-released move). Released and Completed units run to
 // completion and refuse with ErrAlreadyReleased; a second Cancel refuses

@@ -48,18 +48,18 @@ func releasedRelocationUnit(t *testing.T, id, planId string, seq int, kind, from
 	if err != nil {
 		t.Fatalf("NewPathId: %v", err)
 	}
-	unit, err := workunit.NewWorkUnit(id, pathId, shared.NewCPT(time.Date(2026, 10, 16, 8, 0, 0, 0, time.UTC)), planId)
-	if err != nil {
-		t.Fatalf("NewWorkUnit: %v", err)
-	}
 	move, err := workunit.NewRelocationMove(planId, seq, kind, from, to)
 	if err != nil {
 		t.Fatalf("NewRelocationMove: %v", err)
 	}
-	unit.SetWorkKind(workunit.WorkKindRelocate)
-	unit.SetSiteId("SITE-1")
-	unit.SetSKU(sku)
-	unit.SetRelocation(move)
+	unit, err := workunit.NewWorkUnit(id, pathId, shared.NewCPT(time.Date(2026, 10, 16, 8, 0, 0, 0, time.UTC)), planId,
+		workunit.WithWorkKind(workunit.WorkKindRelocate),
+		workunit.WithSiteId("SITE-1"),
+		workunit.WithSKU(sku),
+		workunit.WithRelocation(move))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 	if err := unit.Release(time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("Release: %v", err)
 	}

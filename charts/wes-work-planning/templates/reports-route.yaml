@@ -18,6 +18,11 @@ metadata:
     app.kubernetes.io/component: reports
   annotations:
     konghq.com/plugins: {{ include "wes-work-planning.kongPluginNames" . | quote }}
+    # Kong's traditional router turns both this PathPrefix and the API route's
+    # /api/<context> prefix into regex paths; at equal priority their order is
+    # unspecified, so /reports/... could land on the API Service (404). The
+    # reports prefix must outrank the API prefix.
+    konghq.com/regex-priority: "10"
 spec:
   parentRefs:
     {{- range .Values.analytics.reports.route.parentRefs }}

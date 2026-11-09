@@ -27,7 +27,7 @@ plus `confluentinc/confluent-local:7.6.1` as a single-node Kafka that advertises
 
 | Target | Does |
 |---|---|
-| `make build` | `go build ./...` (all four binaries) |
+| `make build` | `go build ./...` (all five binaries) |
 | `make test` | unit + httptest + BDD + MCP evals, `-race` |
 | `make check` | `fmt-check vet build lint test` (what the pre-push hook runs) |
 | `make integration` | testcontainers suites (needs Docker only) |
@@ -94,10 +94,11 @@ running, start the compose Kafka on another port and point `KAFKA_BROKERS` at it
 | `PATH_CATALOGUE_FILE` | `/etc/wes-work-planning/process-paths.yaml` | Catalogue YAML for `PATH_CATALOGUE_SOURCE=file` |
 | `MIGRATIONS_PATH` | `migrations` | OLTP migrations applied on start |
 | `PRODUCT_CLASSIFICATION_MODE` / `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | `kafka` / **required** | The local copy of product-master's `ProductClassified` events is always kept and read for the hazmat/fragile hints; `permissive`, `off`, `http` and any other mode are rejected at boot ([ADR-0035](../adr/0035-product-classification-local-copy.md), [ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)) |
+| `PACK_VIEW_CONSUMER_GROUP` | **required** | Group of the always-on pack-level consumer (`ProductPackLevelDeclared` / `Retired` / `Measured` into `product_pack_level_copy`, [ADR-0045](../adr/0045-pack-aware-work-units.md)); must differ from `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` |
 | `REPLENISHMENT_MODE` / `REPLENISHMENT_CONSUMER_GROUP` | `kafka` / **required** | The pick-face-replenishment consumer is always on; `permissive`, `off` and any other mode are rejected at boot ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) |
 | `TRAVEL_DISTANCE_MODE` / `FACILITY_LAYOUT_BASE_URL` | `permissive` / *(unset)* | REST sync edge to facility-layout (not changed by ADR-0044): `http` enables the travel-distance lookup ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) |
 
-Every variable of all four binaries, with defaults and source files, is on
+Every variable of all five binaries, with defaults and source files, is on
 [Configuration](../operations/configuration.md).
 
 ## A full loop with curl

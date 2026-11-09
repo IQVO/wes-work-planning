@@ -135,6 +135,20 @@ def main() -> int:
                     if name.endswith("-reports") and target != "/reports":
                         failures.append(f"reports route {name} rewrites to {target!r}, expected '/reports'")
 
+    # 5. The reports route outranks the API prefix under Kong's traditional
+    #    router (equal regex_priority leaves /api/<ctx> vs /api/<ctx>/reports
+    #    in unspecified order, sending reports traffic to the API -> 404).
+    reports_routes = [r for r in routes if r["metadata"]["name"].endswith("-reports")]
+    if not reports_routes:
+        failures.append("enabled render contains no reports HTTPRoute")
+    for r in reports_routes:
+        prio = (r["metadata"].get("annotations") or {}).get("konghq.com/regex-priority")
+        if prio != "10":
+            failures.append(
+                f"reports route {r['metadata']['name']} has konghq.com/regex-priority {prio!r}, "
+                "expected '10' so it outranks the API prefix"
+            )
+
     if failures:
         print("FAIL: wes-work-planning chart Kong-config contract")
         for f in failures:

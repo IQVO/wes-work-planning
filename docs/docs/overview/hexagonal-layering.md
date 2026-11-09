@@ -3,7 +3,7 @@ id: hexagonal-layering
 title: Architecture — hexagonal layering and runtime view
 sidebar_label: Architecture
 sidebar_position: 2
-description: How the ports-and-adapters layering is organised and enforced, and how it is compiled into four binaries with their ports and data stores.
+description: How the ports-and-adapters layering is organised and enforced, and how it is compiled into five binaries with their ports and data stores.
 ---
 
 # Architecture — hexagonal layering and runtime view
@@ -67,13 +67,14 @@ the package tree under `internal/`.
 
 ## Runtime view: binaries, ports and data stores
 
-The layers above are compiled into **four binaries** (all in one image, see
+The layers above are compiled into **five binaries** (all in one image, see
 `Dockerfile`), each its own composition root under `cmd/`:
 
 | Binary | Role | Listens on | Inbound adapters | Outbound adapters / stores |
 |---|---|---|---|---|
-| `cmd/wes` | the OLTP service: every REST endpoint, all Kafka consumers, the outbox relay and the housekeeper | `HTTP_ADDR` `:8080` — REST, `/healthz`, `/readyz` | `inbound/http`, `inbound/kafka` (integration consumer on 5 topics, `ProductClassified` consumer), `outbound/kafkacatalog` (catalogue replay) | OLTP Postgres (or memory), Kafka publishers + relay, facility-layout REST, file catalogue |
+| `cmd/wes` | the OLTP service: every REST endpoint, all Kafka consumers, the outbox relay and the housekeeper | `HTTP_ADDR` `:8080` — REST, `/healthz`, `/readyz` | `inbound/http`, `inbound/kafka` (integration consumer on 5 topics, `ProductClassified` consumer, pack-level consumer), `outbound/kafkacatalog` (catalogue replay) | OLTP Postgres (or memory), Kafka publishers + relay, facility-layout REST, file catalogue |
 | `cmd/mcp` | MCP server over the same use cases ([ADR-0008](../adr/0008-mcp-inbound-adapter.md)) | `MCP_ADDR` `:8090` — MCP at `/` and `/mcp`, `/healthz` | `inbound/mcp` | the same OLTP Postgres (read/write, no migrations), Kafka publishers or outbox rows, reports REST client |
+| `cmd/a2a` | A2A agent over the same use cases ([ADR-0046](../adr/0046-a2a-inbound-adapter.md)) | `A2A_ADDR` `:8093` — Agent Card at `/.well-known/agent-card.json`, JSON-RPC at `/` and `/a2a`, `/healthz` | `inbound/a2a` | the same OLTP Postgres (no migrations), Kafka publishers or outbox rows |
 | `cmd/wes-projector` | analytics **writer** ([ADR-0011](../adr/0011-analytical-data-product.md)) | `ADMIN_ADDR` `:8091` — `/healthz` only | analytics consumer on `warehouse.wes.analytics` | analytical Postgres (owns and migrates it) |
 | `cmd/wes-reports` | analytics **reader** | `HTTP_ADDR` `:8092` — `/reports/throughput`, `/reports/throughput/freshness`, `/healthz` | `inbound/http` reports router | analytical Postgres, read-only pool |
 
@@ -156,7 +157,7 @@ internal/
     usecases/                   one struct per use case
   adapters/
     inbound/http/               chi router, DTOs, domain-error → HTTP mapping
-    inbound/kafka/              integration-event consumer (5 topics), ProductClassified consumer (ADR-0035) + analytics consumer
+    inbound/kafka/              integration-event consumer (5 topics), ProductClassified consumer (ADR-0035), pack-level consumer (ADR-0045) + analytics consumer
     inbound/mcp/                MCP tools, resources, prompts (ADR-0008)
     outbound/postgres/          pgxpool repositories, UnitOfWork, outbox + relay (ADR-0014)
     outbound/memory/            thread-safe in-memory repositories (test doubles only)

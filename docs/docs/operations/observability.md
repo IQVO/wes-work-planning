@@ -2,12 +2,12 @@
 id: observability
 title: Observability
 sidebar_label: Observability
-description: Every OpenTelemetry metric instrument, span and log field the four binaries emit, how they are exported, the warehouse-infra dashboard that reads them, and suggested alerts.
+description: Every OpenTelemetry metric instrument, span and log field the five binaries emit, how they are exported, the warehouse-infra dashboard that reads them, and suggested alerts.
 ---
 
 # Observability
 
-All four binaries call the same `telemetry.Setup`
+All five binaries call the same `telemetry.Setup`
 (`internal/adapters/outbound/telemetry/telemetry.go`): traces and metrics are
 **pushed over OTLP/gRPC** (insecure) to `OTEL_EXPORTER_OTLP_ENDPOINT`
 (default `localhost:4317`); there is **no `/metrics` scrape endpoint** in
@@ -57,7 +57,7 @@ never the raw path, so cardinality is bounded by the route table.
 |---|---|---|---|
 | chi route pattern, e.g. `/paths/{pathId}/work-releases`, `/reports/throughput`, `/mcp` | server | otelchi middleware on the `cmd/wes`, `cmd/wes-reports` and `cmd/mcp` routers | HTTP semconv |
 | `kafka.publish warehouse.work-planning.events`, `kafka.publish warehouse.wes.analytics` | producer | `Publisher.Publish` / `AnalyticsPublisher.Publish` — **direct** publishing only (no `DATABASE_URL`) | `messaging.system=kafka`, `messaging.operation.name=publish`, `messaging.destination.name`, `messaging.batch.message_count`, `messaging.event_types` |
-| `kafka.consume <topic>` | consumer | integration consumer (5 topics), `ProductClassified` consumer, analytics projector | `messaging.kafka.offset`, partition, `messaging.message.id` (CloudEvents `id`), `cloudevents.event_type`, `cloudevents.event_source`; `product.sku` on the classification consumer |
+| `kafka.consume <topic>` | consumer | integration consumer (5 topics), `ProductClassified` consumer, pack-level consumer, analytics projector | `messaging.kafka.offset`, partition, `messaging.message.id` (CloudEvents `id`), `cloudevents.event_type`, `cloudevents.event_source`; `product.sku` on the classification consumer |
 | `mcp.tool <name>` | internal | every MCP tool call | `mcp.tool.name` |
 | `query …`, `prepare …`, `batch query …`, connect/acquire | client | otelpgx tracer on every pool | normalized SQL, never parameter values |
 
@@ -105,6 +105,9 @@ Messages worth alerting or searching on:
 | `kafka consumer stopped` | ERROR | the integration consumer's loop exited (a DLQ publish or commit failed) — nothing is consumed until restart |
 | `TaskCompleted for a work unit this context never planned; skipping` | INFO | expected for PACK tasks fulfillment-execution created itself |
 | `applying ProductClassified failed; retrying the same message` | ERROR | the classification consumer is stuck retrying one message |
+| `applying a pack level event failed; retrying the same message` | ERROR | the pack-level consumer is stuck retrying one message |
+| `pack level event is poison, sending to dead-letter topic` | ERROR | a `ProductPackLevel*` payload was invalid; fields `topic`, `partition`, `offset`, `dlq_topic`, `error` |
+| `skipping a message that is not a valid CloudEvent on the product-master topic` | WARN | the pack-level consumer committed past a non-CloudEvent |
 | `skipping invalid CloudEvent on product-master topic` / `... on analytics topic` / `... on process-path catalogue topic` | WARN | poison message skipped |
 | `analytics message handling failed` | ERROR | the projector failed to apply an already-committed event (it is not retried) |
 | `outbox relay pass failed` | ERROR | relay could not claim or send; rows stay unpublished |

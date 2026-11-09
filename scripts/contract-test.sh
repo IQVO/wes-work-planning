@@ -115,6 +115,7 @@ EOF
 KAFKA_CONSUMER_GROUP="${KAFKA_CONSUMER_GROUP:-wes-work-planning-contract}" \
   PRODUCT_CLASSIFICATION_CONSUMER_GROUP="${PRODUCT_CLASSIFICATION_CONSUMER_GROUP:-wes-work-planning-contract-product-classification}" \
   REPLENISHMENT_CONSUMER_GROUP="${REPLENISHMENT_CONSUMER_GROUP:-wes-work-planning-contract-replenishment}" \
+  PACK_VIEW_CONSUMER_GROUP="${PACK_VIEW_CONSUMER_GROUP:-wes-work-planning-contract-pack-view}" \
   MIGRATIONS_PATH="${MIGRATIONS_PATH:-migrations}" \
   LOG_LEVEL="${LOG_LEVEL:-warn}" HTTP_ADDR="127.0.0.1:${PORT}" \
   PATH_CATALOGUE_FILE="${TMP}/process-paths.yaml" "$BIN" &

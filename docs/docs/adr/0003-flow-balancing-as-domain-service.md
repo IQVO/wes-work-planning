@@ -57,7 +57,7 @@ up testing the scheduler.
 **We will model flow balancing as `RebalanceDecision`, a synchronous decision
 evaluated on read over a pool snapshot, and it will recommend rather than act.**
 
-1. **Evaluated on demand.** `GET /paths/{pathId}/rebalance` computes the
+1. **Evaluated on demand.** `POST /paths/{pathId}/rebalance-decisions` (formerly `GET .../rebalance`, see [ADR-0047](./0047-fleet-rest-api-guideline.md)) computes the
    recommendation at the moment it is asked. No scheduler, no background
    goroutine, no staleness window.
 2. **Pure function of a snapshot.** Inputs: feed mode, backlog depth, WIP, WIP

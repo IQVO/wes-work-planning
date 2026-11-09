@@ -111,14 +111,14 @@ sequenceDiagram
     WES->>WES: ShiftPlanCommitted ours, maybe PathPlanDriftDetected
     OM-->>WES: OrderAllocated
     WES->>WES: WorkUnitCreated per line
-    Note over WES: POST /paths/pick-a/release
+    Note over WES: POST /paths/pick-a/work-releases
     WES-->>FE: WorkReleased
     Note over FE: creates a Task
     FE-->>WES: TaskCompleted
     WES->>WES: WorkUnitCompleted
     Note over WES: GET /paths/pick-a/telemetry?cutoffAt=
     WES->>WES: BacklogThresholdBreached if over threshold, PathCapacityChanged
-    Note over WES: GET /paths/pick-a/rebalance
+    Note over WES: POST /paths/pick-a/rebalance-decisions
     WES->>WES: PathThrottled or LaborReassignmentFlagged
 ```
 

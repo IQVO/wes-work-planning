@@ -54,7 +54,7 @@ Content-Type: application/problem+json
   "title": "Release-fed pool WIP limit reached",
   "status": 409,
   "detail": "release-fed pool WIP limit reached",
-  "instance": "/paths/pick-a/release"
+  "instance": "/paths/pick-a/work-releases"
 }
 ```
 

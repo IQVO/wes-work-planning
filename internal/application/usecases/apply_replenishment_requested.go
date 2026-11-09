@@ -13,6 +13,9 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
+// unknownReason is the fallback reason when an outcome cannot be classified.
+const unknownReason = "unknown"
+
 // ReplenishPathId is the process path every pick-face replenishment is
 // released on (ADR-0042): fulfillment-execution derives its REPLENISH task
 // type from it, and only accepts the `replenishment` object there.
@@ -68,7 +71,7 @@ func (o ReplenishmentOutcome) String() string {
 	case ReplenishmentNotCancellable:
 		return "not_cancellable"
 	default:
-		return "unknown"
+		return unknownReason
 	}
 }
 
@@ -226,13 +229,13 @@ func (uc *ApplyReplenishmentRequested) planOnce(ctx context.Context, req ApplyRe
 		return ReplenishmentPlanned, err
 	}
 	cpt := uc.cptFor(req.RequestedAt, move.Priority)
-	unit, err := workunit.NewWorkUnit(unitId, pathId, cpt, move.RequestId)
+	unit, err := workunit.NewWorkUnit(unitId, pathId, cpt, move.RequestId,
+		workunit.WithWorkKind(workunit.WorkKindReplenish),
+		workunit.WithSiteId(strings.TrimSpace(req.SiteId)),
+		workunit.WithReplenishment(move))
 	if err != nil {
 		return ReplenishmentPlanned, err
 	}
-	unit.SetWorkKind(workunit.WorkKindReplenish)
-	unit.SetSiteId(strings.TrimSpace(req.SiteId))
-	unit.SetReplenishment(move)
 
 	pool, err := loadOrNewPool(ctx, uc.pools, pathId)
 	if err != nil {

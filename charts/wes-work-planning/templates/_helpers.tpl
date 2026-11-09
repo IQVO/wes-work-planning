@@ -102,6 +102,9 @@ EVENT_PUBLISHER is kept because warehouse-infra sets it; the only value is kafka
 {{- if and .Values.mcp.eventPublisher (ne (lower (toString .Values.mcp.eventPublisher)) "kafka") -}}
 {{- fail (printf "mcp.eventPublisher=%q is not supported: the only value is kafka (ADR-0044)" (toString .Values.mcp.eventPublisher)) -}}
 {{- end -}}
+{{- if and .Values.a2a.eventPublisher (ne (lower (toString .Values.a2a.eventPublisher)) "kafka") -}}
+{{- fail (printf "a2a.eventPublisher=%q is not supported: the only value is kafka (ADR-0044)" (toString .Values.a2a.eventPublisher)) -}}
+{{- end -}}
 {{- end }}
 
 {{/*
@@ -193,3 +196,10 @@ installs without Kong are unaffected.
 {{- end -}}
 {{- join "," $names -}}
 {{- end -}}
+
+{{/*
+Fully qualified name of the A2A agent Deployment/Service (<release>-a2a).
+*/}}
+{{- define "wes-work-planning.a2aFullname" -}}
+{{- include "wes-work-planning.fullname" . }}-a2a
+{{- end }}

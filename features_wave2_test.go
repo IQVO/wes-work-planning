@@ -416,7 +416,7 @@ func (s *wave2) taskCompletedUnknownUnit() error {
 
 func (s *wave2) taskCompletedFailsForRetry() error {
 	if !errors.Is(s.consumerErr, workunit.ErrNotReleased) {
-		return fmt.Errorf("got TaskCompleted error %v, want %v", s.consumerErr, workunit.ErrNotReleased)
+		return fmt.Errorf("got TaskCompleted error %w, want %w", s.consumerErr, workunit.ErrNotReleased)
 	}
 	return nil
 }
@@ -515,14 +515,14 @@ func (s *wave2) consumedEventRedelivery() error {
 
 func (s *wave2) consumedEventRejectedUnknownPath() error {
 	if !errors.Is(s.consumerErr, pathcatalog.ErrUnknownPath) {
-		return fmt.Errorf("got error %v, want %v", s.consumerErr, pathcatalog.ErrUnknownPath)
+		return fmt.Errorf("got error %w, want %w", s.consumerErr, pathcatalog.ErrUnknownPath)
 	}
 	return nil
 }
 
 func (s *wave2) consumedEventRejectedUnknownKind() error {
 	if !errors.Is(s.consumerErr, workunit.ErrUnknownWorkKind) {
-		return fmt.Errorf("got error %v, want %v", s.consumerErr, workunit.ErrUnknownWorkKind)
+		return fmt.Errorf("got error %w, want %w", s.consumerErr, workunit.ErrUnknownWorkKind)
 	}
 	return nil
 }

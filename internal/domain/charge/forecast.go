@@ -3,13 +3,20 @@ package charge
 import (
 	"time"
 
+	"github.com/claudioed/wes-work-planning/internal/domain/pickload"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 )
 
-// CPTBucket is the volume due by a specific CPT.
+// CPTBucket is the volume due by a specific CPT. Quantity is ALWAYS eaches
+// (the ledger unit). SKU and Load are the optional pack-aware estimate of
+// ADR-0045: when the caller states the SKU and how it is picked, Load holds
+// the handles (cases for a CASE pick), cube and weight the bucket stands
+// for. Both are nil/empty for a plain bucket.
 type CPTBucket struct {
 	CPT      shared.CPT
 	Quantity shared.Quantity
+	SKU      string
+	Load     *pickload.Load
 }
 
 // ChargeForecast is the volume that must clear a process path this shift,

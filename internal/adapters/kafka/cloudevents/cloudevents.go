@@ -71,6 +71,12 @@ const (
 	// TypeProductClassified is product-master's classification event
 	// (warehouse.product-master.events), feeding the local copy (ADR-0035).
 	TypeProductClassified = "com.warehouse.wms.product-master.product.ProductClassified"
+	// TypeProductPackLevelDeclared / Retired / Measured are product-master's
+	// pack-level events (warehouse.product-master.events), feeding the local
+	// pack-level copy (ADR-0045).
+	TypeProductPackLevelDeclared = "com.warehouse.wms.product-master.product.ProductPackLevelDeclared"
+	TypeProductPackLevelRetired  = "com.warehouse.wms.product-master.product.ProductPackLevelRetired"
+	TypeProductPackLevelMeasured = "com.warehouse.wms.product-master.product.ProductPackLevelMeasured"
 	// TypeSlotPlanApproved is slotting-optimization's approved slot plan
 	// (warehouse.slotting-optimization.events), planned as RELOCATE work
 	// (ADR-0040).
@@ -146,13 +152,13 @@ func ContentTypeHeader() kafkago.Header {
 func Decode(value []byte) (ce.Event, error) {
 	var e ce.Event
 	if err := json.Unmarshal(value, &e); err != nil {
-		return ce.Event{}, fmt.Errorf("%w: %v", ErrNotCloudEvent, err)
+		return ce.Event{}, fmt.Errorf("%w: %w", ErrNotCloudEvent, err)
 	}
 	if e.SpecVersion() != SpecVersion {
 		return ce.Event{}, fmt.Errorf("%w: specversion %q", ErrNotCloudEvent, e.SpecVersion())
 	}
 	if err := e.Validate(); err != nil {
-		return ce.Event{}, fmt.Errorf("%w: %v", ErrNotCloudEvent, err)
+		return ce.Event{}, fmt.Errorf("%w: %w", ErrNotCloudEvent, err)
 	}
 	return e, nil
 }

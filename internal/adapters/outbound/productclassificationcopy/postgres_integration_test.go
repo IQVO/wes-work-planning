@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,19 @@ func startCopyPostgres(t *testing.T) *pgxpool.Pool {
 	}
 	if _, err := pool.Exec(ctx, string(ddl)); err != nil {
 		t.Fatalf("apply migration: %v", err)
+	}
+	// The pack-level copy table (ADR-0045) is the part of 0016 before its
+	// ALTERs of work_units / shift_plans, which this package's database lacks.
+	packDDL, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "migrations", "0016_pack_aware_work.up.sql"))
+	if err != nil {
+		t.Fatalf("read pack migration: %v", err)
+	}
+	packTable, _, found := strings.Cut(string(packDDL), "ALTER TABLE work_units")
+	if !found {
+		t.Fatal("0016 no longer has the work_units ALTER this helper cuts at")
+	}
+	if _, err := pool.Exec(ctx, packTable); err != nil {
+		t.Fatalf("apply pack migration: %v", err)
 	}
 	return pool
 }

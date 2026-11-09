@@ -156,41 +156,41 @@ func (p *AnalyticsPublisher) marshalAnalyticsData(ctx context.Context, e shared.
 		return ev.WorkUnitId, p.workReleasedData(ctx, ev), true
 	case shared.WorkUnitCompleted:
 		return ev.WorkUnitId, mustMarshal(map[string]any{
-			"path_id":      ev.PathId.String(),
-			"work_unit_id": ev.WorkUnitId,
+			attrPathID:     ev.PathId.String(),
+			attrWorkUnitID: ev.WorkUnitId,
 		}), true
 	case shared.WorkUnitCreated:
 		return ev.WorkUnitId, mustMarshal(map[string]any{
-			"path_id":      ev.PathId.String(),
-			"work_unit_id": ev.WorkUnitId,
+			attrPathID:     ev.PathId.String(),
+			attrWorkUnitID: ev.WorkUnitId,
 		}), true
 	case shared.BacklogThresholdBreached:
 		return ev.PathId.String(), mustMarshal(map[string]any{
-			"path_id": ev.PathId.String(),
+			attrPathID: ev.PathId.String(),
 		}), true
 	case shared.PathThrottled:
 		return ev.PathId.String(), mustMarshal(map[string]any{
-			"path_id": ev.PathId.String(),
+			attrPathID: ev.PathId.String(),
 		}), true
 	case shared.RateDeviationDetected:
 		return ev.PathId.String(), mustMarshal(map[string]any{
-			"path_id": ev.PathId.String(),
+			attrPathID: ev.PathId.String(),
 		}), true
 	case shared.ChargeForecastReceived:
 		return ev.PathId.String(), mustMarshal(map[string]any{
-			"path_id": ev.PathId.String(),
+			attrPathID: ev.PathId.String(),
 		}), true
 	case shared.ShiftPlanCommitted:
 		return ev.PathId.String(), mustMarshal(map[string]any{
-			"path_id": ev.PathId.String(),
+			attrPathID: ev.PathId.String(),
 		}), true
 	case shared.LaborReassignmentFlagged:
 		return ev.PathId.String(), mustMarshal(map[string]any{
-			"path_id": ev.PathId.String(),
+			attrPathID: ev.PathId.String(),
 		}), true
 	case shared.PathCapacityChanged:
 		return ev.PathId.String(), mustMarshal(map[string]any{
-			"path_id":         ev.PathId.String(),
+			attrPathID:        ev.PathId.String(),
 			"cutoff_at":       ev.CutoffAt.Format(time.RFC3339),
 			"remaining_units": ev.RemainingUnits,
 			"known":           ev.Known,
@@ -209,8 +209,8 @@ func (p *AnalyticsPublisher) marshalAnalyticsData(ctx context.Context, e shared.
 // repo wired, a lookup error, or an unknown line all just omit it.
 func (p *AnalyticsPublisher) workReleasedData(ctx context.Context, ev shared.WorkReleased) json.RawMessage {
 	payload := map[string]any{
-		"path_id":      ev.PathId.String(),
-		"work_unit_id": ev.WorkUnitId,
+		attrPathID:     ev.PathId.String(),
+		attrWorkUnitID: ev.WorkUnitId,
 	}
 	if p.workUnits != nil {
 		if unit, err := p.workUnits.FindById(ctx, ev.WorkUnitId); err == nil && unit.LineNo() > 0 {

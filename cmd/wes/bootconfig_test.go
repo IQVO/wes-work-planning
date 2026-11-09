@@ -16,11 +16,12 @@ func completeEnv(t *testing.T) {
 	t.Setenv("PRODUCT_CLASSIFICATION_CONSUMER_GROUP", "g-classification")
 	t.Setenv("REPLENISHMENT_MODE", "")
 	t.Setenv("REPLENISHMENT_CONSUMER_GROUP", "g-replenishment")
+	t.Setenv("PACK_VIEW_CONSUMER_GROUP", "g-pack-view")
 }
 
 func bootConfigError() error {
 	cfg := loadConfig()
-	return validateBootConfig(cfg, loadClassificationConfig(cfg.kafkaBrokers), loadReplenishmentConfig(cfg.kafkaBrokers))
+	return validateBootConfig(cfg, loadClassificationConfig(cfg.kafkaBrokers), loadReplenishmentConfig(cfg.kafkaBrokers), loadPackViewConfig(cfg.kafkaBrokers))
 }
 
 func TestBootConfig_AcceptsTheCompleteEnvironment(t *testing.T) {
@@ -59,6 +60,9 @@ func TestBootConfig_RejectsAndNamesTheVariable(t *testing.T) {
 		{"REPLENISHMENT_MODE=off", map[string]string{"REPLENISHMENT_MODE": "off"}, "REPLENISHMENT_MODE"},
 		{"REPLENISHMENT_MODE unknown", map[string]string{"REPLENISHMENT_MODE": "http"}, "REPLENISHMENT_MODE"},
 		{"REPLENISHMENT_CONSUMER_GROUP unset", map[string]string{"REPLENISHMENT_CONSUMER_GROUP": ""}, "REPLENISHMENT_CONSUMER_GROUP"},
+		{"PACK_VIEW_CONSUMER_GROUP unset", map[string]string{"PACK_VIEW_CONSUMER_GROUP": ""}, "PACK_VIEW_CONSUMER_GROUP"},
+		{"PACK_VIEW_CONSUMER_GROUP blank", map[string]string{"PACK_VIEW_CONSUMER_GROUP": "  "}, "PACK_VIEW_CONSUMER_GROUP"},
+		{"PACK_VIEW_CONSUMER_GROUP equals the classification group", map[string]string{"PACK_VIEW_CONSUMER_GROUP": "g-classification"}, "PACK_VIEW_CONSUMER_GROUP"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

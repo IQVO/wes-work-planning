@@ -45,7 +45,8 @@ func run(ctx context.Context) error {
 	// misconfigured pod fails at once with an error naming the variable.
 	classificationCfg := loadClassificationConfig(cfg.kafkaBrokers)
 	replenishmentCfg := loadReplenishmentConfig(cfg.kafkaBrokers)
-	if err := validateBootConfig(cfg, classificationCfg, replenishmentCfg); err != nil {
+	packViewCfg := loadPackViewConfig(cfg.kafkaBrokers)
+	if err := validateBootConfig(cfg, classificationCfg, replenishmentCfg, packViewCfg); err != nil {
 		return err
 	}
 
@@ -83,6 +84,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logPackView(logger, packViewCfg.groupID)
 
 	publisher, relay, stopPublisher, err := wireEventPublisher(logger, cfg.kafkaBrokers, repos.workUnits, classification.lookup, repos.pgPool)
 	if err != nil {
@@ -101,19 +103,23 @@ func run(ctx context.Context) error {
 		cancelCatalogueConsumer: cancelCatalogueConsumer,
 		classification:          classification,
 		replenishment:           replenishment,
+		packViewGroupID:         packViewCfg.groupID,
 	}).run(ctx)
 }
 
 // validateBootConfig runs every environment check of the real-wiring rule
 // (ADR-0044) and returns the first error, which names the offending variable.
-func validateBootConfig(cfg appConfig, classification classificationConfig, replenishment replenishmentConfig) error {
+func validateBootConfig(cfg appConfig, classification classificationConfig, replenishment replenishmentConfig, packView packViewConfig) error {
 	if err := cfg.validate(); err != nil {
 		return err
 	}
 	if _, err := classification.validate(); err != nil {
 		return err
 	}
-	return replenishment.validate()
+	if err := replenishment.validate(); err != nil {
+		return err
+	}
+	return packView.validate()
 }
 
 // setupTelemetry starts the OTel pipeline and returns the func that

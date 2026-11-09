@@ -70,7 +70,7 @@ Concretely:
   cover the failing paths as thoroughly as the happy ones. Mutation testing is
   practical on the domain packages precisely because they have no I/O to mock.
 - **Two inbound adapters, one use case.** `RecordCompletion` is called by
-  `POST /work-units/{id}/complete` and by the `TaskCompleted` Kafka consumer.
+  `POST /work-units/{id}/completions` and by the `TaskCompleted` Kafka consumer.
   Adding the second caller required no change to the use case at all — the
   clearest possible evidence the boundary is real.
 - **Infrastructure is swappable per environment.** `DATABASE_URL` unset falls

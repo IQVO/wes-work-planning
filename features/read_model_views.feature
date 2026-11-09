@@ -49,7 +49,7 @@ Feature: Read-only projections observed from neighbouring bounded contexts
     Given Workforce Management committed a labor plan of 6 heads at 95.5 units per hour for 8 hours for process path "pick-zone-a"
     And a WorkUnit "wu-1" with CPT "2026-08-21T10:00:00Z" and reference "order-line-1" is enqueued to process path "pick-zone-a"
     When the rebalance decision is requested for process path "pick-zone-a"
-    Then the request is accepted with status 200
+    Then the request is accepted with status 201
     And the rebalance recommendation action is "NoActionNeeded"
     And the rebalance recommendation includes the observed labor plan with 6 planned heads
 

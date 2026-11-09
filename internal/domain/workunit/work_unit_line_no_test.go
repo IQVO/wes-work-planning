@@ -65,9 +65,16 @@ func TestMaxLineNo_IsMaxInt32(t *testing.T) {
 	}
 }
 
-func TestWorkUnit_SetLineNo_StoresTheLineAndLeavesTheIdAlone(t *testing.T) {
-	unit := newLineNoUnit(t)
-	unit.SetLineNo(3)
+func TestWorkUnit_WithLineNo_StoresTheLineAndLeavesTheIdAlone(t *testing.T) {
+	pathId, err := shared.NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("NewPathId: %v", err)
+	}
+	unit, err := workunit.NewWorkUnit("order-1-line-3", pathId, shared.NewCPT(time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)), "order-1",
+		workunit.WithLineNo(3))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 
 	if got := unit.LineNo(); got != 3 {
 		t.Fatalf("LineNo = %d, want 3", got)
@@ -77,5 +84,18 @@ func TestWorkUnit_SetLineNo_StoresTheLineAndLeavesTheIdAlone(t *testing.T) {
 	}
 	if unit.Reference() != "order-1" {
 		t.Fatalf("Reference = %q, must be unchanged", unit.Reference())
+	}
+}
+
+// An out-of-range line fails construction: an invalid WorkUnit cannot exist.
+func TestWorkUnit_WithLineNo_RejectsAnOutOfRangeLine(t *testing.T) {
+	pathId, err := shared.NewPathId("pick-a")
+	if err != nil {
+		t.Fatalf("NewPathId: %v", err)
+	}
+	_, err = workunit.NewWorkUnit("order-1-line-x", pathId, shared.NewCPT(time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)), "order-1",
+		workunit.WithLineNo(-1))
+	if !errors.Is(err, workunit.ErrInvalidLineNo) {
+		t.Fatalf("NewWorkUnit err = %v, want ErrInvalidLineNo", err)
 	}
 }

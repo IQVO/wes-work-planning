@@ -94,6 +94,10 @@ spec:
             - name: PRODUCT_CLASSIFICATION_CONSUMER_GROUP
               value: {{ required "config.productClassificationConsumerGroup is required (PRODUCT_CLASSIFICATION_CONSUMER_GROUP): the ProductClassified consumer is always on" .Values.config.productClassificationConsumerGroup | quote }}
             {{- end }}
+            {{- if not (hasKey $extra "PACK_VIEW_CONSUMER_GROUP") }}
+            - name: PACK_VIEW_CONSUMER_GROUP
+              value: {{ required "config.packViewConsumerGroup is required (PACK_VIEW_CONSUMER_GROUP): the pack-level consumer is always on" .Values.config.packViewConsumerGroup | quote }}
+            {{- end }}
             {{- if not (hasKey $extra "REPLENISHMENT_CONSUMER_GROUP") }}
             - name: REPLENISHMENT_CONSUMER_GROUP
               value: {{ required "config.replenishmentConsumerGroup is required (REPLENISHMENT_CONSUMER_GROUP): the replenishment consumer is always on" .Values.config.replenishmentConsumerGroup | quote }}

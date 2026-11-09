@@ -16,19 +16,19 @@ import (
 func relocationDTOUnit(t *testing.T) *workunit.WorkUnit {
 	t.Helper()
 	pathId, _ := shared.NewPathId("RELOCATE")
-	unit, err := workunit.NewWorkUnit("plan-1-move-1", pathId, shared.NewCPT(time.Date(2026, 10, 16, 8, 0, 0, 0, time.UTC)), "plan-1")
-	if err != nil {
-		t.Fatalf("NewWorkUnit: %v", err)
-	}
 	move, err := workunit.NewRelocationMove("plan-1", 1, "Relocate", "S2", "S3")
 	if err != nil {
 		t.Fatalf("NewRelocationMove: %v", err)
 	}
-	unit.SetWorkKind(workunit.WorkKindRelocate)
-	unit.SetSiteId("SITE-1")
-	unit.SetSKU("SKU-2")
-	unit.SetRelocation(move)
-	unit.SetBlockedBy("plan-1-move-2")
+	unit, err := workunit.NewWorkUnit("plan-1-move-1", pathId, shared.NewCPT(time.Date(2026, 10, 16, 8, 0, 0, 0, time.UTC)), "plan-1",
+		workunit.WithWorkKind(workunit.WorkKindRelocate),
+		workunit.WithSiteId("SITE-1"),
+		workunit.WithSKU("SKU-2"),
+		workunit.WithRelocation(move),
+		workunit.WithBlockedBy("plan-1-move-2"))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 	return unit
 }
 

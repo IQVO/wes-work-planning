@@ -1,11 +1,6 @@
 # WES — Work Planning & Release
 
-> **⚠️ Study project.** This repository is an educational exercise in
-> Domain-Driven Design applied to warehouse management/execution systems. It
-> follows real industry-standard patterns and terminology (WMS/WES/WCS,
-> waveless release, CloudEvents, RFC 7807, hexagonal architecture) but is
-> **not a production system** and is **not affiliated with, endorsed by, or
-> representative of any real-world company**.
+[![CI](https://github.com/IQVO/wes-work-planning/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/IQVO/wes-work-planning/actions/workflows/ci.yml?query=branch%3Adevelop) [![coverage gate](https://img.shields.io/badge/coverage%20gate-90%25-brightgreen)](https://github.com/IQVO/wes-work-planning/blob/develop/Makefile) [![Go](https://img.shields.io/badge/go-1.26.10-00ADD8?logo=go&logoColor=white)](https://github.com/IQVO/wes-work-planning/blob/develop/go.mod) [![release](https://img.shields.io/github/v/release/IQVO/wes-work-planning?sort=semver)](https://github.com/IQVO/wes-work-planning/releases) [![docs](https://img.shields.io/badge/docs-iqvo.github.io-blue)](https://iqvo.github.io/wes-work-planning/) [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/IQVO/wes-work-planning/blob/develop/LICENSE)
 
 The core bounded context of a Warehouse Execution System. It turns a shift's
 **charge** (volume due by each CPT) into a **plan** (rate x heads per process
@@ -24,6 +19,7 @@ cmd/wes/                     main.go — wiring/composition root (OLTP service)
 cmd/wes-projector/           analytics writer (ADR-0011)
 cmd/wes-reports/             analytics read-only reports API (ADR-0011)
 cmd/mcp/                     MCP server (ADR-0008)
+cmd/a2a/                     A2A agent (ADR-0046)
 internal/
   domain/                    pure Go: aggregates, value objects, domain events
     charge/                  ChargeForecast aggregate
@@ -38,6 +34,7 @@ internal/
     inbound/http/            REST handlers, DTOs, chi router
     inbound/kafka/           integration-event consumer + analytics consumer (projector)
     inbound/mcp/             MCP tools, resources, prompts
+    inbound/a2a/             A2A agent: agent card, skill dispatch, JSON-RPC handler
     outbound/postgres/       pgx repositories + migrations, UnitOfWork, transactional outbox + relay (ADR-0014)
     outbound/memory/         in-memory repositories (tests/local)
     outbound/events/         log-based event publisher + MultiPublisher (direct Kafka fan-out when no Postgres)
@@ -191,6 +188,34 @@ helm upgrade --install wes charts/wes-work-planning \
   --set mcp.enabled=true
 ```
 
+### Running the A2A agent in Kubernetes
+
+The A2A agent ([ADR-0046](docs/docs/adr/0046-a2a-inbound-adapter.md)) ships in
+the same image (`/app/a2a`, built from `cmd/a2a`) and is deployed by the Helm
+chart as a separate Deployment + ClusterIP Service (`<release>-a2a`, port
+`8093`) when `a2a.enabled=true`. It is **off by default**. The binary reuses
+the OLTP `DATABASE_URL` secret and serves Agent2Agent as JSON-RPC 2.0 over
+HTTP: the Agent Card at `/.well-known/agent-card.json`, the protocol endpoint
+at `/` and `/a2a` (the fleet's `<CTX>_A2A_ENDPOINT` convention is
+`http://<release>-a2a.<ns>.svc.cluster.local:8093/a2a`), and `GET /healthz`
+for the probes. Two curated, goal-shaped skills — `flow_status` (backlog
+telemetry + rebalance recommendation in one answer) and `release_next_work`
+(the single state-changing delegation; `WorkReleased` still travels through
+the transactional outbox to Kafka). Skills answer from this context's own
+state; A2A is a delegation channel, never a data-sync channel — facts between
+contexts still flow exclusively as CloudEvents.
+
+```sh
+helm upgrade --install wes charts/wes-work-planning \
+  --set database.url="postgres://..." \
+  --set a2a.enabled=true
+```
+
+An opt-in Kong route (`a2a.route.enabled=true`, host path
+`/api/a2/wes-work-planning` rewritten to `/`) exposes the agent — card
+included — through the API gateway; `warehouse-infra` owns the real
+parentRefs.
+
 ### Analytics config
 
 | Env var | Default | Purpose |
@@ -255,13 +280,14 @@ Fails with `400` if `plannedHeads > installedStations`.
 
 ### `POST /paths/{pathId}/work-units` — EnqueueWorkUnit
 
-Requires an `Idempotency-Key` header (ADR-0022): this is the one mutating
-endpoint that creates a genuinely new resource, so a retried request with
-the same key and the same body is guaranteed to return the identical
-response and create exactly one work unit, never a duplicate. A retry
-with the same key but a *different* body gets `422`
-(`idempotency-key-reused`); a missing header gets `400`
-(`idempotency-key-required`).
+Every `POST` in this API (`/charge`, `/plan`, `/work-units`, `/work-releases`,
+`/completions`) requires an `Idempotency-Key` header (1-128 printable ASCII,
+ADR-0022 / ADR-0047). The key is global: a retry with the same key and the
+same request (method + path + body) returns the identical stored answer with
+`Idempotency-Replayed: true` and has its effect once. The same key with a
+*different* request gets `409` (`idempotency-key-reused`); a missing header gets
+`400` (`idempotency-key-required`), a malformed one `400`
+(`idempotency-key-invalid`). `PUT` takes no key.
 
 ```sh
 curl -X POST localhost:8080/paths/pick-a/work-units \
@@ -270,22 +296,22 @@ curl -X POST localhost:8080/paths/pick-a/work-units \
   -d '{"workUnitId":"wu-1","cpt":"2026-08-21T12:00:00Z","reference":"order-line-1"}'
 ```
 
-### `POST /paths/{pathId}/release` — ReleaseNextWork
+### `POST /paths/{pathId}/work-releases` — ReleaseNextWork
 
 Applies the release policy: admits the pending work unit with the earliest
 (most urgent) CPT.
 
 ```sh
-curl -X POST localhost:8080/paths/pick-a/release
+curl -X POST localhost:8080/paths/pick-a/work-releases -H "Idempotency-Key: $(uuidgen)"
 ```
 
 Fails with `409` if the pool is empty or a release-fed pool is at its WIP
 limit.
 
-### `POST /work-units/{id}/complete` — RecordCompletion
+### `POST /work-units/{id}/completions` — RecordCompletion
 
 ```sh
-curl -X POST localhost:8080/work-units/wu-1/complete
+curl -X POST localhost:8080/work-units/wu-1/completions -H "Idempotency-Key: $(uuidgen)"
 ```
 
 Fails with `409` if the unit was never released, or already completed.
@@ -304,11 +330,16 @@ With the optional `cutoffAt` (RFC3339) it also returns
 `PathCapacityChanged` for that (path, CPT cutoff) pair — see
 [ADR-0018](docs/docs/adr/0018-path-capacity-changed.md).
 
-### `GET /paths/{pathId}/rebalance` — RebalanceDecision
+### `POST /paths/{pathId}/rebalance-decisions` — RebalanceDecision
 
 ```sh
-curl localhost:8080/paths/pick-a/rebalance
+curl -X POST localhost:8080/paths/pick-a/rebalance-decisions -H "Idempotency-Key: $(uuidgen)"
 ```
+
+Keyed POST with no body, answering `201` with the decision. The first execution
+publishes `PathThrottled` / `LaborReassignmentFlagged`; a replay of the same key
+returns the stored decision (`Idempotency-Replayed: true`) and publishes nothing,
+so send a new key for every new decision. The former `GET .../rebalance` is gone.
 
 Recommends `ThrottleUpstream` (flow-fed path over its alarm threshold) or
 `ReassignLabor` (release-fed path saturated at its WIP limit with backlog
@@ -332,7 +363,10 @@ curl "localhost:8080/work-units?reference=order-line-1"
 ```
 
 Every work unit ever enqueued with that `reference` (order-management's order
-id), as an array. Read-only; an unknown reference returns `200` with `[]`.
+id), keyset-paged: `{"items":[...],"nextCursor":"..."}`, ordered by `(cpt, id)`,
+`limit` 1-500 (default 100) and an opaque `cursor`; follow `nextCursor` until it
+is absent. Read-only; an unknown reference returns `200` with `{"items":[]}`.
+An undeclared query parameter is `400 unknown-query-parameter`.
 
 ### `GET /work-units/{id}` — GetWorkUnit
 
@@ -500,9 +534,9 @@ Topic `warehouse.work-planning.events`:
 The other domain events are published to the same topic with a
 `{"path_id", ...}` payload; no other service consumes them today.
 
-Set `EVENT_PUBLISHER=kafka` (and `KAFKA_BROKERS`) to publish here instead of
-the default `log` publisher; `internal/adapters/outbound/kafka` implements the
-same `ports.EventPublisher` interface the log publisher does.
+Events are always written to the transactional outbox and relayed here;
+`KAFKA_BROKERS` is mandatory and `EVENT_PUBLISHER` accepts only `kafka`
+(there is no log-only publisher, ADR-0044).
 
 ### Consumes
 
@@ -523,7 +557,7 @@ same `ports.EventPublisher` interface the log publisher does.
   `data.work_unit_id` is fed into `ApplyTaskCompleted`, which wraps the
   existing `RecordCompletion` use case (`RecordCompletionRequest.WorkUnitId`)
   with the atomic processed-event mark (ADR-0028), transitioning that work
-  unit from Released to Completed exactly as `POST /work-units/{id}/complete`
+  unit from Released to Completed exactly as `POST /work-units/{id}/completions`
   would. A `work_unit_id` this context never planned (e.g. a PACK task keyed
   by the order id) is an INFO-logged, processed skip.
 - Topic `warehouse.order-management.events`, event types `OrderAllocated` and
@@ -599,7 +633,7 @@ release it), then publish the completion event and re-query the unit:
 curl -X POST localhost:8080/paths/pick-a/work-units \
   -H 'Idempotency-Key: wu-1-attempt-1' \
   -d '{"workUnitId":"wu-1","cpt":"2026-08-21T23:00:00Z","reference":"ref-1"}'
-curl -X POST localhost:8080/paths/pick-a/release
+curl -X POST localhost:8080/paths/pick-a/work-releases -H "Idempotency-Key: $(uuidgen)"
 
 kubectl --context kind-warehouse -n warehouse-systems exec -i kafka-controller-0 -c kafka -- \
   kafka-console-producer.sh --bootstrap-server localhost:9092 --topic warehouse.fulfillment.events <<'EOF'
@@ -638,7 +672,7 @@ in-cluster Collector Service (`charts/wes-work-planning/values.yaml`, the
 **Traces**
 
 - One server span per HTTP request (`github.com/riandyrn/otelchi`), named
-  after the chi **route pattern** (`/paths/{pathId}/release`) rather than the
+  after the chi **route pattern** (`/paths/{pathId}/work-releases`) rather than the
   raw path, so span names stay low-cardinality.
 - A child span per database call (`github.com/exaring/otelpgx` as the pgx v5
   pool tracer), carrying the normalized SQL — parameter placeholders, never
@@ -668,7 +702,7 @@ Every record is JSON on stdout. Records emitted while a span is active carry
 that span's IDs, so logs join traces:
 
 ```json
-{"time":"...","level":"INFO","msg":"http request","method":"POST","route":"/paths/{pathId}/release","status":200,"trace_id":"21da85e3a34ce1fabc425b63dfb148c6","span_id":"3af54929e6a0094c"}
+{"time":"...","level":"INFO","msg":"http request","method":"POST","route":"/paths/{pathId}/work-releases","status":200,"trace_id":"21da85e3a34ce1fabc425b63dfb148c6","span_id":"3af54929e6a0094c"}
 ```
 
 The OTel SDK's own diagnostics are bridged onto the same logger at `debug`,
@@ -687,7 +721,7 @@ curl -X POST localhost:8080/paths/pick-a/work-units \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: wu-1-attempt-1' \
   -d '{"workUnitId":"wu-1","cpt":"2026-08-23T23:00:00Z","reference":"order-1"}'
-curl -X POST localhost:8080/paths/pick-a/release
+curl -X POST localhost:8080/paths/pick-a/work-releases -H "Idempotency-Key: $(uuidgen)"
 
 kafka-console-consumer.sh --bootstrap-server localhost:9092 \
   --topic warehouse.work-planning.events --property print.headers=true --from-beginning
@@ -710,6 +744,13 @@ failing-path unit test:
   limit is a hard invariant on release (`internal/domain/release/work_pool_test.go`).
   Concurrent writers are serialised by an optimistic `version` check on save
   plus a bounded retry ([ADR-0029](docs/docs/adr/0029-work-pool-optimistic-concurrency.md)).
+
+## Disclaimer
+
+This project is a domain-driven design study. It is not associated with,
+endorsed by or affiliated with any company, and it uses no company's code,
+data, logos or trademarks. All names, figures and examples are illustrative
+or synthetic.
 
 ## Documentation
 
@@ -742,8 +783,20 @@ Entry points (paths under [`docs/docs/`](./docs/docs)):
 | Use cases | [`ddd/use-cases.md`](./docs/docs/ddd/use-cases.md) |
 | Subdomain classification | [`ddd/subdomain-classification.md`](./docs/docs/ddd/subdomain-classification.md) |
 | MCP tools, resources, prompts | [`mcp/tools.md`](./docs/docs/mcp/tools.md) |
+| A2A agent card & skills | [`adr/0046-a2a-inbound-adapter.md`](./docs/docs/adr/0046-a2a-inbound-adapter.md) |
 | ADR index | [`adr/index.md`](./docs/docs/adr/index.md) |
 
+## Helm chart
+
+`charts/wes-work-planning` deploys the OLTP service with optional components behind
+values flags: the analytics projector and reports reader (`analytics.enabled`), the read-only MCP server (`mcp.enabled`) and the operator micro-frontend (`frontend.enabled`). Mandatory values are the Postgres secret and the Kafka
+broker list; the deployed consumer-group ids and mode flags come from
+`warehouse-infra`'s helm-values.
+
+The chart is linted in CI (`helm-lint`, `chart-tests`) and its invariants are
+asserted by the tests in `charts/wes-work-planning/tests/` — `render_test.sh`,
+`test_service_selectors.py` (every Service selects exactly one Deployment) and
+`test_kong_config.py`.
 ## Operator micro-frontend (`web/`)
 
 `web/` is `planning_mfe`, this context's Module Federation remote. It talks only to
@@ -792,3 +845,13 @@ python3 charts/wes-work-planning/tests/test_service_selectors.py
 
 which proves every Service selects exactly one Deployment — the OLTP Service
 must never select the frontend, analytics or MCP pods.
+
+## Architecture Decision Records
+
+The ADR index lives at [docs/docs/adr/index.md](docs/docs/adr/index.md) — 45 decisions, from the
+hexagonal layout to the CloudEvents-only envelope and the transactional
+outbox.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

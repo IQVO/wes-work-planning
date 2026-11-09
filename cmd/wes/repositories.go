@@ -30,9 +30,11 @@ type repositories struct {
 	inventoryViews ports.InventoryViewRepo
 	processedEvts  ports.ProcessedEventRepo
 	// relocations and slotPlans back ADR-0040's slot-plan relocation work:
-	// the same work-unit adapter answers the RELOCATE finders.
+	// the same work-unit adapter answers the RELOCATE finders. pickFaces
+	// backs ADR-0048's forward-pick-face lookup the same way.
 	relocations ports.RelocationWorkRepo
 	slotPlans   ports.SlotPlanRepo
+	pickFaces   ports.ForwardPickFaceLookup
 	pgPool      *pgxpool.Pool
 	uow         ports.UnitOfWork
 }
@@ -130,6 +132,7 @@ func postgresRepositories(databaseURL, migrationsDatabaseURL, migrationsPath str
 		processedEvts:  postgres.NewProcessedEventRepo(pool),
 		relocations:    workUnits,
 		slotPlans:      postgres.NewSlotPlanRepo(pool),
+		pickFaces:      workUnits,
 		pgPool:         pool,
 		uow:            postgres.NewUnitOfWork(pool),
 	}, nil

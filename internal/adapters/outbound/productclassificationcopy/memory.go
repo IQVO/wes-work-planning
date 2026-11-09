@@ -25,16 +25,19 @@ type memoryRow struct {
 type MemoryStore struct {
 	mu    sync.RWMutex
 	bySKU map[string]memoryRow
+	// packs is the pack-level copy keyed by GTIN (ADR-0045).
+	packs map[string]productclassificationview.PackLevelRecord
 }
 
 var (
 	_ ports.ProductClassificationLookup   = (*MemoryStore)(nil)
 	_ ports.ProductClassificationCopyRepo = (*MemoryStore)(nil)
+	_ ports.PackLevelCopyRepo             = (*MemoryStore)(nil)
 )
 
 // NewMemoryStore constructs an empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{bySKU: make(map[string]memoryRow)}
+	return &MemoryStore{bySKU: make(map[string]memoryRow), packs: make(map[string]productclassificationview.PackLevelRecord)}
 }
 
 // ApplyIfNewer implements ports.ProductClassificationCopyRepo.
@@ -59,15 +62,17 @@ func (s *MemoryStore) GetClassification(_ context.Context, sku string) (productc
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	row, ok := s.bySKU[sku]
-	if !ok {
-		return unknown(sku), nil
+	view := unknown(sku)
+	if ok {
+		view = productclassificationview.ProductClassificationView{
+			SKU:              sku,
+			HandlingTags:     slices.Clone(row.handlingTags),
+			TemperatureClass: row.temperatureClass,
+			Known:            true,
+		}
 	}
-	return productclassificationview.ProductClassificationView{
-		SKU:              sku,
-		HandlingTags:     slices.Clone(row.handlingTags),
-		TemperatureClass: row.temperatureClass,
-		Known:            true,
-	}, nil
+	s.attachPacks(&view)
+	return view, nil
 }
 
 // Version reports the stored version for sku (0 when absent). Test and

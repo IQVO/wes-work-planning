@@ -23,6 +23,17 @@ type problemDetails struct {
 type cptBucketDTO struct {
 	CPT      *time.Time `json:"cpt"`
 	Quantity *int       `json:"quantity"`
+	// SKU and PickUnit are the optional pack-aware estimate of ADR-0045:
+	// quantity stays EACHES; with a sku, the response also carries the
+	// handles (cases for pickUnit CASE), cube and weight the bucket stands
+	// for. Absent for a plain bucket.
+	SKU      string `json:"sku,omitempty"`
+	PickUnit string `json:"pickUnit,omitempty"`
+	// Handles / CubeMm3 / WeightG are response-only; CubeMm3 and WeightG are
+	// omitted when the pack level has no size on record.
+	Handles *int   `json:"handles,omitempty"`
+	CubeMm3 *int64 `json:"cubeMm3,omitempty"`
+	WeightG *int64 `json:"weightG,omitempty"`
 }
 
 type receiveChargeForecastRequestDTO struct {
@@ -52,6 +63,11 @@ type commitShiftPlanRequestDTO struct {
 	// default) skips the enrichment entirely.
 	FromLocationCode string `json:"fromLocationCode,omitempty"`
 	ToLocationCode   string `json:"toLocationCode,omitempty"`
+	// SKU and PickUnit (EACH | CASE, default EACH) are the optional
+	// pack-aware handle of ADR-0045: the plan records the load of one handle
+	// of that SKU and the response carries the travel estimate.
+	SKU      string `json:"sku,omitempty"`
+	PickUnit string `json:"pickUnit,omitempty"`
 }
 
 type shiftPlanResponseDTO struct {
@@ -69,6 +85,20 @@ type shiftPlanResponseDTO struct {
 	// discipline as WorkReleased's required_capabilities/fragile, ADR-0009).
 	TravelDistanceM         *float64 `json:"travelDistanceM,omitempty"`
 	TravelDistanceEstimated *bool    `json:"travelDistanceEstimated,omitempty"`
+	// Handle is the optional per-handle load of a pack-aware plan (ADR-0045),
+	// omitted when the request named no sku.
+	Handle *handleLoadDTO `json:"handle,omitempty"`
+}
+
+// handleLoadDTO is the load of ONE handle (a whole case for CASE) and the
+// travel estimate derived from it. WeightG / CubeMm3 are omitted when the
+// pack level has no size on record; CarryKgM only when the weight AND a travel
+// distance are known — never zero-filled.
+type handleLoadDTO struct {
+	PickUnit string   `json:"pickUnit"`
+	WeightG  *int64   `json:"weightG,omitempty"`
+	CubeMm3  *int64   `json:"cubeMm3,omitempty"`
+	CarryKgM *float64 `json:"carryKgM,omitempty"`
 }
 
 // enqueueWorkUnitRequestDTO carries cpt as a pointer so an omitted CPT —
@@ -95,6 +125,31 @@ type enqueueWorkUnitRequestDTO struct {
 	// (invalid-line-no) rather than silently becoming "unknown"; absent or
 	// null means unknown.
 	LineNo *int `json:"lineNo,omitempty"`
+	// Quantity (EACHES), PickUnit (EACH | CASE, default EACH) and FromBin
+	// make the unit a pack-aware pick (CASE_PICK / EACH_PICK, ADR-0045); they
+	// need sku. A CASE pick needs an active CASE level in the local pack copy
+	// and a whole number of cases.
+	Quantity *int   `json:"quantity,omitempty"`
+	PickUnit string `json:"pickUnit,omitempty"`
+	FromBin  string `json:"fromBin,omitempty"`
+	// CaseBreak makes the unit a BREAK_CASE (ADR-0045); it needs sku and
+	// excludes the pick members.
+	CaseBreak *caseBreakDTO `json:"caseBreak,omitempty"`
+}
+
+// caseBreakDTO is the sealed-case break of a BREAK_CASE unit.
+type caseBreakDTO struct {
+	LPN        string `json:"lpn"`
+	LooseBin   string `json:"looseBin"`
+	PickTaskId string `json:"pickTaskId"`
+}
+
+// pickDTO is the pick plan of a CASE_PICK / EACH_PICK unit as the work-unit
+// read shows it; quantity is in eaches.
+type pickDTO struct {
+	Quantity int    `json:"quantity"`
+	Unit     string `json:"unit"`
+	FromBin  string `json:"fromBin,omitempty"`
 }
 
 type workUnitResponseDTO struct {
@@ -120,6 +175,12 @@ type workUnitResponseDTO struct {
 	// Relocation is the slot-plan move of a RELOCATE unit (ADR-0040),
 	// omitted on every other unit.
 	Relocation *relocationDTO `json:"relocation,omitempty"`
+	// WorkKind is the pack-aware kind (CASE_PICK, EACH_PICK, BREAK_CASE,
+	// ADR-0045), omitted on every other unit.
+	WorkKind string `json:"workKind,omitempty"`
+	// Pick / CaseBreak are the pack-aware members, omitted on every other unit.
+	Pick      *pickDTO      `json:"pick,omitempty"`
+	CaseBreak *caseBreakDTO `json:"caseBreak,omitempty"`
 }
 
 // relocationDTO is one slot-plan move as the work-unit read shows it.

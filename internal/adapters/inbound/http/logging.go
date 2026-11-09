@@ -38,7 +38,7 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				"method", r.Method,
 				"path", sanitizeForLog(r.URL.Path),
 				"route", routePattern(r),
-				"status", ww.Status(),
+				statusKey, ww.Status(),
 				"duration_ms", time.Since(start).Milliseconds(),
 				"bytes", ww.BytesWritten(),
 				"request_id", middleware.GetReqID(r.Context()),
@@ -54,7 +54,7 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 }
 
 // routePattern returns the matched chi route template (e.g.
-// /paths/{pathId}/release) rather than the raw path, keeping the log field
+// /paths/{pathId}/work-releases) rather than the raw path, keeping the log field
 // low-cardinality and aligned with the span name otelchi produces. The
 // fallback for an unmatched request is sanitized too -- it never went
 // through a route's own value objects, so it's still attacker-controlled

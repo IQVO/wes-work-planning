@@ -30,7 +30,7 @@ fulfillment-execution never creates the task — and never announced on
 `warehouse.wes.analytics` — so the Release Throughput report silently
 undercounts. The reverse failure (Publish succeeds, then the HTTP response
 is lost) already existed too: with `EVENT_PUBLISHER=kafka` a broker
-outage turned every `POST /paths/{id}/release` into a 500 *after* the
+outage turned every `POST /paths/{id}/work-releases` into a 500 *after* the
 row had been committed, which is the worst of both worlds.
 
 process-path-management fixed the same problem first
@@ -159,7 +159,7 @@ Adopt the **transactional outbox**, in its **fan-out** form:
 **Positive**
 - No code path can persist a WorkUnit/pool/plan/forecast change without
   also persisting its events for both topics.
-- No broker dependency on the request path: `POST …/release` succeeds
+- No broker dependency on the request path: `POST …/work-releases` succeeds
   while Kafka is down; the events go out once it returns.
 - The direct and outbox paths share one `Encode`, so the analytics
   report and the integration consumers see byte-identical envelopes

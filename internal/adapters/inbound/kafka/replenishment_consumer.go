@@ -231,7 +231,7 @@ func isReplenishmentPoison(err error) bool {
 func (c *ReplenishmentConsumer) applyRequested(ctx context.Context, env ce.Event) error {
 	var data replenishmentRequestedData
 	if err := env.DataAs(&data); err != nil {
-		return fmt.Errorf("%w: %v", errBadReplenishmentPayload, err)
+		return fmt.Errorf("%w: %w", errBadReplenishmentPayload, err)
 	}
 	outcome, err := c.requested.Execute(ctx, usecases.ApplyReplenishmentRequestedRequest{
 		EventId:     env.ID(),
@@ -256,7 +256,7 @@ func (c *ReplenishmentConsumer) applyRequested(ctx context.Context, env ce.Event
 func (c *ReplenishmentConsumer) applyCancelled(ctx context.Context, env ce.Event) error {
 	var data replenishmentCancelledData
 	if err := env.DataAs(&data); err != nil {
-		return fmt.Errorf("%w: %v", errBadReplenishmentPayload, err)
+		return fmt.Errorf("%w: %w", errBadReplenishmentPayload, err)
 	}
 	outcome, err := c.cancelled.Execute(ctx, usecases.ApplyReplenishmentCancelledRequest{
 		EventId:    env.ID(),
@@ -278,11 +278,11 @@ func (c *ReplenishmentConsumer) applyCancelled(ctx context.Context, env ce.Event
 func (c *ReplenishmentConsumer) sendToDeadLetter(ctx context.Context, msg kafkago.Message, cause error) error {
 	headers := append([]kafkago.Header{}, msg.Headers...)
 	headers = append(headers,
-		kafkago.Header{Key: "x-dlq-source-topic", Value: []byte(c.topic)},
+		kafkago.Header{Key: hdrDLQSourceTopic, Value: []byte(c.topic)},
 		kafkago.Header{Key: "x-dlq-source-partition", Value: []byte(strconv.Itoa(msg.Partition))},
 		kafkago.Header{Key: "x-dlq-source-offset", Value: []byte(strconv.FormatInt(msg.Offset, 10))},
-		kafkago.Header{Key: "x-dlq-error", Value: []byte(cause.Error())},
-		kafkago.Header{Key: "x-dlq-failed-at", Value: []byte(time.Now().UTC().Format(time.RFC3339))},
+		kafkago.Header{Key: hdrDLQError, Value: []byte(cause.Error())},
+		kafkago.Header{Key: hdrDLQFailedAt, Value: []byte(time.Now().UTC().Format(time.RFC3339))},
 	)
 	return writeDLQ(ctx, c.dlq, kafkago.Message{Key: msg.Key, Value: msg.Value, Headers: headers})
 }

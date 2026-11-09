@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   configurePool,
+  decideRebalance,
+  fetchWorkUnitsByReference,
   newIdempotencyKey,
   receiveChargeForecast,
   toApiError,
@@ -178,5 +180,55 @@ describe("network failures and key minting", () => {
     vi.stubGlobal("crypto", { getRandomValues: realCrypto.getRandomValues.bind(realCrypto) });
     const key = newIdempotencyKey();
     expect(key).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+});
+
+describe("fetchWorkUnitsByReference", () => {
+  it("follows nextCursor until absent and returns every item", async () => {
+    const wu = (id: string) => ({ id });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { items: [wu("a"), wu("b")], nextCursor: "c1" }))
+      .mockResolvedValueOnce(jsonResponse(200, { items: [wu("c")] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rows = await fetchWorkUnitsByReference("order-1");
+
+    expect(rows.map((r) => r.id)).toEqual(["a", "b", "c"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe(`${WES_API_BASE}/work-units?reference=order-1&limit=500`);
+    expect(fetchMock.mock.calls[1][0]).toContain("cursor=c1");
+  });
+});
+
+describe("decideRebalance (POST /paths/{pathId}/rebalance-decisions)", () => {
+  it("POSTs with no body and a NEW Idempotency-Key on every call", async () => {
+    const decision = { pathId: "pick a", action: "ThrottleUpstream", backlogDepth: 340, wip: 0 };
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(201, decision));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await decideRebalance("pick a");
+    expect(first.action).toBe("ThrottleUpstream");
+    const call = lastCall();
+    expect(call.url).toBe(`${WES_API_BASE}/paths/pick%20a/rebalance-decisions`);
+    expect(call.init.method).toBe("POST");
+    expect(call.init.body).toBeUndefined();
+    const key1 = (call.init.headers as Record<string, string>)["Idempotency-Key"];
+    expect(key1).toBeTruthy();
+
+    await decideRebalance("pick a");
+    const key2 = (lastCall().init.headers as Record<string, string>)["Idempotency-Key"];
+    expect(key2).toBeTruthy();
+    expect(key2).not.toBe(key1);
+  });
+
+  it("surfaces a problem+json 404 as an ApiError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(404, { type: "https://errors.example/not-found", title: "Resource not found", status: 404 }),
+      ),
+    );
+    await expect(decideRebalance("nope")).rejects.toMatchObject({ status: 404, slug: "not-found" });
   });
 });

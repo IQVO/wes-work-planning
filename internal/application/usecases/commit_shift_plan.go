@@ -3,11 +3,15 @@ package usecases
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
+	"github.com/claudioed/wes-work-planning/internal/domain/pickload"
 	"github.com/claudioed/wes-work-planning/internal/domain/plan"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
+	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
 // CommitShiftPlan commits the rate x heads x hours split for a process path,
@@ -19,6 +23,7 @@ type CommitShiftPlan struct {
 	uow        ports.UnitOfWork
 	travelDist ports.TravelDistanceLookup
 	laborViews ports.LaborPlanViewRepo
+	packs      ports.ProductClassificationLookup
 }
 
 func NewCommitShiftPlan(plans ports.PlanRepo, publisher ports.EventPublisher, clock ports.Clock) *CommitShiftPlan {
@@ -52,6 +57,14 @@ func (uc *CommitShiftPlan) WithLaborPlanViews(v ports.LaborPlanViewRepo) *Commit
 	return uc
 }
 
+// WithPackLookup wires the local pack copy (ADR-0045) the pack-aware travel
+// estimate reads. Optional: without it a request that asks for the estimate
+// is refused.
+func (uc *CommitShiftPlan) WithPackLookup(l ports.ProductClassificationLookup) *CommitShiftPlan {
+	uc.packs = l
+	return uc
+}
+
 type CommitShiftPlanRequest struct {
 	PathId            shared.PathId
 	PlannedHeads      shared.StationCount
@@ -66,6 +79,13 @@ type CommitShiftPlanRequest struct {
 	// this is a caller-opt-in enrichment, not a required field.
 	FromLocationCode string
 	ToLocationCode   string
+	// SKU and PickUnit are the optional pack-aware handle of ADR-0045: the
+	// SKU this path's heads pick and how (default EACH). The plan then records
+	// the load of ONE handle (a whole case for CASE) from the local pack
+	// copy, from which the travel estimate (carry load over the travel
+	// distance) derives.
+	SKU      string
+	PickUnit workunit.PickUnit
 }
 
 func (uc *CommitShiftPlan) Execute(ctx context.Context, req CommitShiftPlanRequest) (*plan.ShiftPlan, error) {
@@ -75,6 +95,9 @@ func (uc *CommitShiftPlan) Execute(ctx context.Context, req CommitShiftPlanReque
 	}
 
 	uc.enrichWithTravelDistance(ctx, &pathPlan, req.FromLocationCode, req.ToLocationCode)
+	if err := uc.recordHandleLoad(ctx, &pathPlan, req); err != nil {
+		return nil, err
+	}
 
 	shiftPlan, err := plan.NewShiftPlan([]plan.PathPlan{pathPlan})
 	if err != nil {
@@ -144,4 +167,28 @@ func (uc *CommitShiftPlan) enrichWithTravelDistance(ctx context.Context, pathPla
 		return
 	}
 	pathPlan.SetTravelDistance(view.MetresM, view.Estimated)
+}
+
+// recordHandleLoad stamps the load of one handle on pathPlan when the request
+// names a SKU (ADR-0045). A CASE handle needs the SKU's active CASE level
+// (pickload.ErrNoActiveCaseLevel otherwise): the caller asked for a
+// case-based estimate and silently planning from eaches would understate it.
+func (uc *CommitShiftPlan) recordHandleLoad(ctx context.Context, pathPlan *plan.PathPlan, req CommitShiftPlanRequest) error {
+	sku := strings.TrimSpace(req.SKU)
+	if sku == "" {
+		if req.PickUnit != "" {
+			return fmt.Errorf("%w: pickUnit needs a sku", workunit.ErrInvalidPickPlan)
+		}
+		return nil
+	}
+	unit := req.PickUnit
+	if unit == "" {
+		unit = workunit.PickUnitEach
+	}
+	load, err := pickload.PerHandle(unit, productClassificationFor(ctx, uc.packs, sku))
+	if err != nil {
+		return err
+	}
+	pathPlan.SetHandleLoad(load)
+	return nil
 }

@@ -48,6 +48,12 @@ type WorkUnitRepo interface {
 	// reference; that mirrors FindByPathId's empty-collection semantics
 	// rather than FindById's single-resource semantics.
 	FindByReference(ctx context.Context, reference string) ([]*workunit.WorkUnit, error)
+	// FindByReferencePage is the keyset-paged form of FindByReference
+	// (REST guideline section 3): work units ordered by (cpt, id), strictly
+	// after `after` when non-nil, at most `limit` rows when limit > 0.
+	// Rows that share a CPT are separated by id, so no row is skipped or
+	// repeated across pages.
+	FindByReferencePage(ctx context.Context, reference string, after *workunit.Cursor, limit int) ([]*workunit.WorkUnit, error)
 }
 
 // RelocationWorkRepo reads the RELOCATE work units planned from approved
@@ -62,6 +68,21 @@ type RelocationWorkRepo interface {
 	// PendingBlockedBy returns every Pending work unit waiting on
 	// workUnitId (blocked_by = workUnitId). Empty slice when there is none.
 	PendingBlockedBy(ctx context.Context, workUnitId string) ([]*workunit.WorkUnit, error)
+}
+
+// ForwardPickFaceLookup reads the forward-pick faces of this context's
+// LOCAL copy of slotting-optimization's approved slot plans — the copy the
+// RELOCATE work units themselves are (ADR-0040/0048). It is an optional
+// enrichment port: a nil implementation on ReleaseNextWork means "derive
+// no pick face", and every lookup miss or error degrades to omitting
+// `pick.from_bin`, never to blocking a release.
+type ForwardPickFaceLookup interface {
+	// ForwardPickFaceBySKU returns sku's forward-pick face at siteId —
+	// the to_slot of its newest non-cancelled RELOCATE move, per the
+	// latest-approved slot plan recorded for it — or "" when the SKU has
+	// none at that site. An empty siteId matches any site (the fleet's
+	// single-building reality today).
+	ForwardPickFaceBySKU(ctx context.Context, siteId, sku string) (string, error)
 }
 
 // SlotPlanRepo records the approved slot plans this context has applied,

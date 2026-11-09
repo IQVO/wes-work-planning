@@ -73,3 +73,7 @@ it decides *when* work enters the floor and *in what order*.
   `ReservationRevoked`, `TaskCompleted`, `OrderAllocated`,
   `OrderPartiallyAllocated`, and — with `PATH_CATALOGUE_SOURCE=kafka` —
   process-path-management's catalogue events
+
+:::note[Disclaimer]
+This project is a domain-driven design study. It is not associated with, endorsed by or affiliated with any company, and it uses no company's code, data, logos or trademarks. All names, figures and examples are illustrative or synthetic.
+:::

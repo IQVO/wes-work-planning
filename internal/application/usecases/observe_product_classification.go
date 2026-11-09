@@ -72,7 +72,7 @@ func (o ProductClassificationOutcome) String() string {
 	case ProductClassificationRedelivered:
 		return "redelivered"
 	default:
-		return "unknown"
+		return unknownReason
 	}
 }
 

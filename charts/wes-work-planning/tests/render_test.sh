@@ -18,7 +18,8 @@ release=wes-work-planning
 base=(--set database.url=postgres://u@example.invalid:5432/db)
 everything=(--set analytics.enabled=true
   --set analytics.database.projectorUrl=postgres://projector@example.invalid:5432/a
-  --set mcp.enabled=true)
+  --set mcp.enabled=true
+  --set a2a.enabled=true)
 
 fail() {
   echo "FAIL: $*" >&2
@@ -64,7 +65,7 @@ grep -q 'RELOCATION_CPT_HORIZON: "6h"' <<<"$horizon" || fail "config.relocationC
 
 # The other workloads read their own explicit env and must NOT inherit the
 # api's HTTP_ADDR (reports would bind :8080) or anything else from it.
-for template in reports-deployment.yaml projector-deployment.yaml mcp-deployment.yaml; do
+for template in reports-deployment.yaml projector-deployment.yaml mcp-deployment.yaml a2a-deployment.yaml; do
   rendered="$(render "${everything[@]}" --show-only "templates/$template")"
   if grep -q 'configMapRef:' <<<"$rendered"; then
     fail "$template must not mount the api ConfigMap"
@@ -85,14 +86,17 @@ grep -q '^  KAFKA_BROKERS: "kafka:9092"' <<<"$configmap" || fail "the ConfigMap 
   || fail "PRODUCT_CLASSIFICATION_CONSUMER_GROUP is not rendered by default"
 [[ "$(env_value "$api_deployment" REPLENISHMENT_CONSUMER_GROUP)" == "wes-work-planning-replenishment" ]] \
   || fail "REPLENISHMENT_CONSUMER_GROUP is not rendered by default"
+[[ "$(env_value "$api_deployment" PACK_VIEW_CONSUMER_GROUP)" == "wes-work-planning-pack-view" ]] \
+  || fail "PACK_VIEW_CONSUMER_GROUP is not rendered by default"
 grep -A4 'name: DATABASE_URL$' <<<"$api_deployment" | grep -q 'secretKeyRef:' || fail "DATABASE_URL must come from a Secret (secretKeyRef)"
 if grep -qE '^  (MIGRATIONS_)?DATABASE_URL:' <<<"$configmap"; then fail "a DSN must never land in the ConfigMap"; fi
 
 tuned_groups="$(render --set config.consumerGroup=g1 --set config.productClassificationConsumerGroup=g2 \
-  --set config.replenishmentConsumerGroup=g3 --show-only templates/deployment.yaml)"
+  --set config.replenishmentConsumerGroup=g3 --set config.packViewConsumerGroup=g4 --show-only templates/deployment.yaml)"
 [[ "$(env_value "$tuned_groups" KAFKA_CONSUMER_GROUP)" == "g1" ]] || fail "config.consumerGroup is not rendered"
 [[ "$(env_value "$tuned_groups" PRODUCT_CLASSIFICATION_CONSUMER_GROUP)" == "g2" ]] || fail "config.productClassificationConsumerGroup is not rendered"
 [[ "$(env_value "$tuned_groups" REPLENISHMENT_CONSUMER_GROUP)" == "g3" ]] || fail "config.replenishmentConsumerGroup is not rendered"
+[[ "$(env_value "$tuned_groups" PACK_VIEW_CONSUMER_GROUP)" == "g4" ]] || fail "config.packViewConsumerGroup is not rendered"
 
 # No permissive / off / log value and no in-memory mention anywhere.
 if grep -qiE 'value: "?(permissive|off|log)"?$' <<<"$all_docs"; then fail "the render carries permissive/off/log, which the binaries reject at boot"; fi
@@ -104,9 +108,10 @@ if grep -qi 'in-memory' <<<"$all_docs"$'\n'"$notes"; then fail "the render menti
 # warehouse-infra values.
 infra=(--values "$chart_dir/tests/warehouse-infra-platform.yaml"
   --values "$chart_dir/tests/warehouse-infra-values.yaml"
-  --values "$chart_dir/tests/warehouse-infra-kind-resources.yaml")
+  --values "$chart_dir/tests/warehouse-infra-kind-resources.yaml"
+  --set a2a.enabled=true)
 infra_all="$(helm template "$release" "$chart_dir" "${infra[@]}")" || fail "the warehouse-infra values no longer render"
-for pair in "wes:deployment.yaml" "mcp:mcp-deployment.yaml" "wes-projector:projector-deployment.yaml" "wes-reports:reports-deployment.yaml"; do
+for pair in "wes:deployment.yaml" "mcp:mcp-deployment.yaml" "a2a:a2a-deployment.yaml" "wes-projector:projector-deployment.yaml" "wes-reports:reports-deployment.yaml"; do
   bin="${pair%%:*}"
   template="${pair##*:}"
   # shellcheck disable=SC2046
@@ -142,7 +147,12 @@ infra_proj="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only te
 infra_mcp="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/mcp-deployment.yaml)"
 [[ "$(env_value "$infra_mcp" EVENT_PUBLISHER)" == "kafka" ]] || fail "infra values: mcp EVENT_PUBLISHER"
 [[ "$(env_value "$infra_mcp" KAFKA_BROKERS)" == "kafka.warehouse-systems.svc.cluster.local:9092" ]] || fail "infra values: mcp KAFKA_BROKERS"
-for component in api mcp analytics-projector analytics-reports frontend; do
+infra_a2a="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/a2a-deployment.yaml)"
+[[ "$(env_value "$infra_a2a" EVENT_PUBLISHER)" == "kafka" ]] || fail "infra values: a2a EVENT_PUBLISHER"
+[[ "$(env_value "$infra_a2a" KAFKA_BROKERS)" == "kafka.warehouse-systems.svc.cluster.local:9092" ]] || fail "infra values: a2a KAFKA_BROKERS"
+[[ "$(env_value "$infra_a2a" A2A_AGENT_URL)" =~ ^http://wes-work-planning-a2a\.[a-z0-9.-]+\.svc\.cluster\.local:8093/$ ]] \
+  || fail "infra values: a2a A2A_AGENT_URL must default to the in-cluster Service DNS"
+for component in api mcp a2a analytics-projector analytics-reports frontend; do
   grep -q "app.kubernetes.io/component: $component" <<<"$infra_all" || fail "infra values: component $component not rendered"
 done
 
@@ -166,18 +176,23 @@ expect_refusal() {
 }
 expect_refusal "no database source" "database.url or database.existingSecret"
 expect_refusal "mcp without a database" "database.url or database.existingSecret" --set mcp.enabled=true
+expect_refusal "a2a without a database" "database.url or database.existingSecret" --set a2a.enabled=true
 expect_refusal "empty kafka.brokers" "kafka.brokers is required" "${base[@]}" --set kafka.brokers=
 expect_refusal "kafka.enabled=false" "kafka.enabled=false is not supported" "${base[@]}" --set kafka.enabled=false
 expect_refusal "empty consumer group" "config.consumerGroup is required" "${base[@]}" --set config.consumerGroup=
 expect_refusal "empty classification group" "config.productClassificationConsumerGroup is required" "${base[@]}" --set config.productClassificationConsumerGroup=
+expect_refusal "empty pack view group" "config.packViewConsumerGroup is required" "${base[@]}" --set config.packViewConsumerGroup=
 expect_refusal "empty replenishment group" "config.replenishmentConsumerGroup is required" "${base[@]}" --set config.replenishmentConsumerGroup=
 expect_refusal "log publisher" "config.eventPublisher" "${base[@]}" --set config.eventPublisher=log
 expect_refusal "log publisher on mcp" "mcp.eventPublisher" "${base[@]}" --set mcp.enabled=true --set mcp.eventPublisher=log
+expect_refusal "log publisher on a2a" "a2a.eventPublisher" "${base[@]}" --set a2a.enabled=true --set a2a.eventPublisher=log
 expect_refusal "EVENT_PUBLISHER=log in extraEnv" "EVENT_PUBLISHER" "${base[@]}" --set 'extraEnv[0].name=EVENT_PUBLISHER' --set 'extraEnv[0].value=log'
 expect_refusal "REPLENISHMENT_MODE=permissive in extraEnv" "REPLENISHMENT_MODE" "${base[@]}" --set 'extraEnv[0].name=REPLENISHMENT_MODE' --set 'extraEnv[0].value=permissive'
 expect_refusal "PRODUCT_CLASSIFICATION_MODE=off in extraEnv" "PRODUCT_CLASSIFICATION_MODE" "${base[@]}" --set 'extraEnv[0].name=PRODUCT_CLASSIFICATION_MODE' --set 'extraEnv[0].value=off'
 expect_refusal "PRODUCT_CLASSIFICATION_MODE=permissive in mcp.extraEnv" "mcp.extraEnv" "${base[@]}" --set mcp.enabled=true \
   --set 'mcp.extraEnv[0].name=PRODUCT_CLASSIFICATION_MODE' --set 'mcp.extraEnv[0].value=permissive'
+expect_refusal "PRODUCT_CLASSIFICATION_MODE=permissive in a2a.extraEnv" "a2a.extraEnv" "${base[@]}" --set a2a.enabled=true \
+  --set 'a2a.extraEnv[0].name=PRODUCT_CLASSIFICATION_MODE' --set 'a2a.extraEnv[0].value=permissive'
 expect_refusal "grace period under 20" "terminationGracePeriodSeconds" "${base[@]}" --set terminationGracePeriodSeconds=10
 
 # A legacy kafka.enabled: true is tolerated.

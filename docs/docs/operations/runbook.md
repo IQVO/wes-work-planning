@@ -16,14 +16,15 @@ symptoms and fixes see [Troubleshooting](./troubleshooting.md).
 
 The Helm chart is **`wes-work-planning`** (`charts/wes-work-planning`,
 `Chart.yaml` version `0.1.0`; the CI `release` job packages it with the
-release tag on every push to `main`). One image contains all four binaries
-(`/app/wes`, `/app/mcp`, `/app/wes-projector`, `/app/wes-reports`) plus
+release tag on every push to `main`). One image contains all five binaries
+(`/app/wes`, `/app/mcp`, `/app/wes-projector`, `/app/wes-reports`, `/app/a2a`) plus
 `/app/migrations`; each Deployment picks its binary with `command:`.
 
 | Deployment (component label) | Binary | Enabled by | Container port | Service | Probes |
 |---|---|---|---|---|---|
 | `<release>` (`api`) | `cmd/wes` (image entrypoint) | always | `http` 8080 (`service.targetPort`) | `<release>` ClusterIP, port 80 → `http` | startup `/healthz` (every 2 s, 30 failures = 60 s), liveness `/healthz` (5 s delay, every 10 s), **readiness `/readyz`** (3 s delay, every 5 s) |
 | `<release>-mcp` (`mcp`) | `/app/mcp` | `mcp.enabled` | `http` 8090 | `<release>-mcp` ClusterIP, port 8090 → `http` | startup / liveness / readiness all `/healthz` |
+| `<release>-a2a` (`a2a`) | `/app/a2a` | `a2a.enabled` | `http` 8093 (`a2a.service.targetPort`) | `<release>-a2a` ClusterIP, port 8093 → `http` | startup / liveness / readiness all `/healthz` |
 | projector (`analytics-projector`) | `/app/wes-projector` | `analytics.enabled` | `admin` 8091 | none | startup / liveness / readiness all `/healthz` on `admin` |
 | reports (`analytics-reports`) | `/app/wes-reports` | `analytics.enabled` | `http` 8092 | ClusterIP, port 80 → `http` | startup / liveness / readiness all `/healthz` |
 | frontend (`frontend`) | nginx-unprivileged serving `web/` | `frontend.enabled` | 8080 | ClusterIP, port 80 | — (static assets) |
@@ -63,12 +64,12 @@ the startup probe (60 s budget) is what covers boot. Once the listener is up,
 3. **Repositories** (`cmd/wes/repositories.go`): run golang-migrate against
    `MIGRATIONS_DATABASE_URL` (boot retry inside a 60 s context), open the
    pgxpool against `DATABASE_URL`, then ping it (boot retry).
-4. **Classification** and **replenishment** wiring (both consumers are always
-   on; each needs its group).
+4. **Classification**, **replenishment** and **pack-level** wiring (all three
+   consumers are always on; each needs its group).
 5. **Event publisher**: the Kafka outbox encoders plus the relay.
 6. **Serve**: HTTP listener, outbox relay goroutine, housekeeper goroutine,
-   integration consumer, `ProductClassified` consumer and replenishment
-   consumer. A relay or consumer that dies on its own ends the process with a
+   integration consumer, `ProductClassified` consumer, replenishment
+   consumer and pack-level consumer. A relay or consumer that dies on its own ends the process with a
    non-zero exit so the pod restarts.
 
 `GET /healthz` always answers `200 {"status":"ok"}` (liveness only).
@@ -138,7 +139,7 @@ structured-mode event ([ADR-0027](../adr/0027-cloudevents-mandatory-event-envelo
 |---|---|---|---|
 | `warehouse.work-planning.events` | `cmd/wes` (relay), `cmd/mcp` (outbox rows) | all 11 domain events, `dataschema urn:warehouse:wes-work-planning:events:<Event>:v1` | aggregate id (work-unit id or path id), `Hash` balancer ([ADR-0024](../adr/0024-kafka-hash-balancer-partition-affinity.md)) |
 | `warehouse.wes.analytics` | same | the same 11 events, analytics payloads ([ADR-0011](../adr/0011-analytical-data-product.md)) | aggregate id |
-| `<consumed-topic>.dlq` | `cmd/wes` integration consumer | raw poison message + `x-dlq-source-topic`, `x-dlq-error`, `x-dlq-failed-at` headers | original key |
+| `<consumed-topic>.dlq` | `cmd/wes` integration consumer and pack-level consumer | raw poison message + `x-dlq-source-topic`, `x-dlq-error`, `x-dlq-failed-at` headers | original key |
 
 Writers use `RequiredAcks=all` and a 10 ms `BatchTimeout`.
 
@@ -154,6 +155,7 @@ Writers use `RequiredAcks=all` and a 10 ms `BatchTimeout`.
 | `warehouse.slotting-optimization.events` | `SlotPlanApproved` (`SlotPlanGenerated`/`SlotPlanRejected` ignored) | `cmd/wes` | same | earliest | same; a malformed plan, unknown move kind or a RELOCATE intake without `SLOT_RELOCATION` → `.dlq` after the retries ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) |
 | `warehouse.pick-face-replenishment.events` | `ReplenishmentRequested`, `ReplenishmentCancelled` (`ReplenishmentCompleted` ignored) | `cmd/wes` (always on) | `REPLENISHMENT_CONSUMER_GROUP` | earliest | invalid CloudEvent → WARN + commit past; a broken request (blank bin, quantity < 1, equal bins, unknown priority, missing `site_id`/`requested_at`) → `.dlq` at once; any other failure → retried, then `.dlq`; an unknown `REPLENISH` path → `.dlq` ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) |
 | `warehouse.product-master.events` | `ProductClassified` | `cmd/wes` (always on) | `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | earliest | invalid → WARN + commit past; transient → retried forever (200 ms → 5 s), never committed until applied |
+| `warehouse.product-master.events` | `ProductPackLevelDeclared`, `ProductPackLevelRetired`, `ProductPackLevelMeasured` | `cmd/wes` (always on) | `PACK_VIEW_CONSUMER_GROUP` (must differ from the classification group) | earliest | invalid CloudEvent → WARN + commit past; an undecodable or invalid payload (GTIN not 14 digits, unknown level, zero dimension, `version < 1`) → `.dlq` at once; transient → retried forever (200 ms → 5 s) ([ADR-0045](../adr/0045-pack-aware-work-units.md)) |
 | `warehouse.process-path-management.events` | `ProcessPathCreated`, `ProcessPathUpdated`, `ProcessPathDeactivated` | `cmd/wes` (`PATH_CATALOGUE_SOURCE=kafka`) | per-process `wes-work-planning-process-path-catalogue-<host>-<pid>-<nanos>` | earliest (full replay every boot) | WARN + skip |
 | `warehouse.wes.analytics` | `WorkReleased`, `WorkUnitCompleted`, `BacklogThresholdBreached`, `PathThrottled`, `RateDeviationDetected` (others acknowledged) | `cmd/wes-projector` | `wes-analytics` | earliest | `ReadMessage` commits first; an invalid CloudEvent is WARN-skipped, a handling error is logged at ERROR and the loop moves on |
 

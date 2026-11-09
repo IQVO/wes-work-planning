@@ -61,12 +61,16 @@ unit dimensions and weight). It calls no sibling service.
 | Publishes | `ProductRegistered`, `ProductDescriptionChanged`, `ProductClassified`, `ProductDimensionsDeclared`, `ProductMeasured` on `warehouse.product-master.events` (CloudEvents `com.warehouse.wms.product-master.product.*`, key and `subject` = the SKU) |
 
 **Relationship to this service:** upstream, Published Language into a local
-copy. With `PRODUCT_CLASSIFICATION_MODE=kafka` we consume only
+copy. With `PRODUCT_CLASSIFICATION_MODE=kafka` we consume
 `ProductClassified` (stable group `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`)
 into `product_classification_copy`, applying a message only when its
 `version` is newer than the stored row, and read that copy once per
-`WorkReleased` to stamp the `hazmat`/`fragile` hints. We never call it
-([ADR-0035](../adr/0035-product-classification-local-copy.md)).
+`WorkReleased` to stamp the `hazmat`/`fragile` hints. A second consumer
+(stable group `PACK_VIEW_CONSUMER_GROUP`) reads `ProductPackLevelDeclared`,
+`ProductPackLevelRetired` and `ProductPackLevelMeasured` into
+`product_pack_level_copy`; every other type on the topic is ignored. We never
+call it ([ADR-0035](../adr/0035-product-classification-local-copy.md),
+[ADR-0045](../adr/0045-pack-aware-work-units.md)).
 
 ---
 

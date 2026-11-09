@@ -121,9 +121,11 @@ envelope — is published raw to `<topic>.dlq` and committed past without
 retries (the catalogue and product-classification consumers log WARN and skip
 instead). Nothing ever parses a legacy shape.
 
-Two more consumers run in the same process, each with its own group: the
+Three more consumers run in the same process, each with its own group: the
 `ProductClassified` consumer when `PRODUCT_CLASSIFICATION_MODE=kafka` (see
-[below](#warehouseproduct-masterevents--productclassified)) and, with
+[below](#warehouseproduct-masterevents--productclassified)), the pack-level
+consumer on the same topic (see
+[below](#warehouseproduct-masterevents--pack-levels)) and, with
 `PATH_CATALOGUE_SOURCE=kafka`, the catalogue replay of process-path-management's
 topic (see
 [below](#warehouseprocess-path-managementevents--the-process-path-catalogue)).
@@ -412,6 +414,43 @@ offset is committed only after success.
 the same table (it never runs this consumer), so `WorkReleased` raised
 through MCP carries the same hints.
 
+### `warehouse.product-master.events` — pack levels
+
+Three more types on the same topic feed this context's local copy of
+product-master's pack levels, `product_pack_level_copy`, keyed by 14-digit GTIN
+([ADR-0045](../adr/0045-pack-aware-work-units.md)). A **separate** consumer
+(`PackLevelConsumer`, `internal/adapters/inbound/kafka/pack_level_consumer.go`)
+reads them under its own stable group `PACK_VIEW_CONSUMER_GROUP`, which must
+differ from `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`: the classification group
+has already committed past the pack events and could never replay them, while a
+new group starts at the earliest offset so the copy fills from history. It is
+always on. Every other type on the topic (`ProductClassified`,
+`ProductRegistered`, ...) is committed past untouched.
+
+| Full CloudEvents type | `data` members the consumer reads | Effect on `product_pack_level_copy` |
+|---|---|---|
+| `com.warehouse.wms.product-master.product.ProductPackLevelDeclared` | `sku`, `level` (`EACH`, `INNER`, `CASE`, `PALLET`), `gtin`, `child_gtin`?, `qty_of_child`?, `units_per_pack` (>= 1), `dims`? (`length_mm`, `width_mm`, `height_mm`, `weight_g`, each >= 1), `is_orderable`, `is_despatch_unit`, `effective_from`, `version` (>= 1) | Inserts the level, or overwrites it only when the incoming `version` is greater; a re-declaration keeps the stored measurement. |
+| `com.warehouse.wms.product-master.product.ProductPackLevelRetired` | `sku`, `level`, `gtin`, `effective_to`, `reason`, `version` (>= 1) | End-dates the level (`effective_to`) when the incoming `version` is greater; the GTIN row stays. No row for the GTIN is a no-op. |
+| `com.warehouse.wms.product-master.product.ProductPackLevelMeasured` | `sku`, `level`, `gtin`, `dims` (all four members >= 1), `measured_at`, `version` (>= 1) | Stores the measured dimensions in the `measured_*` columns when the incoming `version` is greater. No row for the GTIN is a no-op. |
+
+`ObservePackLevel` claims the CloudEvents `id` in `processed_events` and runs
+the version-guarded write in one transaction. The copy is what the SKU's
+`EACH` and `CASE` pack facts are read from by `EnqueueWorkUnit` (to verify a
+CASE pick), `CommitShiftPlan` (pack-aware travel estimate) and
+`ReceiveChargeForecast` (pack-aware charge estimate); the dimensions used are
+the measured ones when a measurement exists, else the declared ones.
+
+Failure behaviour: a message that is not a valid CloudEvent is logged at WARN
+and committed past. A handled type whose `data` is undecodable or invalid (a
+GTIN that is not 14 digits, a level outside the four, a missing or zero
+dimension, `version < 1`, no `effective_from` / `effective_to`) is poison: the
+raw message goes to `warehouse.product-master.events.dlq` with the
+`x-dlq-source-topic`, `x-dlq-source-partition`, `x-dlq-source-offset`,
+`x-dlq-error` and `x-dlq-failed-at` headers and the offset is committed. Any
+other error is transient: the **same** message is retried with backoff (200 ms
+doubling to 5 s) until it succeeds or the process stops, and the offset is
+committed only after success.
+
 ### `warehouse.process-path-management.events` — the process-path catalogue
 
 Consumed only when `PATH_CATALOGUE_SOURCE=kafka` (the default `file` source
@@ -493,6 +532,7 @@ the REST complete endpoint.
 | `EVENT_PUBLISHER` | `kafka` | Kept for the chart and infra; `kafka` is the only value (`log` is a boot error). |
 | `PATH_CATALOGUE_SOURCE` | `file` | `kafka` replays `warehouse.process-path-management.events` into the catalogue; requires `KAFKA_BROKERS`. |
 | `PRODUCT_CLASSIFICATION_MODE` / `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | `kafka` / **required** | The `ProductClassified` consumer always runs under that group; `permissive`/`off` are boot errors. |
+| `PACK_VIEW_CONSUMER_GROUP` | **required** | The pack-level consumer (`ProductPackLevelDeclared` / `Retired` / `Measured`) always runs under that group; it must differ from `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`. |
 | `REPLENISHMENT_MODE` / `REPLENISHMENT_CONSUMER_GROUP` | `kafka` / **required** | The replenishment consumer always runs under that group; `permissive`/`off` are boot errors. |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | Idle sleep of the outbox relay (always on). |
 

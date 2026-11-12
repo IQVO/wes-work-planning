@@ -45,12 +45,15 @@ ADR 0044 but was frozen out of the allocation events.
    carries one** — the ADR-0033 transfer-only gate is dropped. A unit with
    no site omits the field (never an empty string), so every pre-0048
    payload of a site-less unit stays byte-identical.
-3. **Pick plans gain `from_bin` derived at release from the local
+3. **Pick plans gain `from_bin` derived at enqueue from the local
    `SlotPlanApproved` copy** (already consumed for RELOCATE, ADR-0040):
    the SKU's forward-pick face. This is a deliberate v1 approximation —
    real cluster picking walks forward-pick faces, so it is also the
    semantically right first source. A SKU with no forward-pick face omits
-   `from_bin` and its unit completes exactly as before.
+   `from_bin` and its unit completes exactly as before. (With PR #261's
+   options-only `WorkUnit` construction the derivation moved from release
+   time to enqueue time: the unit is immutable after construction, so the
+   face is resolved before `NewWorkUnit`.)
 4. **The pick object repeats `site_id`** so a pick consumer reads one
    object.
 

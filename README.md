@@ -577,6 +577,34 @@ Events are always written to the transactional outbox and relayed here;
   `warehouse.work-planning.events` remain the only observable signal of
   downstream progress, same as for every other `EnqueueWorkUnit` caller.
 
+- Topic `warehouse.network-inventory-planning.events`, event type
+  `WorkDemandReleased` — `data`: `{"demand_id","work_kind","transfer_ref",
+  "path_id","site_id","cpt","sku","quantity"}`, `work_kind` one of
+  `TRANSFER_PICK`, `TRANSFER_DISPATCH`, `TRANSFER_ARRIVAL`. `ApplyWorkDemandReleased`
+  validates `path_id` against the process-path catalogue and `work_kind` against
+  those legs, then calls `EnqueueWorkUnit` once with `work_unit_id = demand_id`;
+  a replay of the same demand is a benign no-op
+  ([ADR-0033](./docs/docs/adr/0033-transfer-work-demand-choreography.md)).
+- Topic `warehouse.slotting-optimization.events`, event type `SlotPlanApproved`
+  (`SlotPlanGenerated` and `SlotPlanRejected` are ignored).
+  `ApplySlotPlanApproved` plans one `RELOCATE` work unit per move on path
+  `RELOCATE` (id `<plan_id>-move-<move_seq>`), cancels the site's older plans'
+  unreleased moves, and holds a move that must wait for another move of the same
+  plan out of the pool until that move completes
+  ([ADR-0040](./docs/docs/adr/0040-slot-plan-relocation-work.md)).
+- Topic `warehouse.pick-face-replenishment.events`, event types
+  `ReplenishmentRequested` and `ReplenishmentCancelled` (`ReplenishmentCompleted`
+  is ignored). `ApplyReplenishmentRequested` plans one `REPLENISH` work unit per
+  request on path `REPLENISH` (id `replenish-<request_id>`);
+  `ApplyReplenishmentCancelled` cancels it while it is still Pending
+  ([ADR-0042](./docs/docs/adr/0042-pick-face-replenishment-work.md)).
+- Topic `warehouse.product-master.events`, event types `ProductClassified` and
+  `ProductPackLevelDeclared` / `ProductPackLevelRetired` /
+  `ProductPackLevelMeasured`. They create no work: `ObserveProductClassification`
+  and `ObservePackLevel` keep local copies that release and the pack-aware
+  estimates read ([ADR-0035](./docs/docs/adr/0035-product-classification-local-copy.md),
+  [ADR-0045](./docs/docs/adr/0045-pack-aware-work-units.md)).
+
 Setting `KAFKA_BROKERS` starts this consumer automatically, independent of
 `EVENT_PUBLISHER`, under the consumer group `KAFKA_CONSUMER_GROUP` (default
 `wes-work-planning`).
@@ -598,11 +626,14 @@ Kafka is at-least-once. Every consumed event's CloudEvents `id` is recorded
 in `processed_events` (Postgres) / an in-memory set in the SAME atomic scope
 as its effect ([ADR-0028](./docs/docs/adr/0028-processed-event-mark-atomic-with-handling.md));
 a redelivered `id` is skipped (and still acked) rather than re-applied, and a
-failed effect rolls the mark back so the retry re-applies it. All four
+failed effect rolls the mark back so the retry re-applies it. All ten
 inbound-event use cases share one helper, `onceAtomically`
 (`internal/application/usecases/apply_integration_event.go`):
 `ObserveLaborPlan`, `ObserveInventoryChange`, `ApplyTaskCompleted` (wraps
-`RecordCompletion`) and `ApplyOrderAllocated` (wraps `EnqueueWorkUnit`).
+`RecordCompletion`), `ObserveProductClassification`, `ObservePackLevel`,
+`ApplyOrderAllocated` and `ApplyWorkDemandReleased` (both wrap `EnqueueWorkUnit`),
+`ApplySlotPlanApproved`, `ApplyReplenishmentRequested` and
+`ApplyReplenishmentCancelled`.
 A handler error is retried in-process (3 attempts) and then dead-lettered to
 `<topic>.dlq`. `RecordCompletion`'s own domain-level double-complete
 rejection is a second, independent safety net, not a substitute for it.

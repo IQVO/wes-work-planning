@@ -11,9 +11,12 @@ description: The seven control-loop use cases of the Work Planning & Release bou
 The bounded context is built around **seven control-loop use cases**. They
 form a single closed control loop: plan → release → observe → correct.
 Alongside them sit read-only queries (`GetWorkUnitsByReference`,
-`GetWorkUnit`, `LaborPlanView`, `InventoryView`) and the four inbound-event
+`GetWorkUnit`, `LaborPlanView`, `InventoryView`) and the ten inbound-event
 use cases that apply other contexts' events (`ObserveLaborPlan`,
-`ObserveInventoryChange`, `ApplyTaskCompleted`, `ApplyOrderAllocated`), each
+`ObserveInventoryChange`, `ApplyTaskCompleted`, `ObserveProductClassification`,
+`ObservePackLevel`, and the five that plan or cancel work from upstream facts:
+`ApplyOrderAllocated`, `ApplyWorkDemandReleased`, `ApplySlotPlanApproved`,
+`ApplyReplenishmentRequested`, `ApplyReplenishmentCancelled`), each
 idempotent via one atomic processed-event mark
 ([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)).
 

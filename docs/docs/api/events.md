@@ -207,6 +207,36 @@ the atomic processed-event mark around exactly the same code path that
 | `com.warehouse.wes.order-management.order.OrderAllocated` | `order_id`, `promise_date`, `lines[]` (`line_no`, `sku`, `path_id`, `gift_wrap`) | `ApplyOrderAllocated`: every line's `path_id` is validated against the catalogue first, then one `EnqueueWorkUnit` per line with id `{order_id}-line-{line_no}` and CPT = `promise_date`; an already-enqueued line is a benign no-op ([ADR-0031](../adr/0031-order-allocated-choreography.md)) |
 | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | same shape | same effect |
 
+### `warehouse.network-inventory-planning.events` — from `network-inventory-planning`
+
+| `type` | `data` | Effect here |
+|---|---|---|
+| `com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased` | `demand_id`, `work_kind` (`TRANSFER_PICK`, `TRANSFER_DISPATCH`, `TRANSFER_ARRIVAL`), `transfer_ref`, `path_id`, `site_id`, `cpt`, `sku`, `quantity` | `ApplyWorkDemandReleased`: `path_id` is validated against the catalogue and `work_kind` against the transfer legs, then one `EnqueueWorkUnit` with id = `demand_id`; a different event carrying an already-enqueued `demand_id` is a benign no-op ([ADR-0033](../adr/0033-transfer-work-demand-choreography.md)) |
+
+### `warehouse.slotting-optimization.events` — from `slotting-optimization`
+
+| `type` | `data` | Effect here |
+|---|---|---|
+| `com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved` | `plan_id`, `site_id`, `approved_at`, `supersedes_plan_id`?, `moves[]` (`sku`, `kind`, `from_slot`?, `to_slot`?) | `ApplySlotPlanApproved`: one `RELOCATE` work unit per move on path `RELOCATE` (id `<plan_id>-move-<move_seq>`); the site's older plans' unreleased moves are cancelled, and a move into a slot another move of the plan vacates waits for it ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)). Other types on the topic (`SlotPlanGenerated`, `SlotPlanRejected`) are ignored |
+
+### `warehouse.pick-face-replenishment.events` — from `pick-face-replenishment`
+
+| `type` | `data` | Effect here |
+|---|---|---|
+| `com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested` | `request_id`, `site_id`, `sku`, `forward_bin`, `source_bin`, `quantity`, `priority` (`NORMAL`, `URGENT`), `requested_at` | `ApplyReplenishmentRequested`: one `REPLENISH` work unit per request on path `REPLENISH` (id `replenish-<request_id>`), CPT = `requested_at` plus the priority's horizon; a second event for the same request is a no-op ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) |
+| `com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled` | `request_id`, `reason` | `ApplyReplenishmentCancelled`: cancels the unit and withdraws its pool entry while it is still Pending; released or completed work runs to completion. `ReplenishmentCompleted` is ignored |
+
+### `warehouse.product-master.events` — pack levels (ADR-0045)
+
+`com.warehouse.wms.product-master.product.ProductPackLevelDeclared`,
+`...ProductPackLevelRetired` and `...ProductPackLevelMeasured` are applied by
+`ObservePackLevel` to a version-guarded local copy of the SKU's pack levels,
+keyed by GTIN, under its own consumer group `PACK_VIEW_CONSUMER_GROUP`
+([ADR-0045](../adr/0045-pack-aware-work-units.md)). They create no work: the
+copy backs the `CASE_PICK` check at enqueue time and the pack facts of the
+charge and travel estimates. Payloads are on the
+[Integration events](../ecosystem/integration-events.md) page.
+
 ### `warehouse.process-path-management.events` — from `process-path-management`
 
 With `PATH_CATALOGUE_SOURCE=kafka`, the catalogue cache replays

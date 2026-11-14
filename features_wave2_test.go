@@ -40,6 +40,10 @@ type inboundExtras struct {
 	// slotPlan is ADR-0040's SlotPlanApproved use case.
 	slotPlan  *usecases.ApplySlotPlanApproved
 	readiness *inboundhttp.Readiness
+	// slotPlanWith rebuilds the SlotPlanApproved use case over the SAME
+	// repositories but another process-path catalogue, so a scenario can
+	// change what the catalogue declares for RELOCATE (ADR-0040 §7).
+	slotPlanWith func(ports.PathCatalogue) *usecases.ApplySlotPlanApproved
 }
 
 // wireInboundExtras completes the production-shaped wiring: it declares the
@@ -73,11 +77,15 @@ func wireInboundExtras(
 	h.RecordCompletion = h.RecordCompletion.WithRelocationWork(relocations)
 
 	enqueue := usecases.NewEnqueueWorkUnit(workUnits, pools, publisher, clock)
+	slotPlans := memory.NewSlotPlanRepo()
 	return &inboundExtras{
+		slotPlanWith: func(c ports.PathCatalogue) *usecases.ApplySlotPlanApproved {
+			return usecases.NewApplySlotPlanApproved(workUnits, relocations, pools, slotPlans, processed, c, publisher, clock)
+		},
 		taskCompleted:  usecases.NewApplyTaskCompleted(usecases.NewRecordCompletion(workUnits, pools, publisher, clock).WithRelocationWork(relocations), processed),
 		orderAllocated: usecases.NewApplyOrderAllocated(enqueue, processed, catalogue),
 		workDemand:     usecases.NewApplyWorkDemandReleased(enqueue, processed, catalogue),
-		slotPlan:       usecases.NewApplySlotPlanApproved(workUnits, relocations, pools, memory.NewSlotPlanRepo(), processed, catalogue, publisher, clock),
+		slotPlan:       usecases.NewApplySlotPlanApproved(workUnits, relocations, pools, slotPlans, processed, catalogue, publisher, clock),
 		readiness:      readiness,
 	}
 }
@@ -576,7 +584,7 @@ func (s *wave2) probeReportsStatus(want string) error {
 
 // registerWave2Steps registers every wave-2 step definition on the scenario
 // context, sharing the world the original steps use.
-func registerWave2Steps(sc *godog.ScenarioContext, w *world) {
+func registerWave2Steps(sc *godog.ScenarioContext, w *world) *wave2 {
 	s := &wave2{w: w}
 
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
@@ -638,4 +646,5 @@ func registerWave2Steps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^the readiness probe is requested$`, func() error { return s.requestProbe("/readyz") })
 	sc.Step(`^the service begins graceful shutdown$`, s.beginGracefulShutdown)
 	sc.Step(`^the probe reports status "([^"]*)"$`, s.probeReportsStatus)
+	return s
 }

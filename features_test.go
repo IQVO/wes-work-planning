@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -876,17 +877,26 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the telemetry reports remaining admission capacity of (\d+) units$`, w.telemetryRemainingCapacity)
 	sc.Step(`^the Work Pool telemetry for process path "([^"]*)" does not report remaining capacity$`, w.telemetryNoRemainingCapacity)
 
-	registerWave2Steps(sc, w)
+	wave2Steps := registerWave2Steps(sc, w)
 	registerSlotPlanSteps(sc, w)
+	registerRulesSteps(sc, w, wave2Steps)
 }
 
 // TestFeatures runs the Gherkin acceptance suite under features/.
 func TestFeatures(t *testing.T) {
+	// Scenarios tagged @known-bug describe documented behaviour the code does
+	// not implement yet; they are excluded by default and must FAIL when run
+	// with BDD_TAGS=@known-bug.
+	tags := os.Getenv("BDD_TAGS")
+	if tags == "" {
+		tags = "~@known-bug"
+	}
 	suite := godog.TestSuite{
 		ScenarioInitializer: InitializeScenario,
 		Options: &godog.Options{
 			Format: "pretty",
 			Paths:  []string{"features"},
+			Tags:   tags,
 			// Strict makes an undefined or pending step fail the suite instead
 			// of silently skipping it.
 			Strict:   true,

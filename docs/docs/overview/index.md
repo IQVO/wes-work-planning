@@ -69,10 +69,14 @@ it decides *when* work enters the floor and *in what order*.
   fulfillment-execution) and `PathCapacityChanged` (consumed by
   order-management and network-fulfillment), plus nine further domain events
   (including `PathPlanDriftDetected`) with no consumer today; consumes
-  `ShiftPlanCommitted`, `StockReserved`,
-  `ReservationRevoked`, `TaskCompleted`, `OrderAllocated`,
-  `OrderPartiallyAllocated`, and — with `PATH_CATALOGUE_SOURCE=kafka` —
-  process-path-management's catalogue events
+  `ShiftPlanCommitted`, `StockReserved`, `ReservationRevoked`, `TaskCompleted`,
+  `OrderAllocated`, `OrderPartiallyAllocated`, `WorkDemandReleased`,
+  `SlotPlanApproved`, `ReplenishmentRequested`, `ReplenishmentCancelled`,
+  `ProductClassified`, `ProductPackLevelDeclared`, `ProductPackLevelRetired`,
+  `ProductPackLevelMeasured`, and — with `PATH_CATALOGUE_SOURCE=kafka` —
+  process-path-management's catalogue events. Work enters the `WorkPool` from
+  four sources: allocated orders (one work unit per order line), released
+  transfer demands, approved slot plans and replenishment requests
 
 :::note[Disclaimer]
 This project is a domain-driven design study. It is not associated with, endorsed by or affiliated with any company, and it uses no company's code, data, logos or trademarks. All names, figures and examples are illustrative or synthetic.

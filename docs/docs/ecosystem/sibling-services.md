@@ -8,9 +8,13 @@ description: What each warehouse-systems bounded context this service integrates
 
 # Sibling services
 
-The eight bounded contexts this service integrates with directly, summarised
-from each repository's own `CLAUDE.md` and adapter code. Each is an independent Go service with its own model, its own
-database and its own deployment lifecycle.
+Eight of the eleven bounded contexts this service integrates with directly,
+summarised from each repository's own `CLAUDE.md` and adapter code. Each is an independent Go service with its own model, its own
+database and its own deployment lifecycle. The other three,
+network-inventory-planning, slotting-optimization and pick-face-replenishment,
+each feed this service work by Kafka event and are covered on the
+[context map](./context-map.md) and in
+[Integration events](./integration-events.md).
 
 ---
 

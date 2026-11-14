@@ -11,7 +11,7 @@ description: Where this service sits among the warehouse-systems bounded context
 
 `warehouse-systems` is a fleet of Go services, each a bounded context with its
 own model, its own database and its own deployment lifecycle. This one is the
-WES tier's core — the conductor. This section covers the seven contexts this
+WES tier's core — the conductor. This section covers the eleven contexts this
 service integrates with directly; the others (labor-performance,
 warehouse-planning) have no edge to it, and warehouse-ops-agent and the
 warehouse-console shell only call its public REST/MCP API.
@@ -41,16 +41,22 @@ flowchart TB
         PPM["process-path-management<br/><i>Generic</i>"]
     end
     NF["network-fulfillment"]
+    NIP["network-inventory-planning"]
+    SO["slotting-optimization"]
+    PFR["pick-face-replenishment"]
 
     INV -->|"StockReserved<br/>ReservationRevoked"| WP
     WM -->|"ShiftPlanCommitted"| WP
     OM -->|"OrderAllocated<br/>OrderPartiallyAllocated"| WP
+    NIP -->|"WorkDemandReleased"| WP
+    SO -->|"SlotPlanApproved"| WP
+    PFR -->|"ReplenishmentRequested<br/>ReplenishmentCancelled"| WP
     PPM -->|"ProcessPath* catalogue<br/>(PATH_CATALOGUE_SOURCE=kafka)"| WP
     WP -->|"WorkReleased"| FE
     WP -->|"PathCapacityChanged"| OM
     WP -->|"PathCapacityChanged"| NF
     FE -->|"TaskCompleted"| WP
-    PM -->|"ProductClassified<br/>(local copy, ADR-0035)"| WP
+    PM -->|"ProductClassified<br/>ProductPackLevel*<br/>(local copies, ADR-0035, ADR-0045)"| WP
     WP -.->|"GET /distance"| FL
 
     style WP fill:#2e6da4,color:#ffffff,stroke:#1b4368,stroke-width:3px

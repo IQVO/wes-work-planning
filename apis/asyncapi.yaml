@@ -85,6 +85,13 @@ info:
     com.warehouse.wes.order-management.order.OrderAllocated
     com.warehouse.wes.order-management.order.OrderPartiallyAllocated
     com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased
+    com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved
+    com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested
+    com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled
+    com.warehouse.wms.product-master.product.ProductClassified
+    com.warehouse.wms.product-master.product.ProductPackLevelDeclared
+    com.warehouse.wms.product-master.product.ProductPackLevelRetired
+    com.warehouse.wms.product-master.product.ProductPackLevelMeasured
     com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
     com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated
     com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
@@ -118,7 +125,17 @@ info:
     classification copy, version-guarded, by a dedicated consumer under
     `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`; the copy is what the
     `WorkReleased` encoder reads for its hazmat/fragile hints — see
-    ADR-0035). All consumer paths are idempotent under
+    ADR-0035), `SlotPlanApproved` from slotting-optimization on
+    `warehouse.slotting-optimization.events` (one `RELOCATE` work unit per
+    move on path `RELOCATE`, older plans' unreleased moves cancelled — see
+    ADR-0040), `ReplenishmentRequested` and `ReplenishmentCancelled` from
+    pick-face-replenishment on `warehouse.pick-face-replenishment.events` (one
+    `REPLENISH` work unit per request on path `REPLENISH`, cancelled while
+    still Pending — see ADR-0042), and `ProductPackLevelDeclared`,
+    `ProductPackLevelRetired` and `ProductPackLevelMeasured` from
+    product-master on `warehouse.product-master.events` (applied to the local
+    pack-level copy under `PACK_VIEW_CONSUMER_GROUP` — see ADR-0045). All
+    consumer paths are idempotent under
     at-least-once redelivery: the CloudEvents `id` is recorded as processed
     in the SAME transaction as the event's effect (ADR-0028), so a failed
     attempt is retried and, once retries are exhausted, dead-lettered to

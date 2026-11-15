@@ -1,0 +1,955 @@
+asyncapi: 2.6.0
+
+info:
+  title: pick-face-replenishment Domain Events
+  version: "1.0.0"
+  contact:
+    name: pick-face-replenishment maintainers
+    url: https://github.com/IQVO/pick-face-replenishment
+    email: pick-face-replenishment@iqvo.example.com
+  license:
+    name: UNLICENSED
+  description: |
+    Event catalog for the **pick-face-replenishment** bounded context (WMS
+    subdomain): min/max replenishment of forward pick faces from reserve bins
+    (ADR 0001, ADR 0002).
+
+    **Published.** The `ReplenishmentRequest` aggregate raises three events,
+    published to `warehouse.pick-face-replenishment.events` through a
+    **transactional outbox**: the request row and its already-encoded events are
+    written in ONE database transaction and a relay drains them to Kafka
+    (at-least-once; the CloudEvents `id` is stored with the outbox row, so a retry
+    republishes the same `id`). `ReplenishmentRequested` is what wes-work-planning
+    turns into `REPLENISH` work; `ReplenishmentCompleted` and
+    `ReplenishmentCancelled` close the request. The same three types are mirrored
+    on `warehouse.pick-face-replenishment.analytics` (dataschema
+    `urn:warehouse:pick-face-replenishment:analytics:<EventName>:v1`), together
+    with `ReplenishmentPolicyDeclared`, which is analytics-only.
+
+    **Consumed (ADR 0003).** `BinStockLevelChanged` (producer change P1, built in
+    inventory-storage) and `StockRelocated` from inventory-storage, `SlotPlanApproved` from
+    slotting-optimization, and `ZoneRegistered`, `LocationSlotRegistered` and
+    `LocationSlotDecommissioned` from facility-layout. Each feeds a durable local
+    copy or closes a request (modes `INVENTORY_MODE`, `SLOTTING_MODE`,
+    `LAYOUT_MODE`, `PACK_LEVEL_MODE`: default and only accepted value `kafka`,
+    `permissive` is rejected at boot; consumer groups are required, from
+    `INVENTORY_CONSUMER_GROUP`, `SLOTTING_CONSUMER_GROUP`,
+    `LAYOUT_CONSUMER_GROUP`, `PACK_LEVEL_CONSUMER_GROUP`). A message that fails
+    deterministically, or after the bounded retries, is published to
+    `<topic>.dlq` with `x-dlq-*` headers. `ProductPackLevelDeclared` and
+    `ProductPackLevelRetired` from product-master are consumed as well. The consumed messages below are the producers' own
+    contracts, decoded independently here and never imported.
+
+    **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
+    header `content-type: application/cloudevents+json; charset=UTF-8`.
+    Optional W3C trace-context headers (`traceparent`, and `tracestate` /
+    `baggage` when present) carry the trace of the request that wrote the outbox
+    row; consumers may extract them, and must not require them.
+    `specversion`, `id`, `source` (`/warehouse/pick-face-replenishment`), `type`,
+    `subject` (the request id; `<site_id>/<sku>` for the policy event), `time`,
+    `datacontenttype` (`application/json`) and `dataschema`
+    (`urn:warehouse:pick-face-replenishment:<events|analytics>:<EventName>:v1`)
+    are all required. Kafka key = the subject. Type =
+    `com.warehouse.wms.pick-face-replenishment.<entity>.<EventName>`. A breaking
+    payload change is a new `.v2` type, never a mutation.
+
+servers:
+  production:
+    url: "{brokers}"
+    protocol: kafka
+    description: Fleet-shared Kafka broker (host supplied by the deployment environment).
+    variables:
+      brokers:
+        default: "kafka.warehouse-systems.internal:9092"
+
+defaultContentType: application/cloudevents+json
+
+tags:
+  - name: pick-face-replenishment
+    description: The pick-face-replenishment bounded context (WMS subdomain).
+  - name: replenishment
+    description: Events raised by the ReplenishmentRequest aggregate.
+  - name: policy
+    description: Events raised by the ReplenishmentPolicy aggregate.
+  - name: analytics
+    description: This service's own analytics stream and read side (ADR 0008).
+  - name: consumed
+    description: Events produced by sibling contexts that this service consumes (ADR 0003).
+
+channels:
+  warehouse.pick-face-replenishment.events:
+    description: |
+      This service's integration topic. Written by the outbox relay; key = request
+      id; every message carries the CloudEvents content-type header (plus the
+      optional W3C `traceparent` of the writing request). Dispatch on the full
+      `type`, ignore unknown types, dedupe on `id`.
+    subscribe:
+      operationId: receiveReplenishmentEvents
+      summary: Receive ReplenishmentRequest events.
+      description: |
+        Subscribe to replenishment requests and their outcome. Route on the full
+        `type` (`com.warehouse.wms.pick-face-replenishment.replenishment.<EventName>`).
+        `ReplenishmentRequested` is the only one that asks the floor to do
+        something; the other two are the request's final states.
+      tags:
+        - name: replenishment
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ReplenishmentRequested"
+          - $ref: "#/components/messages/ReplenishmentCompleted"
+          - $ref: "#/components/messages/ReplenishmentCancelled"
+
+  warehouse.pick-face-replenishment.analytics:
+    description: |
+      This service's own analytics stream (ADR 0008), written by the SAME
+      transactional outbox as the integration topic: every request event
+      appears here too, under the SAME CloudEvents id and `type`, with only the
+      `dataschema` stream segment different
+      (urn:warehouse:pick-face-replenishment:analytics:<EventName>:v1), plus the
+      analytics-only `ReplenishmentPolicyDeclared` (key and subject
+      `<site_id>/<sku>`). It is NOT an integration contract: the only consumer
+      is this service's cmd/pfr-projector (fixed group from
+      `ANALYTICS_CONSUMER_GROUP`), which folds the events into the analytical
+      database; its deterministic poison goes to
+      warehouse.pick-face-replenishment.analytics.dlq. Other contexts keep
+      reading warehouse.pick-face-replenishment.events.
+    subscribe:
+      operationId: receiveReplenishmentAnalytics
+      summary: Receive the analytics twin of every request event and the policy declaration.
+      description: |
+        Request payloads are byte-for-byte the integration payloads (ADR 0008
+        section 2); only the dataschema names the analytics stream.
+        `ReplenishmentPolicyDeclared` is raised each time a policy is declared
+        or changed, with the new version. Removing a policy raises no event of
+        its own; its open requests are cancelled with reason `POLICY_REMOVED`.
+      tags:
+        - name: analytics
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ReplenishmentRequestedAnalytics"
+          - $ref: "#/components/messages/ReplenishmentCompletedAnalytics"
+          - $ref: "#/components/messages/ReplenishmentCancelledAnalytics"
+          - $ref: "#/components/messages/ReplenishmentPolicyDeclared"
+
+  warehouse.product-master.events:
+    description: |
+      product-master's integration topic. Consumed for `ProductPackLevelDeclared`
+      and `ProductPackLevelRetired` (packaging view: the eaches factor per pack
+      level that min/max and request quantities are converted with), consumer
+      group from env `PACK_LEVEL_CONSUMER_GROUP` (when `PACK_LEVEL_MODE=kafka`).
+    publish:
+      operationId: applyProductMasterPackLevel
+      summary: Apply product-master pack-level facts to the local packaging copy.
+      description: |
+        Upserts the packaging view in one transaction with the CloudEvents `id`
+        claim; unknown types on the topic are skipped.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ProductPackLevelDeclared"
+          - $ref: "#/components/messages/ProductPackLevelRetired"
+
+  warehouse.inventory.events:
+    description: |
+      inventory-storage's integration topic. This service consumes
+      `BinStockLevelChanged` (key `<bin>:<sku>`, so one bin-and-SKU stream is
+      totally ordered) and `StockRelocated` (key `relocation_id`) under a stable
+      consumer group read from env `INVENTORY_CONSUMER_GROUP` when
+      `INVENTORY_MODE=kafka`. Every other type on the topic is ignored.
+    publish:
+      operationId: consumeInventoryStorageEvents
+      summary: Consume bin stock levels and relocations.
+      description: |
+        `BinStockLevelChanged` feeds the `bin_stock_levels` copy: the levels are
+        ABSOLUTE and a message is applied only when its `version` is greater than
+        the stored one for the bin and SKU. `StockRelocated` completes a request
+        only when `reason` is `REPLENISHMENT`, `source_ref` is a request id of
+        this service and the SKU and bins match; every other relocation is
+        ignored. The CloudEvents `id` claim and the effect commit in one
+        transaction; the offset is committed afterwards (ADR 0003).
+      tags:
+        - name: consumed
+      message:
+        oneOf:
+          - $ref: "#/components/messages/BinStockLevelChanged"
+          - $ref: "#/components/messages/StockRelocated"
+
+  warehouse.slotting-optimization.events:
+    description: |
+      slotting-optimization's integration topic. This service consumes ONLY
+      `SlotPlanApproved` (key and subject = the plan id) under a stable consumer
+      group read from env `SLOTTING_CONSUMER_GROUP` when `SLOTTING_MODE=kafka`.
+      Every other type is ignored.
+    publish:
+      operationId: consumeSlottingOptimizationEvents
+      summary: Consume the approved forward-slot map.
+      description: |
+        `assignments` is the FULL forward map of the site: replace the site's
+        `forward_assignments` copy wholesale from it. A request whose forward bin
+        no longer holds its SKU in the new map is cancelled with reason
+        `ASSIGNMENT_CHANGED`. The CloudEvents `id` claim and the effect commit in
+        one transaction.
+      tags:
+        - name: consumed
+      message:
+        $ref: "#/components/messages/SlotPlanApproved"
+
+  warehouse.facility.events:
+    description: |
+      facility-layout's integration topic. This service consumes `ZoneRegistered`
+      (key `zoneId`), `LocationSlotRegistered` and `LocationSlotDecommissioned`
+      (key `locationCode`) under a stable consumer group read from env
+      `LAYOUT_CONSUMER_GROUP` when `LAYOUT_MODE=kafka`. Every other type is
+      ignored.
+    publish:
+      operationId: consumeFacilityLayoutEvents
+      summary: Consume zones and location slots.
+      description: |
+        A location is joined to its zone through `zoneId` at detection time. A
+        reserve bin is a Storage location (absent `role` = Storage) in a zone
+        listed in `RESERVE_ZONE_CODES` (default `RSV`). Decommissioning removes
+        the location and is irreversible.
+      tags:
+        - name: consumed
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ZoneRegistered"
+          - $ref: "#/components/messages/LocationSlotRegistered"
+          - $ref: "#/components/messages/LocationSlotDecommissioned"
+
+components:
+  messages:
+    ReplenishmentRequested:
+      name: ReplenishmentRequested
+      title: Replenishment requested
+      summary: A forward pick face needs stock; move `quantity` units of the SKU from `source_bin` to `forward_bin`.
+      description: |
+        `type` = `com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested`;
+        subject and key = the request id. `priority` is `URGENT` when the pick face
+        had nothing available (`on_hand - reserved <= 0`) at detection, else
+        `NORMAL`. `policy_min` and `policy_max` are the policy values the request
+        was sized with.
+      contentType: application/cloudevents+json
+      tags:
+        - name: replenishment
+      payload:
+        $ref: "#/components/schemas/ReplenishmentRequestedEvent"
+      examples:
+        - name: requested
+          summary: 24 units of SKU-1 from a reserve bin to its forward bin.
+          payload:
+            specversion: "1.0"
+            id: "6f1d2c3b-4a5e-4b7c-8d9e-0a1b2c3d4e5f"
+            source: "/warehouse/pick-face-replenishment"
+            type: "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested"
+            subject: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+            time: "2026-10-17T09:30:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:pick-face-replenishment:events:ReplenishmentRequested:v1"
+            data:
+              request_id: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+              site_id: "WH1"
+              sku: "SKU-1"
+              forward_bin: "WH1-FWD-A01-01-01-A"
+              source_bin: "WH1-RSV-A07-03-02-B"
+              quantity: 24
+              priority: "NORMAL"
+              policy_min: 10
+              policy_max: 60
+              requested_at: "2026-10-17T09:30:00Z"
+
+    ReplenishmentCompleted:
+      x-no-consumer-reason: "ledger mirror of inventory-storage's StockRelocated; consumed on demand"
+      name: ReplenishmentCompleted
+      title: Replenishment completed
+      summary: The relocation of a request was recorded on the stock ledger.
+      description: |
+        `type` = `com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCompleted`;
+        subject and key = the request id. `quantity` is what inventory-storage's
+        `StockRelocated` moved, which can be less than the requested quantity.
+      contentType: application/cloudevents+json
+      tags:
+        - name: replenishment
+      payload:
+        $ref: "#/components/schemas/ReplenishmentCompletedEvent"
+      examples:
+        - name: completed
+          summary: The 24 requested units were moved.
+          payload:
+            specversion: "1.0"
+            id: "0b9a8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d"
+            source: "/warehouse/pick-face-replenishment"
+            type: "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCompleted"
+            subject: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+            time: "2026-10-17T10:05:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:pick-face-replenishment:events:ReplenishmentCompleted:v1"
+            data:
+              request_id: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+              site_id: "WH1"
+              sku: "SKU-1"
+              forward_bin: "WH1-FWD-A01-01-01-A"
+              source_bin: "WH1-RSV-A07-03-02-B"
+              quantity: 24
+              completed_at: "2026-10-17T10:05:00Z"
+
+    ReplenishmentCancelled:
+      name: ReplenishmentCancelled
+      title: Replenishment cancelled
+      summary: An open request was cancelled before its relocation was recorded.
+      description: |
+        `type` = `com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled`;
+        subject and key = the request id. `reason` is `OPERATOR`,
+        `ASSIGNMENT_CHANGED` (a newer approved slot plan no longer assigns the SKU
+        to the forward bin) or `POLICY_REMOVED`. Consumers cancel work they have
+        not yet released.
+      contentType: application/cloudevents+json
+      tags:
+        - name: replenishment
+      payload:
+        $ref: "#/components/schemas/ReplenishmentCancelledEvent"
+      examples:
+        - name: cancelled
+          summary: Cancelled because the slot plan moved the SKU to another forward bin.
+          payload:
+            specversion: "1.0"
+            id: "4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a"
+            source: "/warehouse/pick-face-replenishment"
+            type: "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled"
+            subject: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+            time: "2026-10-17T09:50:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:pick-face-replenishment:events:ReplenishmentCancelled:v1"
+            data:
+              request_id: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+              site_id: "WH1"
+              sku: "SKU-1"
+              reason: "ASSIGNMENT_CHANGED"
+              cancelled_at: "2026-10-17T09:50:00Z"
+
+    ReplenishmentPolicyDeclared:
+      name: ReplenishmentPolicyDeclared
+      title: Replenishment policy declared
+      summary: A min/max policy was declared or changed (analytics only).
+      description: |
+        `type` = `com.warehouse.wms.pick-face-replenishment.policy.ReplenishmentPolicyDeclared`;
+        subject and key = `<site_id>/<sku>`. Analytics topic only.
+      contentType: application/cloudevents+json
+      tags:
+        - name: policy
+      payload:
+        $ref: "#/components/schemas/ReplenishmentPolicyDeclaredEvent"
+      examples:
+        - name: declared
+          summary: SKU-1 at WH1 declared 10 to 60 in multiples of 6.
+          payload:
+            specversion: "1.0"
+            id: "2b1a0f9e-8d7c-4b6a-a594-837261504f3e"
+            source: "/warehouse/pick-face-replenishment"
+            type: "com.warehouse.wms.pick-face-replenishment.policy.ReplenishmentPolicyDeclared"
+            subject: "WH1/SKU-1"
+            time: "2026-10-17T09:00:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:pick-face-replenishment:analytics:ReplenishmentPolicyDeclared:v1"
+            data:
+              site_id: "WH1"
+              sku: "SKU-1"
+              min_qty: 10
+              max_qty: 60
+              multiple: 6
+              version: 1
+              declared_at: "2026-10-17T09:00:00Z"
+
+    ReplenishmentRequestedAnalytics:
+      name: ReplenishmentRequested
+      title: Replenishment requested (analytics twin)
+      summary: The analytics-stream twin of ReplenishmentRequested (ADR 0008).
+      description: "Same `type`, `id`, `subject`, key and payload as the integration message; `dataschema` = `urn:warehouse:pick-face-replenishment:analytics:ReplenishmentRequested:v1`. Consumed only by cmd/pfr-projector."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/ReplenishmentRequestedEvent"
+      examples:
+        - name: requested
+          summary: The analytics twin of the requested example above.
+          payload:
+            specversion: "1.0"
+            id: "6f1d2c3b-4a5e-4b7c-8d9e-0a1b2c3d4e5f"
+            source: "/warehouse/pick-face-replenishment"
+            type: "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested"
+            subject: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+            time: "2026-10-17T09:30:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:pick-face-replenishment:analytics:ReplenishmentRequested:v1"
+            data:
+              request_id: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+              site_id: "WH1"
+              sku: "SKU-1"
+              forward_bin: "WH1-FWD-A01-01-01-A"
+              source_bin: "WH1-RSV-A07-03-02-B"
+              quantity: 24
+              priority: "NORMAL"
+              policy_min: 10
+              policy_max: 60
+              requested_at: "2026-10-17T09:30:00Z"
+
+    ReplenishmentCompletedAnalytics:
+      name: ReplenishmentCompleted
+      title: Replenishment completed (analytics twin)
+      summary: The analytics-stream twin of ReplenishmentCompleted (ADR 0008).
+      description: "Same `type`, `id`, `subject`, key and payload as the integration message; `dataschema` = `urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCompleted:v1`. Consumed only by cmd/pfr-projector."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/ReplenishmentCompletedEvent"
+      examples:
+        - name: completed
+          summary: The analytics twin of the completed example above.
+          payload:
+            specversion: "1.0"
+            id: "0b9a8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d"
+            source: "/warehouse/pick-face-replenishment"
+            type: "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCompleted"
+            subject: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+            time: "2026-10-17T10:05:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCompleted:v1"
+            data:
+              request_id: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+              site_id: "WH1"
+              sku: "SKU-1"
+              forward_bin: "WH1-FWD-A01-01-01-A"
+              source_bin: "WH1-RSV-A07-03-02-B"
+              quantity: 24
+              completed_at: "2026-10-17T10:05:00Z"
+
+    ReplenishmentCancelledAnalytics:
+      name: ReplenishmentCancelled
+      title: Replenishment cancelled (analytics twin)
+      summary: The analytics-stream twin of ReplenishmentCancelled (ADR 0008).
+      description: "Same `type`, `id`, `subject`, key and payload as the integration message; `dataschema` = `urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCancelled:v1`. Consumed only by cmd/pfr-projector."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/ReplenishmentCancelledEvent"
+      examples:
+        - name: cancelled
+          summary: The analytics twin of the cancelled example above.
+          payload:
+            specversion: "1.0"
+            id: "4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a"
+            source: "/warehouse/pick-face-replenishment"
+            type: "com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled"
+            subject: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+            time: "2026-10-17T09:50:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:pick-face-replenishment:analytics:ReplenishmentCancelled:v1"
+            data:
+              request_id: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+              site_id: "WH1"
+              sku: "SKU-1"
+              reason: "ASSIGNMENT_CHANGED"
+              cancelled_at: "2026-10-17T09:50:00Z"
+
+    BinStockLevelChanged:
+      name: BinStockLevelChanged
+      title: BinStockLevelChanged (consumed, inventory-storage)
+      summary: The absolute on-hand and reserved level of one SKU in one bin changed.
+      description: |
+        Producer change P1 is built: inventory-storage publishes this type (its
+        ADR 0040). The contract was pinned here consumer-first.
+        `type` = `com.warehouse.wms.inventory-storage.stock.BinStockLevelChanged`,
+        source `/warehouse/inventory-storage`, dataschema
+        `urn:warehouse:inventory-storage:events:BinStockLevelChanged:v1`. Subject
+        and Kafka key = `<bin>:<sku>`. `on_hand` and `reserved` are ABSOLUTE
+        levels after the change, not deltas; `reserved` is the units of this bin
+        bound by active reservations. Keep the highest `version` per bin and SKU
+        and ignore lower ones. The consumer reads only `site_code`, `bin`, `sku`,
+        `on_hand`, `reserved` and `version`; `reason` is not read.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/BinStockLevelChangedEvent"
+      examples:
+        - name: afterPick
+          summary: A pick left 5 on hand, 3 reserved, in a forward bin.
+          payload:
+            specversion: "1.0"
+            id: "7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d"
+            source: "/warehouse/inventory-storage"
+            type: "com.warehouse.wms.inventory-storage.stock.BinStockLevelChanged"
+            subject: "WH1-FWD-A01-01-01-A:SKU-1"
+            time: "2026-10-17T09:29:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inventory-storage:events:BinStockLevelChanged:v1"
+            data:
+              site_code: "WH1"
+              bin: "WH1-FWD-A01-01-01-A"
+              sku: "SKU-1"
+              on_hand: 5
+              reserved: 3
+              version: 17
+              reason: "PICK"
+              occurred_at: "2026-10-17T09:29:00Z"
+
+    StockRelocated:
+      name: StockRelocated
+      title: StockRelocated (consumed, inventory-storage)
+      summary: A quantity of one SKU moved from one bin to another bin of the same site.
+      description: |
+        `type` = `com.warehouse.wms.inventory-storage.stock.StockRelocated`,
+        dataschema `urn:warehouse:inventory-storage:events:StockRelocated:v1`.
+        Subject and Kafka key = `relocation_id`. Restated from inventory-storage's
+        contract (its ADR 0039), never imported. Act only when `reason` is
+        `REPLENISHMENT`, a value inventory-storage added with producer change P4
+        (its ADR 0041; it also publishes `SLOTTING`, `CONSOLIDATION` and `MANUAL`);
+        ignore every other reason.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/StockRelocatedEvent"
+      examples:
+        - name: replenishmentFromATask
+          summary: 24 units of SKU-1 moved from a reserve bin to its forward bin for request repl-3b0e8d2a.
+          payload:
+            specversion: "1.0"
+            id: "3c9e1a52-7b4d-4e18-a6f2-5d0b8c7e9f21"
+            source: "/warehouse/inventory-storage"
+            type: "com.warehouse.wms.inventory-storage.stock.StockRelocated"
+            subject: "rel-77"
+            time: "2026-10-17T10:05:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inventory-storage:events:StockRelocated:v1"
+            data:
+              relocation_id: "rel-77"
+              site_code: "WH1"
+              sku: "SKU-1"
+              from_bin: "WH1-RSV-A07-03-02-B"
+              to_bin: "WH1-FWD-A01-01-01-A"
+              quantity: 24
+              reason: "REPLENISHMENT"
+              source_ref: "repl-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+              occurred_at: "2026-10-17T10:05:00Z"
+
+    SlotPlanApproved:
+      name: SlotPlanApproved
+      title: SlotPlanApproved (consumed, slotting-optimization)
+      summary: A slot plan was approved; it is now the site's forward-slot map.
+      description: |
+        `type` = `com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved`,
+        source `/warehouse/slotting-optimization`, dataschema
+        `urn:warehouse:slotting-optimization:events:SlotPlanApproved:v1`. Subject and
+        Kafka key = the plan id. `assignments` is the FULL map of the plan.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/SlotPlanApprovedEvent"
+      examples:
+        - name: approved
+          summary: Plan approved; SKU-1 and SKU-2 hold forward slots.
+          payload:
+            specversion: "1.0"
+            id: "5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d"
+            source: "/warehouse/slotting-optimization"
+            type: "com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved"
+            subject: "plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+            time: "2026-10-08T12:30:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:slotting-optimization:events:SlotPlanApproved:v1"
+            data:
+              plan_id: "plan-3b0e8d2a-7c41-4f6a-9d15-2a8b6c4e1f07"
+              site_id: "WH1"
+              approved_at: "2026-10-08T12:30:00Z"
+              assignments:
+                - { sku: "SKU-1", slot: "WH1-FWD-A01-01-01-A" }
+                - { sku: "SKU-2", slot: "WH1-FWD-A01-01-02-A" }
+              moves:
+                - { sku: "SKU-1", to_slot: "WH1-FWD-A01-01-01-A", kind: "Assign" }
+                - { sku: "SKU-2", to_slot: "WH1-FWD-A01-01-02-A", kind: "Assign" }
+
+    ZoneRegistered:
+      name: ZoneRegistered
+      title: ZoneRegistered (consumed, facility-layout)
+      summary: A behavioural zone was added inside a site's area.
+      description: |
+        `type` = `com.warehouse.wms.facility-layout.zone.ZoneRegistered`, source
+        `/warehouse/facility-layout`, dataschema
+        `urn:warehouse:facility-layout:events:ZoneRegistered:v1`. Subject and Kafka
+        key = `zoneId`. `data` also carries `eventName`, `eventType` and
+        `occurredAt`, which are ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ZoneRegisteredEvent"
+      examples:
+        - name: reserveZone
+          summary: An ambient, non-hazmat reserve zone.
+          payload:
+            specversion: "1.0"
+            id: "2b1a0f9e-8d7c-4b6a-a594-837261504f3f"
+            source: "/warehouse/facility-layout"
+            type: "com.warehouse.wms.facility-layout.zone.ZoneRegistered"
+            subject: "WH1-RSV-AMB"
+            time: "2026-09-01T08:00:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:facility-layout:events:ZoneRegistered:v1"
+            data:
+              eventName: "ZoneRegistered"
+              eventType: "com.warehouse.wms.facility-layout.zone.ZoneRegistered"
+              occurredAt: "2026-09-01T08:00:00Z"
+              zoneId: "WH1-RSV-AMB"
+              siteCode: "WH1"
+              areaCode: "RSV"
+              zoneCode: "RSV"
+              temperatureClass: "Ambient"
+              hazmat: false
+
+    LocationSlotRegistered:
+      name: LocationSlotRegistered
+      title: LocationSlotRegistered (consumed, facility-layout)
+      summary: A coded leaf slot now exists on the warehouse map.
+      description: |
+        `type` = `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered`,
+        dataschema `urn:warehouse:facility-layout:events:LocationSlotRegistered:v1`.
+        Subject and Kafka key = `locationCode`. An absent `role` means Storage.
+        `data` also carries `eventName`, `eventType` and `occurredAt`, which are
+        ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/LocationSlotRegisteredEvent"
+      examples:
+        - name: reserveSlot
+          summary: A reserve storage slot of 1.2 m3 and 800 kg.
+          payload:
+            specversion: "1.0"
+            id: "3c2b1a0f-9e8d-4c7b-a695-8372615a4f3d"
+            source: "/warehouse/facility-layout"
+            type: "com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered"
+            subject: "WH1-RSV-A07-03-02-B"
+            time: "2026-09-01T08:05:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:facility-layout:events:LocationSlotRegistered:v1"
+            data:
+              eventName: "LocationSlotRegistered"
+              eventType: "com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered"
+              occurredAt: "2026-09-01T08:05:00Z"
+              locationCode: "WH1-RSV-A07-03-02-B"
+              aisleId: "WH1-RSV-AMB-A07"
+              zoneId: "WH1-RSV-AMB"
+              locationType: "PalletBin"
+              role: "Storage"
+              maxWeightKg: 800
+              maxVolumeM3: 1.2
+
+    LocationSlotDecommissioned:
+      name: LocationSlotDecommissioned
+      title: LocationSlotDecommissioned (consumed, facility-layout)
+      summary: A coded slot was permanently retired.
+      description: |
+        `type` = `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned`,
+        dataschema `urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1`.
+        Subject and Kafka key = `locationCode`. Irreversible: the location is
+        removed from the local copy.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/LocationSlotDecommissionedEvent"
+      examples:
+        - name: decommissioned
+          summary: A reserve slot retired.
+          payload:
+            specversion: "1.0"
+            id: "1a0f9e8d-7c6b-4a5f-b493-726150493e2d"
+            source: "/warehouse/facility-layout"
+            type: "com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned"
+            subject: "WH1-RSV-A07-03-03-B"
+            time: "2026-10-01T08:00:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:facility-layout:events:LocationSlotDecommissioned:v1"
+            data:
+              eventName: "LocationSlotDecommissioned"
+              eventType: "com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned"
+              occurredAt: "2026-10-01T08:00:00Z"
+              locationCode: "WH1-RSV-A07-03-03-B"
+
+    ProductPackLevelDeclared:
+      name: ProductPackLevelDeclared
+      title: product-master ProductPackLevelDeclared (consumed)
+      summary: A pack level (EACH, INNER, CASE or PALLET) of a SKU was declared, or one of its mutable attributes changed.
+      description: |
+        `type` = `com.warehouse.wms.product-master.product.ProductPackLevelDeclared`,
+        source `/warehouse/product-master`, dataschema
+        `urn:warehouse:product-master:events:ProductPackLevelDeclared:v1`; subject and
+        key = the SKU. Produced by product-master; consumed into the local
+        packaging view (pack level -> eaches factor for case-level scans).
+        The keys are snake_case, exactly as product-master's encoder writes them
+        (`units_per_pack`, `effective_from`, `effective_to`).
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ProductPackLevelDeclaredEvent"
+    ProductPackLevelRetired:
+      name: ProductPackLevelRetired
+      title: product-master ProductPackLevelRetired (consumed)
+      summary: A pack level of a SKU was retired.
+      description: |
+        `type` = `com.warehouse.wms.product-master.product.ProductPackLevelRetired`,
+        source `/warehouse/product-master`, dataschema
+        `urn:warehouse:product-master:events:ProductPackLevelRetired:v1`; subject and
+        key = the SKU. Produced by product-master; consumed into the local
+        packaging view (retired levels are no longer valid scan targets).
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/ProductPackLevelRetiredEvent"
+  schemas:
+
+    ProductPackLevelDeclaredEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [sku, level, gtin, units_per_pack, effective_from, version]
+              properties:
+                sku: { type: string }
+                level: { type: string, enum: [EACH, INNER, CASE, PALLET] }
+                gtin: { type: string, pattern: '^[0-9]{14}$' }
+                child_gtin: { type: string, pattern: '^[0-9]{14}$' }
+                qty_of_child: { type: integer, minimum: 2, maximum: 1000000, description: Absent for EACH. }
+                units_per_pack: { type: integer, minimum: 1, maximum: 1000000, description: "Direct factor to eaches; 1 for EACH." }
+                is_orderable: { type: boolean }
+                is_despatch_unit: { type: boolean }
+                effective_from: { type: string, format: date-time }
+                version: { type: integer, minimum: 1 }
+    ProductPackLevelRetiredEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [sku, level, gtin, effective_to, version]
+              properties:
+                sku: { type: string }
+                level: { type: string, enum: [EACH, INNER, CASE, PALLET] }
+                gtin: { type: string, pattern: '^[0-9]{14}$' }
+                effective_to: { type: string, format: date-time }
+                reason: { type: string, minLength: 1, maxLength: 200, description: "Sent by the producer; this consumer does not read it." }
+                version: { type: integer, minimum: 1 }
+
+    CloudEventEnvelope:
+      type: object
+      required: [specversion, id, source, type, subject, time, datacontenttype, dataschema, data]
+      properties:
+        specversion: { type: string, const: "1.0" }
+        id: { type: string, format: uuid }
+        source: { type: string }
+        type: { type: string }
+        subject: { type: string, description: The aggregate instance id (the request id for request events). }
+        time: { type: string, format: date-time }
+        datacontenttype: { type: string, const: application/json }
+        dataschema: { type: string }
+
+    ReplenishmentRequestedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [request_id, site_id, sku, forward_bin, source_bin, quantity, priority, policy_min, policy_max, requested_at]
+              properties:
+                request_id: { type: string }
+                site_id: { type: string }
+                sku: { type: string }
+                forward_bin: { type: string, description: The pick face to fill. }
+                source_bin: { type: string, description: The reserve bin the stock comes from. }
+                quantity: { type: integer, minimum: 1 }
+                priority: { type: string, enum: [NORMAL, URGENT] }
+                policy_min: { type: integer, minimum: 0 }
+                policy_max: { type: integer, minimum: 1 }
+                requested_at: { type: string, format: date-time }
+
+    ReplenishmentCompletedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [request_id, site_id, sku, forward_bin, source_bin, quantity, completed_at]
+              properties:
+                request_id: { type: string }
+                site_id: { type: string }
+                sku: { type: string }
+                forward_bin: { type: string }
+                source_bin: { type: string }
+                quantity: { type: integer, minimum: 1, description: What StockRelocated moved. }
+                completed_at: { type: string, format: date-time }
+
+    ReplenishmentCancelledEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [request_id, site_id, sku, reason, cancelled_at]
+              properties:
+                request_id: { type: string }
+                site_id: { type: string }
+                sku: { type: string }
+                reason: { type: string, enum: [OPERATOR, ASSIGNMENT_CHANGED, POLICY_REMOVED] }
+                cancelled_at: { type: string, format: date-time }
+
+    ReplenishmentPolicyDeclaredEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [site_id, sku, min_qty, max_qty, multiple, version, declared_at]
+              properties:
+                site_id: { type: string }
+                sku: { type: string }
+                min_qty: { type: integer, minimum: 0 }
+                max_qty: { type: integer, minimum: 1 }
+                multiple: { type: integer, minimum: 1 }
+                multiple_source: { type: string, enum: [DECLARED, PACK_DERIVED], description: "Optional; absent on facts that do not say." }
+                version: { type: integer, minimum: 1 }
+                declared_at: { type: string, format: date-time }
+
+    BinStockLevelChangedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [site_code, bin, sku, on_hand, reserved, version]
+              properties:
+                site_code: { type: string }
+                bin: { type: string }
+                sku: { type: string }
+                on_hand: { type: integer, minimum: 0, description: Absolute units in the bin after the change. }
+                reserved: { type: integer, minimum: 0, description: Units of this bin bound by active reservations. }
+                version: { type: integer, minimum: 1, description: Per-(bin, sku) monotonically increasing; keep the highest. }
+                reason: { type: string, description: "Sent by the producer; this consumer does not read it." }
+                occurred_at: { type: string, format: date-time, description: "Sent by the producer; this consumer does not read it." }
+
+    StockRelocatedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [relocation_id, site_code, sku, from_bin, to_bin, quantity, reason, source_ref]
+              properties:
+                relocation_id: { type: string }
+                site_code: { type: string }
+                sku: { type: string }
+                from_bin: { type: string }
+                to_bin: { type: string }
+                quantity: { type: integer, minimum: 1 }
+                reason: { type: string, description: "Act only on REPLENISHMENT; SLOTTING, CONSOLIDATION, MANUAL and any other value are ignored." }
+                source_ref: { type: string, maxLength: 200, description: "The request id on a replenishment; \"\" or another reference otherwise." }
+                occurred_at: { type: string, format: date-time, description: "Sent by the producer; this consumer does not read it." }
+
+    SlotAssignment:
+      type: object
+      required: [sku, slot]
+      properties:
+        sku: { type: string }
+        slot: { type: string, description: The facility-layout location code of the forward slot. }
+
+    SlotMove:
+      type: object
+      required: [sku, kind]
+      properties:
+        sku: { type: string }
+        from_slot: { type: string, description: Omitted for an Assign. }
+        to_slot: { type: string, description: Omitted for a Vacate. }
+        kind: { type: string, enum: [Assign, Relocate, Vacate] }
+
+    SlotPlanApprovedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [plan_id, site_id, approved_at, assignments]
+              properties:
+                plan_id: { type: string }
+                site_id: { type: string }
+                approved_at: { type: string, format: date-time }
+                supersedes_plan_id: { type: string, description: "Sent by the producer; this consumer does not read it." }
+                assignments:
+                  type: array
+                  description: The FULL assignment map of the plan.
+                  items: { $ref: "#/components/schemas/SlotAssignment" }
+                moves:
+                  type: array
+                  description: "Sent by the producer; this consumer does not read it."
+                  items: { $ref: "#/components/schemas/SlotMove" }
+
+    ZoneRegisteredEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [zoneId, siteCode, zoneCode]
+              properties:
+                zoneId: { type: string }
+                siteCode: { type: string }
+                areaCode: { type: string }
+                zoneCode: { type: string }
+                temperatureClass: { type: string, enum: [Ambient, Chilled, Frozen] }
+                hazmat: { type: boolean }
+
+    LocationSlotRegisteredEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [locationCode, zoneId]
+              properties:
+                locationCode: { type: string }
+                aisleId: { type: string }
+                zoneId: { type: string }
+                locationType: { type: string }
+                role: { type: string, description: Absent means Storage. }
+                dockFlow: { type: string }
+                activities: { type: array, items: { type: string } }
+                maxWeightKg: { type: number }
+                maxVolumeM3: { type: number }
+
+    LocationSlotDecommissionedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [locationCode]
+              properties:
+                locationCode: { type: string }

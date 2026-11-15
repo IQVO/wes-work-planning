@@ -49,6 +49,7 @@ jobs:
       - run: python3 scripts/harness/test_hook.py
       - run: python3 scripts/harness/test_red_issue.py
       - run: python3 scripts/harness/test_repo_lint.py
+      - run: python3 scripts/harness/test_asyncapi_breaking.py
 
 
   # Complexity gate as its own named check: cyclomatic (gocyclo, cyclop),
@@ -215,6 +216,93 @@ jobs:
           DATABASE_URL: "postgres://wes@localhost:5432/wes_work_planning?sslmode=disable"
           KAFKA_BROKERS: "localhost:9092"
         run: ./scripts/contract-test.sh
+
+  # Producer-parity gate: a PR that touches apis/** must not make the pinned
+  # producer contracts backwards-incompatible. The fleet's consumer wave pins
+  # this repo's specs byte-for-byte (refresh = copy, never edit), so a removed
+  # message, a removed/renamed required field or a narrowed type breaks every
+  # pinning consumer at once. OpenAPI surfaces are diffed with oasdiff
+  # (pinned Go install, like every other tool this workflow pins); the
+  # CloudEvents AsyncAPI contract is diffed by scripts/harness/asyncapi_breaking.py
+  # (installed against the same hash-pinned PyYAML the chart tests use).
+  # The base revision is the pull request's base branch tip (what consumers
+  # pin), materialized with `git show` from the single full checkout — no
+  # second checkout into a subpath. Consumer list source (read-only):
+  # warehouse-docs network/model/contract-edges.json on origin/main.
+  # The job self-skips when the PR does not touch apis/**.
+  # Pinning consumers (verified against contract-edges.json AND each consumer's
+  # contracts/pinned.json@develop): apis/asyncapi.yaml <- exception-management,
+  # fulfillment-execution, network-fulfillment, order-management + this repo's
+  # own projector (self-pin); apis/openapi-reports.yaml <- this repo's MCP
+  # adapter (self-pin); apis/openapi.yaml has no byte-copy pinner (public REST).
+  # ============================================================
+  # CLASSIFICATION: CONTRACT TESTING (breaking-change gate, producer parity)
+  # ============================================================
+  spec-breaking:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Did this PR touch apis/?
+        id: apis
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          base="origin/${BASE_REF}"
+          if git diff --name-only "$base"...HEAD -- apis/ | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "apis/ untouched — breaking-change gate skipped."
+          fi
+      - name: Materialize the base revision's specs (what consumers pin)
+        if: steps.apis.outputs.changed == 'true'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          base="origin/${BASE_REF}"
+          git show "$base:apis/openapi.yaml"         > "$RUNNER_TEMP/base-openapi.yaml"
+          git show "$base:apis/openapi-reports.yaml"  > "$RUNNER_TEMP/base-openapi-reports.yaml"
+          git show "$base:apis/asyncapi.yaml"         > "$RUNNER_TEMP/base-asyncapi.yaml"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        if: steps.apis.outputs.changed == 'true'
+        with:
+          go-version-file: go.mod
+      - name: Install oasdiff (pinned)
+        if: steps.apis.outputs.changed == 'true'
+        run: go install github.com/oasdiff/oasdiff@v1.38.0
+      - name: OpenAPI breaking changes (base vs head)
+        if: steps.apis.outputs.changed == 'true'
+        run: |
+          set -uo pipefail
+          out="$(oasdiff breaking --fail-on ERR "$RUNNER_TEMP/base-openapi.yaml" apis/openapi.yaml 2>&1)"; rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Breaking change to apis/openapi.yaml rejected. This is the public REST contract of wes-work-planning; no fleet repo byte-pins it today (warehouse-docs network/model/contract-edges.json lists only the reports spec). Keep the change additive or version the API."
+            exit 1
+          fi
+      - name: OpenAPI breaking changes, reports API (base vs head)
+        if: steps.apis.outputs.changed == 'true'
+        run: |
+          set -uo pipefail
+          out="$(oasdiff breaking --fail-on ERR "$RUNNER_TEMP/base-openapi-reports.yaml" apis/openapi-reports.yaml 2>&1)"; rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Breaking change to apis/openapi-reports.yaml rejected. This spec is pinned byte-for-byte by this repo's own MCP adapter (contracts/pinned.json self-pin; contract-edges.json rest edge, REPORTS_BASE_URL), and the pin gate fails until it is re-copied. Keep the change additive or coordinate a versioned contract migration."
+            exit 1
+          fi
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        if: steps.apis.outputs.changed == 'true'
+        with:
+          python-version: "3.13"
+      - name: Install PyYAML (pinned)
+        if: steps.apis.outputs.changed == 'true'
+        run: python3 -m pip install --require-hashes -r .github/requirements/contract-breaking.txt
+      - name: AsyncAPI breaking changes (base vs head)
+        if: steps.apis.outputs.changed == 'true'
+        run: python3 scripts/harness/asyncapi_breaking.py "$RUNNER_TEMP/base-asyncapi.yaml" apis/asyncapi.yaml
 
   # ============================================================
   # CLASSIFICATION: CONTRACT PINS (compared with the producer's develop)

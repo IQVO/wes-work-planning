@@ -79,6 +79,7 @@ problem `type` it produces. Problem types are relative to
 | `404 not-found` on `labor-plan-view` / `inventory-view` | no event observed yet for that path/SKU | wait for the upstream event or check consumption |
 | `400 heads-exceed-installed-stations` | `plannedHeads > installedStations` | fix the plan |
 | `400 malformed-request-body` | invalid JSON, a missing required field (`cpt`, `plannedHeads`, `installedStations`, `wipLimit`, bucket `cpt`/`quantity`) or an empty/invalid `cutoffAt` | fix the request |
+| `400 invalid-rate` / `400 invalid-hours` | `POST .../plan` with a `rateUnitsPerHour` or `hours` that is ≤ 0 **or omitted** (their zero value fails domain validation; only `plannedHeads` and `installedStations` are pointer fields, so only their omission is `malformed-request-body`) | send a positive rate and hours |
 | `400 invalid-line-no` | `lineNo` given but outside 1..2147483647 | omit it or send a valid line |
 | `409 wip-limit-reached` | release-fed pool at its WIP limit | complete work, or raise the limit with `PUT /paths/{pathId}/pool` |
 | `409 work-pool-empty` | nothing pending | enqueue work |

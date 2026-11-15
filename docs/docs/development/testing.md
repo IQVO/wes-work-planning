@@ -8,7 +8,7 @@ description: The test pyramid as it exists in wes-work-planning — unit, httpte
 # Testing
 
 Every layer below is a real suite in this repository; counts were taken on
-`develop` (the BDD wave of PR #165 is already merged there).
+`develop` (the documentation-derived BDD wave, PR #279, is merged there).
 
 ```mermaid
 flowchart TB
@@ -18,7 +18,7 @@ flowchart TB
         MUT["Mutation (gremlins v0.6.0)<br/>efficacy and mutant-coverage thresholds 99 %"]
     end
     subgraph mid["Acceptance — in-process, no I/O"]
-        BDD["BDD (godog)<br/>12 features, 104 scenarios"]
+        BDD["BDD (godog)<br/>17 features, 226 scenarios"]
         EVAL["MCP evals<br/>17 godog scenarios + conformance/governance"]
         ARCH["Architecture fitness tests<br/>12 tests in internal/architecture"]
     end
@@ -90,20 +90,39 @@ pending step fails) against the real use cases wired to in-memory test doubles.
 | `charge_forecast.feature` | 3 | 3 |
 | `completion_telemetry.feature` | 2 | 2 |
 | `consumed_events.feature` | 15 | 17 |
+| `consumed_rules.feature` | 12 | 18 |
 | `labor_plan_reconciliation.feature` | 4 | 4 |
+| `plan_and_work_unit_rules.feature` | 15 | 47 |
 | `pool_configuration.feature` | 15 | 17 |
 | `read_model_views.feature` | 8 | 8 |
 | `rebalance.feature` | 2 | 2 |
+| `relocation_rules.feature` | 18 (1 `@known-bug`) | 25 |
 | `request_validation_and_probes.feature` | 14 | 28 |
 | `shift_plan.feature` | 2 | 2 |
+| `slot_plan_relocation.feature` | 5 | 5 |
 | `work_pool_capacity.feature` | 2 | 2 |
+| `work_pool_rules.feature` | 15 | 27 |
 | `work_release.feature` | 2 | 2 |
 | `work_unit_enqueue.feature` | 12 | 17 |
-| **12 files** | **81** | **104** (581 steps) |
+| **17 files** | **146** | **226** (1359 steps) |
 
 "Executed" counts Scenario Outline example rows; the totals are godog's own
 summary from `go test . -run TestFeatures -count=1 -v`:
-`104 scenarios (104 passed)`, `581 steps (581 passed)`.
+`226 scenarios (226 passed)`, `1359 steps (1359 passed)`. The 146 headings
+(`git grep -c -E "^[[:space:]]*Scenario" -- features`) include one scenario
+tagged `@known-bug` in `relocation_rules.feature` (`completeWorkUnit` on a
+cancelled unit: the specification and [ADR-0040](../adr/0040-slot-plan-relocation-work.md)
+say `409 work-unit-cancelled`, the code answers `work-unit-not-released`). The
+suite excludes it by default (`BDD_TAGS` defaults to `~@known-bug`, so 145
+headings run); `BDD_TAGS=@known-bug go test . -run TestFeatures -count=1` runs
+only the known-bug scenarios and fails until the code is fixed.
+
+The `*_rules.feature` files (`consumed_rules`, `plan_and_work_unit_rules`,
+`relocation_rules`, `work_pool_rules`) pin the rules written in the
+documentation: the slot-plan relocation rules of ADR-0040, the Work Pool
+invariants, the inbound-event rows of the use-case table and the REST error
+rows with their documented slugs. Their step definitions are in
+`steps_rules_test.go`.
 
 ## MCP evals
 

@@ -39,6 +39,9 @@ flowchart LR
         AWD["ApplyWorkDemandReleased"]
         ASP["ApplySlotPlanApproved"]
         OPC["ObserveProductClassification"]
+        OPL["ObservePackLevel"]
+        ARR["ApplyReplenishmentRequested"]
+        ARC["ApplyReplenishmentCancelled"]
     end
     REST --> RCF
     REST --> CSP
@@ -58,6 +61,9 @@ flowchart LR
     KAFKA --> AWD
     KAFKA --> ASP
     KAFKA --> OPC
+    KAFKA --> OPL
+    KAFKA --> ARR
+    KAFKA --> ARC
     ATC --> RC
     AOA --> EWU
     AWD --> EWU
@@ -200,7 +206,7 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 
 ## Inbound-event use cases
 
-All seven claim the CloudEvents `id` in `processed_events` inside the **same**
+All ten claim the CloudEvents `id` in `processed_events` inside the **same**
 atomic scope as their effect (`onceAtomically`,
 [ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)): a
 redelivery is a no-op, and a failure rolls the mark back so the retry
@@ -217,6 +223,8 @@ re-applies the event. The consumer that calls them is described on
 | `ApplySlotPlanApproved` | `SlotPlanApproved` (`warehouse.slotting-optimization.events`) | one RELOCATE unit per move: id `{plan_id}-move-{seq}` (seq = 0-based position in `moves`), reference = `plan_id`, CPT = `approved_at` + `RELOCATION_CPT_HORIZON`, path `RELOCATE`. A move into a slot another move of the plan vacates gets `blocked_by` and stays out of the pool until that unit completes (swap cycles broken at the lowest seq). A newer plan for the site cancels the other plans' **Pending** units (state `Cancelled`, pool entry withdrawn); released work runs to completion ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) | move `kind` must be `Relocate`, `Assign` or `Vacate` with the slots that kind needs; `RELOCATE` must be in the catalogue and, when it declares an intake, admit `SLOT_RELOCATION` (process-path-management ADR 0034); all retried, then DLQ. An older plan than the site's latest, or the same plan again, is a no-op | `WorkUnitCreated` per planned unit |
 | `ObserveProductClassification` | `ProductClassified` (`warehouse.product-master.events`) | version-guarded upsert into `product_classification_copy` ([ADR-0035](../adr/0035-product-classification-local-copy.md)) | an older or equal version is a stale no-op (id still recorded) | none |
 | `ObservePackLevel` | `ProductPackLevelDeclared` / `ProductPackLevelRetired` / `ProductPackLevelMeasured` (`warehouse.product-master.events`) | Declared: version-guarded upsert into `product_pack_level_copy`; Retired: sets `effective_to`; Measured: stores the measured dimensions ([ADR-0045](../adr/0045-pack-aware-work-units.md)) | an older or equal `version`, or a Retired / Measured for an unknown GTIN, is a stale no-op (id still recorded); a redelivered CloudEvents `id` is a no-op | none |
+| `ApplyReplenishmentRequested` | `ReplenishmentRequested` (`warehouse.pick-face-replenishment.events`) | one REPLENISH unit per request: id `replenish-{request_id}`, reference = `request_id`, path `REPLENISH`, CPT = `requested_at` + `REPLENISHMENT_CPT_HORIZON` (8h, `NORMAL`) or `REPLENISHMENT_URGENT_CPT_HORIZON` (1h, `URGENT`; capped at the normal horizon), carrying the move (SKU, `source_bin` as from-bin, `forward_bin` as to-bin, quantity, priority) ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) | `request_id`, `sku` and both bins required, the bins differ, `quantity` at least 1, `priority` exactly `NORMAL` or `URGENT`, `site_id` and `requested_at` present, `REPLENISH` in the catalogue (no intake is evaluated); a request id whose unit already exists is a no-op, never a second unit | `WorkUnitCreated` |
+| `ApplyReplenishmentCancelled` | `ReplenishmentCancelled` (`warehouse.pick-face-replenishment.events`) | cancels the request's unit only while it is **Pending** (state `Cancelled`, pool entry withdrawn); a released, completed or already cancelled unit runs on, and a request this context never planned is a no-op ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) | a blank `request_id` is refused (dead-lettered, never retried) | none |
 
 ## Events no use case raises
 

@@ -24,7 +24,7 @@ flowchart TB
     end
 
     subgraph app["Application layer"]
-        UC["application/usecases<br/>8 command use cases,<br/>4 queries + 6 inbound-event use cases"]
+        UC["application/usecases<br/>8 command use cases,<br/>4 queries + 10 inbound-event use cases"]
         PORTS["application/ports<br/>driven-port interfaces"]
     end
 

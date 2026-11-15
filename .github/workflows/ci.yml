@@ -216,6 +216,28 @@ jobs:
           KAFKA_BROKERS: "localhost:9092"
         run: ./scripts/contract-test.sh
 
+  # ============================================================
+  # CLASSIFICATION: CONTRACT PINS (compared with the producer's develop)
+  # ============================================================
+  # The consumer contract tests validate against COPIES of the producers'
+  # specs. A copy nobody refreshes keeps those tests green while the
+  # producers move on. This job fails when a pin in contracts/pinned.json
+  # differs from its producer's develop. The producer repos are public; a
+  # producer that cannot be read fails the job (exit 2), never passes it.
+  pinned-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Pins equal the producer's develop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/harness/pinned_contract_gate.py
+      - name: The gate's own tests
+        run: python3 scripts/harness/test_pinned_contract_gate.py
+
   # The MCP eval gate as its own named check: the eval suites from
   # internal/adapters/inbound/mcp run inside the `test` job too; this job makes the gate
   # visible — and individually gating — on every push and PR.

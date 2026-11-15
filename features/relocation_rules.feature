@@ -282,9 +282,9 @@ Feature: Slot-plan relocation rules from the documentation
     Then the released WorkUnit is "plan-B-move-0"
 
   # openapi completeWorkUnit 409: "was cancelled (`work-unit-cancelled`)" and
-  # ADR-0040 "Cancelled is terminal: Release and Complete refuse it". Today
-  # Complete on a Cancelled unit answers `work-unit-not-released`.
-  @bdd @known-bug
+  # ADR-0040 "Cancelled is terminal: Release and Complete refuse it": Complete
+  # on a Cancelled unit answers `work-unit-cancelled`, not `work-unit-not-released`.
+  @bdd
   Scenario: Completing a cancelled move is refused as work-unit-cancelled
     Given slotting-optimization approves slot plan "plan-A" for site "SITE-1" at "2026-08-21T07:00:00Z" with moves:
       | sku   | kind   | from_slot | to_slot |

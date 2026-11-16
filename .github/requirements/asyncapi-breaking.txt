@@ -1,4 +1,4 @@
-# Hash-pinned (OpenSSF Scorecard Pinned-Dependencies): `pip install --require-hashes -r` this file.
+# Hash-pinned (OpenSSF Scorecard Pinned-Dependencies): pip install --require-hashes -r this file for the asyncapi breaking gate.
 # Regenerate: https://pypi.org/pypi/PyYAML/<version>/json -> every file's sha256.
 pyyaml==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \

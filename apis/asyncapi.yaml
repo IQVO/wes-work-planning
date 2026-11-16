@@ -212,7 +212,7 @@ channels:
         - name: work-planning
       message:
         oneOf:
-          - $ref: "#/components/messages/ChargeForecastReceived"
+          - $ref: "#/components/messages/ChargeForecastReceivedCanary"
           - $ref: "#/components/messages/ShiftPlanCommitted"
           - $ref: "#/components/messages/WorkUnitCreated"
           - $ref: "#/components/messages/WorkReleased"
@@ -486,9 +486,9 @@ channels:
 
 components:
   messages:
-    ChargeForecastReceived:
+    ChargeForecastReceivedCanary:
       x-no-consumer-reason: "published for observability; no consumer in the fleet today"
-      name: ChargeForecastReceived
+      name: ChargeForecastReceivedCanary
       title: Charge Forecast Received
       summary: A shift's charge forecast was recorded for a process path.
       description: >-
@@ -514,7 +514,7 @@ components:
             subject: pick-to-tote
             time: "2026-08-21T22:00:00Z"
             datacontenttype: application/json
-            dataschema: urn:warehouse:wes-work-planning:events:ChargeForecastReceived:v1
+            dataschema: urn:warehouse:wes-work-planning:events:ChargeForecastReceivedCanary:v1
             data:
               path_id: pick-to-tote
 
@@ -1478,8 +1478,8 @@ components:
 
     ChargeForecastReceivedAnalytics:
       name: ChargeForecastReceivedAnalytics
-      title: ChargeForecastReceived (analytics stream)
-      summary: Analytics-shaped ChargeForecastReceived occurrence on warehouse.wes.analytics.
+      title: ChargeForecastReceivedCanary (analytics stream)
+      summary: Analytics-shaped ChargeForecastReceivedCanary occurrence on warehouse.wes.analytics.
       contentType: application/cloudevents+json
       tags:
         - name: charge
@@ -1496,7 +1496,7 @@ components:
             subject: pick-to-tote
             time: "2026-08-21T22:00:00Z"
             datacontenttype: application/json
-            dataschema: urn:warehouse:wes-work-planning:analytics:ChargeForecastReceived:v1
+            dataschema: urn:warehouse:wes-work-planning:analytics:ChargeForecastReceivedCanary:v1
             data:
               path_id: pick-to-tote
 
@@ -1880,7 +1880,7 @@ components:
           pattern: "^urn:warehouse:[a-z0-9-]+:(events|analytics):[A-Za-z]+:v[0-9]+$"
 
     ChargeForecastReceivedEvent:
-      title: ChargeForecastReceived CloudEvent
+      title: ChargeForecastReceivedCanary CloudEvent
       description: CloudEvent envelope for a recorded charge forecast.
       allOf:
         - $ref: "#/components/schemas/CloudEventBase"
@@ -1897,7 +1897,7 @@ components:
             dataschema:
               type: string
               description: Fixed integration-payload schema id for this message.
-              const: "urn:warehouse:wes-work-planning:events:ChargeForecastReceived:v1"
+              const: "urn:warehouse:wes-work-planning:events:ChargeForecastReceivedCanary:v1"
             data:
               type: object
               description: Payload published by the outbound Kafka adapter.
@@ -3210,7 +3210,7 @@ components:
                     limit provisioned. `true` otherwise.
 
     ChargeForecastReceivedAnalyticsEvent:
-      title: ChargeForecastReceived analytics CloudEvent
+      title: ChargeForecastReceivedCanary analytics CloudEvent
       allOf:
         - $ref: "#/components/schemas/CloudEventBase"
         - type: object
@@ -3224,7 +3224,7 @@ components:
               const: "com.warehouse.wes.work-planning.charge.ChargeForecastReceived"
             dataschema:
               type: string
-              const: "urn:warehouse:wes-work-planning:analytics:ChargeForecastReceived:v1"
+              const: "urn:warehouse:wes-work-planning:analytics:ChargeForecastReceivedCanary:v1"
             data:
               type: object
               required:

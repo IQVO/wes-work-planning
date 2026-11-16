@@ -1,6 +1,7 @@
 asyncapi: 2.6.0
 
 info:
+  x-canary: true
   title: WES Work Planning & Release — Domain Events
   version: "1.0.0"
   description: |

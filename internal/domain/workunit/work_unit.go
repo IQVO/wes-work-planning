@@ -395,11 +395,15 @@ func (w *WorkUnit) Release(at time.Time) error {
 	return nil
 }
 
-// Complete finishes a released unit. A unit cannot complete twice, and must
-// be released before it can complete.
+// Complete finishes a released unit. A unit cannot complete twice, must be
+// released before it can complete, and a Cancelled unit (terminal, never
+// released: ADR-0040) refuses with ErrCancelled rather than ErrNotReleased.
 func (w *WorkUnit) Complete(at time.Time) error {
 	if w.state == Completed {
 		return ErrAlreadyCompleted
+	}
+	if w.state == Cancelled {
+		return ErrCancelled
 	}
 	if w.state != Released {
 		return ErrNotReleased

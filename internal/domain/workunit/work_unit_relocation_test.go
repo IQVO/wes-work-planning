@@ -160,8 +160,11 @@ func TestWorkUnit_CancelPending(t *testing.T) {
 	if err := unit.Release(at); !errors.Is(err, ErrCancelled) {
 		t.Fatalf("Release of a cancelled unit = %v, want ErrCancelled", err)
 	}
-	if err := unit.Complete(at); !errors.Is(err, ErrNotReleased) {
-		t.Fatalf("Complete of a cancelled unit = %v, want ErrNotReleased", err)
+	if err := unit.Complete(at); !errors.Is(err, ErrCancelled) || errors.Is(err, ErrNotReleased) {
+		t.Fatalf("Complete of a cancelled unit = %v, want ErrCancelled (ADR-0040: Cancelled is terminal)", err)
+	}
+	if unit.State() != Cancelled {
+		t.Fatalf("a refused Complete changed the state to %v", unit.State())
 	}
 	if err := unit.Cancel(at); !errors.Is(err, ErrCancelled) {
 		t.Fatalf("second Cancel = %v, want ErrCancelled", err)

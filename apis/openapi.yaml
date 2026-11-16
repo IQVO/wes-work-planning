@@ -82,7 +82,7 @@ tags:
     description: Operational health check.
 
 paths:
-  /healthz:
+  /healthz-canary:
     get:
       operationId: healthCheck
       summary: Health check

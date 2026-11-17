@@ -18,7 +18,7 @@ flowchart TB
         MUT["Mutation (gremlins v0.6.0)<br/>efficacy and mutant-coverage thresholds 99 %"]
     end
     subgraph mid["Acceptance — in-process, no I/O"]
-        BDD["BDD (godog)<br/>17 features, 226 scenarios"]
+        BDD["BDD (godog)<br/>17 features, 227 scenarios"]
         EVAL["MCP evals<br/>17 godog scenarios + conformance/governance"]
         ARCH["Architecture fitness tests<br/>12 tests in internal/architecture"]
     end
@@ -96,7 +96,7 @@ pending step fails) against the real use cases wired to in-memory test doubles.
 | `pool_configuration.feature` | 15 | 17 |
 | `read_model_views.feature` | 8 | 8 |
 | `rebalance.feature` | 2 | 2 |
-| `relocation_rules.feature` | 18 (1 `@known-bug`) | 25 |
+| `relocation_rules.feature` | 18 | 26 |
 | `request_validation_and_probes.feature` | 14 | 28 |
 | `shift_plan.feature` | 2 | 2 |
 | `slot_plan_relocation.feature` | 5 | 5 |
@@ -104,18 +104,19 @@ pending step fails) against the real use cases wired to in-memory test doubles.
 | `work_pool_rules.feature` | 15 | 27 |
 | `work_release.feature` | 2 | 2 |
 | `work_unit_enqueue.feature` | 12 | 17 |
-| **17 files** | **146** | **226** (1359 steps) |
+| **17 files** | **146** | **227** (1366 steps) |
 
 "Executed" counts Scenario Outline example rows; the totals are godog's own
 summary from `go test . -run TestFeatures -count=1 -v`:
-`226 scenarios (226 passed)`, `1359 steps (1359 passed)`. The 146 headings
-(`git grep -c -E "^[[:space:]]*Scenario" -- features`) include one scenario
-tagged `@known-bug` in `relocation_rules.feature` (`completeWorkUnit` on a
+`227 scenarios (227 passed)`, `1366 steps (1366 passed)`. All 146 headings
+(`git grep -c -E "^[[:space:]]*Scenario" -- features`) run. The former
+`@known-bug` scenario in `relocation_rules.feature` (`completeWorkUnit` on a
 cancelled unit: the specification and [ADR-0040](../adr/0040-slot-plan-relocation-work.md)
-say `409 work-unit-cancelled`, the code answers `work-unit-not-released`). The
-suite excludes it by default (`BDD_TAGS` defaults to `~@known-bug`, so 145
-headings run); `BDD_TAGS=@known-bug go test . -run TestFeatures -count=1` runs
-only the known-bug scenarios and fails until the code is fixed.
+say `409 work-unit-cancelled`) now passes because `WorkUnit.Complete` refuses a
+Cancelled unit with `ErrCancelled`. The runner still excludes the tag by
+default (`BDD_TAGS` defaults to `~@known-bug`) so a future known gap can be
+parked there; `BDD_TAGS=@known-bug go test . -run TestFeatures -count=1` now
+selects no scenario.
 
 The `*_rules.feature` files (`consumed_rules`, `plan_and_work_unit_rules`,
 `relocation_rules`, `work_pool_rules`) pin the rules written in the

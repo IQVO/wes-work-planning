@@ -51,7 +51,7 @@ release-fed by `EnqueueWorkUnit`; no API creates a flow-fed pool.
 | **WIP** | Count of *released* entries in a pool that have not yet completed. | `WorkPool.WIP()` | no |
 | **Alarm threshold** | The backlog depth above which `SampleBacklog` raises `BacklogThresholdBreached` (either feed mode), and above which a flow-fed path is throttled. | `WorkPool.alarmThreshold`, `IsOverAlarmThreshold()` | no |
 | **WIP limit** | The maximum outstanding released work on a release-fed pool. Enforced at release time. | `WorkPool.wipLimit` | no |
-| **Remaining capacity** | `max(0, wipLimit − WIP)` for a release-fed pool, reported per CPT cutoff; unknown for a flow-fed pool. | `WorkPool.RemainingCapacity()`, `PathCapacityChanged` | no |
+| **Remaining capacity** | Remaining ADMISSION capacity: `max(0, wipLimit − WIP)` for a release-fed pool, reported per CPT cutoff; unknown for a flow-fed pool. Not warehouse-planning's planned capacity (a path's capacity for a planning window). | `WorkPool.RemainingCapacity()`, `PathCapacityChanged` | no |
 | **Cutoff** | The CPT instant a remaining-capacity report is correlated with. | `SampleBacklogRequest.CutoffAt`, `cutoff_at` | yes — *CutoffAt* |
 | **Installed stations** | The physical station count on a path. The ceiling for planned heads. | `PathPlan.installedStations` (`shared.StationCount`) | no |
 | **Planned heads** | The people planned onto a path. | `PathPlan.plannedHeads` | **yes — typed `shared.StationCount`, not a headcount type** |

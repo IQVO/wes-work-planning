@@ -53,7 +53,7 @@ no scheduler).
 | [0016](./0016-remove-rest-mcp-static-bearer-auth.md) | Remove the REST + MCP static-bearer auth layer (fleet decision reversed) | Accepted |
 | [0017](./0017-travel-distance-lookup-on-commit-shift-plan.md) | Read facility-layout's travel graph once, at shift-plan-commit time, to enrich `PathPlan` | Accepted |
 | [0018](./0018-path-capacity-changed.md) | Publish per-path, per-CPT remaining admission capacity as `PathCapacityChanged`, correlated by CPT cutoff timestamp | Accepted |
-| [0019](./0019-labor-plan-committed-shift-plan-reconciliation.md) | Reconcile our committed `PathPlan` against Workforce's `LaborPlanObserved`, triggered on either side's commit | Accepted |
+| [0019](./0019-labor-plan-committed-shift-plan-reconciliation.md) | Reconcile our committed `PathPlan` against Workforce's `LaborPlanObserved`, triggered on either side's commit | Accepted; superseded by 0049 on cutover |
 | [0020](./0020-flowfed-path-observed-throughput-signal.md) | FlowFed paths stay `Known=false` permanently; an observed-throughput signal is proposed alongside, not instead | Accepted |
 | [0021](./0021-cloudevents-envelope-migration.md) | Migrate `warehouse.work-planning.events` to a CloudEvents 1.0 structured envelope via a dual-read/dual-write bake period; companion to fulfillment-execution's own envelope-migration ADR | Superseded by 0027 |
 | [0022](./0022-idempotency-key-middleware.md) | Transactional Idempotency-Key middleware for `POST /paths/{pathId}/work-units`, ported from order-management's reference implementation | Accepted |
@@ -83,6 +83,7 @@ no scheduler).
 | [0046](./0046-a2a-inbound-adapter.md) | Agent2Agent as an inbound adapter: this context as an A2A agent (official a2a-go SDK, JSON-RPC 2.0 over HTTP, Agent Card at the well-known path, curated goal-shaped skills, delegation only — facts still travel as CloudEvents) | Accepted |
 | [0047](./0047-fleet-rest-api-guideline.md) | Adopt the fleet REST API guideline: noun routes, idempotent POST on a global `Idempotency-Key` (409 on reuse, `Idempotency-Replayed`), keyset-paged collections, Spectral-enforced | Accepted |
 | [0048](./0048-site-and-forward-pick-face-on-released-work.md) | `WorkReleased` publishes top-level `site_id` for every work kind that has one (order work's site from OrderAllocated/OrderPartiallyAllocated's additive `site_id`); pick plans gain `from_bin` derived from the local slot-plan forward-pick face | Accepted |
+| [0049](./0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md) | `ChargeForecast` and `ShiftPlan`/`PathPlan` move to warehouse-planning (its ADR 0023): the two POST routes answer 410, the use cases, drift reconciliation and travel-distance lookup go, `ChargeForecastReceived`, `plan.ShiftPlanCommitted` and `PathPlanDriftDetected` retire; release, balancing, `LaborPlanObserved` and `PathCapacityChanged` stay | Accepted; amends 0006 and 0017, supersedes 0019 on cutover |
 
 ## The template
 

@@ -57,10 +57,10 @@ after ADR-0018): `./internal/domain` — 73 mutants, 73 killed, 0 lived,
 100.00% efficacy, grown from 51 mutants before ADR-0018 added
 `WorkPool.RemainingCapacity`/`PathCapacityChanged`. It also records the
 exact fix for two REAL survived mutants, both `CONDITIONALS_BOUNDARY`
-(`value < 0` mutated to `value <= 0`) in `shared/quantity.go` and
-`shared/station_count.go`'s constructors — both survived because no
+(`value < 0` mutated to `value <= 0`) in `shared/quantity.go` and the
+shift plan's station-count constructor (removed since, ADR-0049) — both survived because no
 existing test constructed the zero-value case and asserted success. Fixed
-by adding one boundary test each (`NewQuantity(0)`/`NewStationCount(0)`
+by adding one boundary test each (`NewQuantity(0)` and its station-count twin
 succeed with `Value() == 0`), not by touching the source. Use this file as
 the record's shape when triaging a new mutation run in this repo.
 
@@ -81,7 +81,7 @@ A test for `if x < 0 { return err }` that only tries `-1` (clearly
 invalid) and `42` (clearly valid) never exercises `0` — so a
 `CONDITIONALS_BOUNDARY` mutant rewriting `<` to `<=` survives silently.
 This repo's own `MUTATION.md` is the concrete proof: exactly this pattern
-in `NewQuantity`/`NewStationCount` is what actually survived here. Every
+in `NewQuantity` is what actually survived here. Every
 `< 0`/`> 0`/`<= 0` guard needs an explicit test for the boundary value
 itself.
 

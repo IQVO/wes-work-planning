@@ -61,7 +61,7 @@ buying a vendor WES:
 | Measure | Count | Where |
 |---|---|---|
 | Aggregate roots | 2 | `WorkPool`, `WorkUnit` (`ChargeForecast` and `ShiftPlan` moved to warehouse-planning, ADR-0049) |
-| Enforced invariants | 14 on aggregates + 4 on value objects | [Aggregate design canvas](./aggregate-design-canvas.md) (W1–W8, U1–U6; `Rate`, `PathId`, `Quantity`, `StationCount`) |
+| Enforced invariants | 14 on aggregates + 2 on value objects | [Aggregate design canvas](./aggregate-design-canvas.md) (W1–W8, U1–U6; `PathId`, `Quantity`) |
 | Domain events | 8 | `internal/domain/shared/events.go` |
 | Inbound integration events handled | 11 types on 7 topics | `internal/adapters/kafka/cloudevents/cloudevents.go` (consumed-type constants), `internal/adapters/inbound/kafka/consumer.go`, `internal/adapters/inbound/kafka/product_classification_consumer.go`, `internal/adapters/outbound/kafkacatalog` |
 | ADRs | 35 | [ADR index](../adr/index.md) |

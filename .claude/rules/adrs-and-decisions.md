@@ -30,7 +30,7 @@ Read the relevant ADR before reversing a documented decision.
 - 0020 FlowFed paths stay `Known=false`; observed-throughput signal proposed
 - 0021 CloudEvents dual-mode migration (SUPERSEDED by 0027)
 - 0022 Idempotency-Key middleware for `POST /paths/{pathId}/work-units`
-- 0023 circuit breakers, read-only retry, Kafka DLQ, graceful shutdown
+- 0023 read-only retry, Kafka DLQ, graceful shutdown (circuit breaker removed by 0049: no client builds one)
 - 0024 Kafka Hash balancer (partition affinity) on every outbound writer
 - 0025 per-workload HPA and pgxpool tuning
 - 0026 golang-migrate over a direct Postgres connection, not PgBouncer

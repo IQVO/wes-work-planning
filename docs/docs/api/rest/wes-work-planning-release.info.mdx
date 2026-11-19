@@ -1,7 +1,7 @@
 ---
 id: wes-work-planning-release
 title: "WES — Work Planning & Release"
-description: "The core bounded context of a Warehouse Execution System (WES). It turns a shift's **charge** (volume due by each CPT — Critical Pull Time, the last moment a parcel can be manifested and still make its truck) into a **plan** (rate × heads per process path), releases work continuously in priority order (waveless — no discrete wave batches), and performs flow balancing off live buffer telemetry using Drum-Buffer-Rope with CPT as the drum. It is the 'conductor': downstream of WMS planning/inventory, upstream of WCS equipment control."
+description: "The core bounded context of a Warehouse Execution System (WES). It releases work continuously in CPT priority order (waveless — no discrete wave batches; CPT is the Critical Pull Time, the last moment a parcel can be manifested and still make its truck) and performs flow balancing off live buffer telemetry using Drum-Buffer-Rope with CPT as the drum. It is the 'conductor': downstream of WMS planning/inventory, upstream of WCS equipment control."
 sidebar_label: Introduction
 sidebar_position: 0
 hide_title: true
@@ -35,9 +35,9 @@ import Export from "@theme/ApiExplorer/Export";
 
 
 
-The core bounded context of a Warehouse Execution System (WES). It turns a shift's **charge** (volume due by each CPT — Critical Pull Time, the last moment a parcel can be manifested and still make its truck) into a **plan** (rate × heads per process path), releases work continuously in priority order (waveless — no discrete wave batches), and performs flow balancing off live buffer telemetry using Drum-Buffer-Rope with CPT as the drum. It is the "conductor": downstream of WMS planning/inventory, upstream of WCS equipment control.
+The core bounded context of a Warehouse Execution System (WES). It releases work continuously in CPT priority order (waveless — no discrete wave batches; CPT is the Critical Pull Time, the last moment a parcel can be manifested and still make its truck) and performs flow balancing off live buffer telemetry using Drum-Buffer-Rope with CPT as the drum. It is the "conductor": downstream of WMS planning/inventory, upstream of WCS equipment control.
 
-Aggregates owned by this service: `ChargeForecast` (volume due by CPT bucket), `ShiftPlan`/`PathPlan` (committed rate × heads × hours split per process path, enforcing `plannedHeads <= installedStations`), `WorkPool` (the priority queue for one process path — release-fed pools enforce a hard WIP limit, flow-fed pools only alarm), and `WorkUnit` (a releasable unit of work with at-most-once assignment and no double-complete).
+Aggregates owned by this service: `WorkPool` (the priority queue for one process path — release-fed pools enforce a hard WIP limit, flow-fed pools only alarm) and `WorkUnit` (a releasable unit of work with at-most-once assignment and no double-complete). The charge forecast and the shift plan moved to warehouse-planning (ADR-0049): their two POST routes answer `410 Gone` for one release, naming warehouse-planning's routes.
 
 This service does **not** own equipment control (WCS), inventory reservation, or workforce scheduling — it only *observes* projections of those via Kafka integration events (`LaborPlanObserved`, `UsableInventoryObserved`), exposed read-only through this API. It also does not implement HATEOAS; this is a Richardson Maturity Level 2 API (resource nouns, correct verbs, correct status codes) without hypermedia controls.
 

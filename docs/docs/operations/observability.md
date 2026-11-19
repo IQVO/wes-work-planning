@@ -35,7 +35,7 @@ suffixes — for example `wes.work_units.released` is queried as
 |---|---|---|---|---|---|
 | `wes.work_units.released` | Int64 counter | `{work_unit}` | `path.id` | `cmd/wes` and `cmd/mcp`, once per work unit actually released by `ReleaseNextWork` (recorded in the use case after the commit, not in the handler) ([ADR-0013](../adr/0013-standard-metrics-convention.md)) | `internal/adapters/outbound/telemetry/release_metrics.go` |
 | `wes.outbox.lag_seconds` | Float64 observable gauge | `s` | — | `cmd/wes` (the relay is always on). Age of the oldest unpublished `outbox_events` row, 0 when drained; sampled by a query at each collection | `internal/adapters/outbound/postgres/outbox_metrics.go` |
-| `circuit_breaker.state` | Int64 gauge | `{state}` | `dependency` (`facility-layout`) | `cmd/wes` with `TRAVEL_DISTANCE_MODE=http`. `0` closed, `1` half-open, `2` open. Recorded **only on a state transition**, so no series exists until the breaker first changes state | `internal/adapters/outbound/telemetry/circuit_breaker_metrics.go`, `internal/adapters/outbound/traveldistance/breaker.go` |
+| `circuit_breaker.state` | Int64 gauge | `{state}` | `dependency` | **Not emitted today.** The gauge (`0` closed, `1` half-open, `2` open, recorded only on a state transition) stays for the next synchronous edge, but no outbound client builds a breaker since the facility-layout travel-distance lookup was retired ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)), so no series exists | `internal/adapters/outbound/telemetry/circuit_breaker_metrics.go`, `internal/resilience/breaker.go` |
 
 ### Library instruments
 
@@ -147,7 +147,6 @@ provisioned in this repository.
 |---|---|---|
 | Outbox stuck | `wes_outbox_lag_seconds > 60` for 5 m | relay down, Kafka unreachable, or one row failing repeatedly (check `outbox_events.last_error`) |
 | Outbox row dead | any log line `outbox relay: row reached the attempt cap and is no longer claimed` | an event was excluded after `OUTBOX_MAX_ATTEMPTS` failed sends and will not be delivered until re-armed ([Runbook](./runbook.md#re-arm-an-outbox-row-that-hit-the-attempt-cap)) |
-| Facility-layout breaker open | `circuit_breaker_state{dependency="facility-layout"} == 2` for 5 m | travel-distance hints are being skipped (fail-open) |
 | REST 5xx ratio | 5xx share of `http_server_request_duration_seconds_count` for `service_name="wes-work-planning"` > 1 % for 10 m | Postgres/pool problems surface as `internal-error` |
 | Release stalled | `rate(wes_work_units_released_total[15m]) == 0` while backlog exists (`GET /paths/{pathId}/telemetry` `backlogDepth > 0`) | WIP limit reached, pool wedged, or no release caller |
 | DLQ traffic | any log line `sending to dead-letter topic`, or the `<topic>.dlq` end offset growing | poison or unprocessable upstream events |

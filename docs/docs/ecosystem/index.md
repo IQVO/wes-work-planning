@@ -11,10 +11,14 @@ description: Where this service sits among the warehouse-systems bounded context
 
 `warehouse-systems` is a fleet of Go services, each a bounded context with its
 own model, its own database and its own deployment lifecycle. This one is the
-WES tier's core — the conductor. This section covers the eleven contexts this
+WES tier's core — the conductor. This section covers the ten contexts this
 service integrates with directly; the others (labor-performance,
-warehouse-planning) have no edge to it, and warehouse-ops-agent and the
-warehouse-console shell only call its public REST/MCP API.
+warehouse-planning, and facility-layout since
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)
+retired the travel-distance lookup) have no edge to it, and
+warehouse-ops-agent and the warehouse-console shell only call its public
+REST/MCP API. warehouse-planning owns the charge forecast and the labour plan
+that used to be posted here.
 
 | Page | Contents |
 |---|---|
@@ -37,7 +41,6 @@ flowchart TB
     end
     subgraph sup["Supporting and Generic"]
         WM["workforce-management<br/><i>Supporting</i>"]
-        FL["facility-layout<br/><i>Generic</i>"]
         PPM["process-path-management<br/><i>Generic</i>"]
     end
     NF["network-fulfillment"]
@@ -57,11 +60,10 @@ flowchart TB
     WP -->|"PathCapacityChanged"| NF
     FE -->|"TaskCompleted"| WP
     PM -->|"ProductClassified<br/>ProductPackLevel*<br/>(local copies, ADR-0035, ADR-0045)"| WP
-    WP -.->|"GET /distance"| FL
 
     style WP fill:#2e6da4,color:#ffffff,stroke:#1b4368,stroke-width:3px
 ```
 
-Solid arrows are Kafka edges, dashed arrows are REST lookups this service
-makes; every one of them touches this service. See the
+All arrows are Kafka edges; this service makes no outbound REST lookup since
+ADR-0049, and every edge touches this service. See the
 [context map](./context-map.md) for the relationship patterns.

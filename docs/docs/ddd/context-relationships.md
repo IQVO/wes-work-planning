@@ -99,7 +99,7 @@ and conform to *their* published `TaskCompleted` shape.
 
 This context no longer conforms to `facility-layout`: its one fact, the
 distance between two location codes read when a shift plan was committed,
-went with the shift plan to warehouse-planning
+was retired with the shift plan
 ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
 
 `process-path-management` is a **Generic subdomain** and owns the process-path

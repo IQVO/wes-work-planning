@@ -74,12 +74,11 @@ problem `type` it produces. Problem types are relative to
 
 | Status / `type` | Cause | Fix |
 |---|---|---|
-| `400 unknown-path-id` | `pathId` not in the process-path catalogue. Checked on the routes that can create an aggregate: `POST .../charge`, `.../plan`, `.../work-units`, `PUT .../pool` | use a declared path or add it to the catalogue |
+| `400 unknown-path-id` | `pathId` not in the process-path catalogue. Checked on the routes that can create an aggregate: `POST .../work-units`, `PUT .../pool` | use a declared path or add it to the catalogue |
 | `404 not-found` on `work-releases`, `telemetry`, `rebalance-decisions` | no `WorkPool` exists for that path yet (created by the first enqueue or by `PUT /paths/{pathId}/pool`) | enqueue or configure first |
 | `404 not-found` on `labor-plan-view` / `inventory-view` | no event observed yet for that path/SKU | wait for the upstream event or check consumption |
-| `400 heads-exceed-installed-stations` | `plannedHeads > installedStations` | fix the plan |
-| `400 malformed-request-body` | invalid JSON, a missing required field (`cpt`, `plannedHeads`, `installedStations`, `wipLimit`, bucket `cpt`/`quantity`) or an empty/invalid `cutoffAt` | fix the request |
-| `400 invalid-rate` / `400 invalid-hours` | `POST .../plan` with a `rateUnitsPerHour` or `hours` that is ≤ 0 **or omitted** (their zero value fails domain validation; only `plannedHeads` and `installedStations` are pointer fields, so only their omission is `malformed-request-body`) | send a positive rate and hours |
+| `410 charge-forecast-moved` / `410 shift-plan-moved` | `POST .../charge` or `.../plan`: the charge forecast and the shift plan moved to warehouse-planning ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)); any body gets the 410 | send `PUT /workload-forecasts/{site_id}/{path_id}` or `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` to warehouse-planning, as the problem detail says |
+| `400 malformed-request-body` | invalid JSON, a missing required field (`cpt`, `wipLimit`) or an empty/invalid `cutoffAt` | fix the request |
 | `400 invalid-line-no` | `lineNo` given but outside 1..2147483647 | omit it or send a valid line |
 | `409 wip-limit-reached` | release-fed pool at its WIP limit | complete work, or raise the limit with `PUT /paths/{pathId}/pool` |
 | `409 work-pool-empty` | nothing pending | enqueue work |
@@ -99,10 +98,10 @@ version column and retry.
 
 ## Sibling lookups
 
-| Symptom | Cause | Check | Fix |
-|---|---|---|---|
-| Committed plans lack `travelDistanceM` | `TRAVEL_DISTANCE_MODE` not `http`, no `fromLocationCode`/`toLocationCode` in the request, an unknown or cross-zone pair, or facility-layout failing — all fail-open | `circuit_breaker_state{dependency="facility-layout"}` | fix facility-layout or `FACILITY_LAYOUT_BASE_URL` |
-| `circuit_breaker_state{dependency="facility-layout"} == 2` | 5 consecutive failures, or more than half of at least 10 requests failed in a 30 s window | facility-layout health | the breaker half-opens after 30 s and lets one probe through |
+This service makes no synchronous call to a sibling. The facility-layout
+travel-distance lookup, and with it the `circuit_breaker_state` series, went
+with the shift plan
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
 
 ## MCP and analytics
 

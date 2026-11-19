@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,10 +122,6 @@ type world struct {
 	server *httptest.Server
 	h      *harness
 
-	// installedStations remembers the capacity a Given step declared for a
-	// process path, so the ShiftPlan When step can send it.
-	installedStations map[string]int
-
 	lastStatus int
 	lastBody   []byte
 	lastHeader http.Header
@@ -135,7 +132,6 @@ func (w *world) reset() {
 		w.server.Close()
 	}
 	w.server, w.h = newServer()
-	w.installedStations = make(map[string]int)
 	w.lastStatus = 0
 	w.lastBody = nil
 }
@@ -239,11 +235,6 @@ func (w *world) serviceIsRunning() error {
 	return nil
 }
 
-func (w *world) pathHasInstalledStations(pathId string, stations int) error {
-	w.installedStations[pathId] = stations
-	return nil
-}
-
 func (w *world) workPoolIsEmpty(pathId string) error {
 	if err := w.do(http.MethodGet, "/paths/"+pathId+"/telemetry", nil); err != nil {
 		return err
@@ -258,7 +249,7 @@ func (w *world) workPoolIsEmpty(pathId string) error {
 // provisionPool seeds a release-fed WorkPool with an explicit WIP limit,
 // mirroring the default-provisioned pool EnqueueWorkUnit would otherwise
 // create (alarm threshold 1000). The REST surface has no provisioning
-// endpoint, so — like installedStations — this is Given-step state.
+// endpoint, so this is Given-step state.
 func (w *world) provisionPool(wipLimit int, pathId string) error {
 	pid, err := shared.NewPathId(pathId)
 	if err != nil {
@@ -304,15 +295,6 @@ func (w *world) observeInventoryChanges(delta1, delta2 int, sku string) error {
 }
 
 // --- When steps --------------------------------------------------------
-
-func (w *world) commitShiftPlan(pathId string, heads int, rate, hours float64) error {
-	return w.do(http.MethodPost, "/paths/"+pathId+"/plan", map[string]any{
-		"plannedHeads":      heads,
-		"installedStations": w.installedStations[pathId],
-		"rateUnitsPerHour":  rate,
-		"hours":             hours,
-	})
-}
 
 func (w *world) enqueueWorkUnit(workUnitId, cpt, reference, pathId string) error {
 	if err := w.do(http.MethodPost, "/paths/"+pathId+"/work-units", map[string]any{
@@ -361,27 +343,6 @@ func (w *world) recordCompletion(workUnitId string) error {
 
 func (w *world) requestRebalanceDecision(pathId string) error {
 	return w.do(http.MethodPost, "/paths/"+pathId+"/rebalance-decisions", nil)
-}
-
-func (w *world) receiveChargeForecast(qty1, qty2 int, pathId string) error {
-	return w.do(http.MethodPost, "/paths/"+pathId+"/charge", map[string]any{
-		"buckets": []map[string]any{
-			{"cpt": "2026-08-21T12:00:00Z", "quantity": qty1},
-			{"cpt": "2026-08-21T18:00:00Z", "quantity": qty2},
-		},
-	})
-}
-
-func (w *world) receiveChargeForecastNegativeQuantity(pathId string) error {
-	return w.do(http.MethodPost, "/paths/"+pathId+"/charge", map[string]any{
-		"buckets": []map[string]any{{"cpt": "2026-08-21T12:00:00Z", "quantity": -5}},
-	})
-}
-
-func (w *world) receiveChargeForecastNoBuckets(pathId string) error {
-	return w.do(http.MethodPost, "/paths/"+pathId+"/charge", map[string]any{
-		"buckets": []map[string]any{},
-	})
 }
 
 func (w *world) requestLaborPlanView(pathId string) error {
@@ -439,6 +400,27 @@ func (w *world) problemDetailTitle(title string) error {
 	return nil
 }
 
+// problemDetailNames checks the occurrence-level detail mentions want, e.g.
+// the route a moved command lives on now (ADR-0049).
+func (w *world) problemDetailNames(want string) error {
+	got, err := w.stringField("detail")
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(got, want) {
+		return fmt.Errorf("problem detail %q does not name %q", got, want)
+	}
+	return nil
+}
+
+// noEventPublished checks the scenario raised no domain event at all.
+func (w *world) noEventPublished() error {
+	if len(w.h.published.names) != 0 {
+		return fmt.Errorf("want no event published, got %v", w.h.published.names)
+	}
+	return nil
+}
+
 func (w *world) problemDetailType(typeURI string) error {
 	got, err := w.stringField("type")
 	if err != nil {
@@ -446,33 +428,6 @@ func (w *world) problemDetailType(typeURI string) error {
 	}
 	if got != typeURI {
 		return fmt.Errorf("got problem type %q, want %q", got, typeURI)
-	}
-	return nil
-}
-
-func (w *world) pathPlanReports(heads, stations int) error {
-	gotHeads, err := w.numberField("plannedHeads")
-	if err != nil {
-		return err
-	}
-	gotStations, err := w.numberField("installedStations")
-	if err != nil {
-		return err
-	}
-	if int(gotHeads) != heads || int(gotStations) != stations {
-		return fmt.Errorf("got %d planned heads against %d installed stations, want %d against %d",
-			int(gotHeads), int(gotStations), heads, stations)
-	}
-	return nil
-}
-
-func (w *world) pathPlanThroughput(want float64) error {
-	got, err := w.numberField("plannedThroughput")
-	if err != nil {
-		return err
-	}
-	if got != want {
-		return fmt.Errorf("got planned throughput %v, want %v", got, want)
 	}
 	return nil
 }
@@ -581,43 +536,6 @@ func (w *world) rebalanceReports(backlogDepth, wip int) error {
 	return nil
 }
 
-func (w *world) chargeForecastBucketCount(count int) error {
-	obj, err := w.decodeLast()
-	if err != nil {
-		return err
-	}
-	buckets, ok := obj["buckets"].([]any)
-	if !ok {
-		return fmt.Errorf("response has no buckets array: %s", string(w.lastBody))
-	}
-	if len(buckets) != count {
-		return fmt.Errorf("got %d CPT buckets, want %d", len(buckets), count)
-	}
-	return nil
-}
-
-func (w *world) chargeForecastTotal(total int) error {
-	got, err := w.numberField("totalQuantity")
-	if err != nil {
-		return err
-	}
-	if int(got) != total {
-		return fmt.Errorf("got total quantity %d, want %d", int(got), total)
-	}
-	return nil
-}
-
-func (w *world) chargeForecastReceivedAt(at string) error {
-	got, err := w.stringField("receivedAt")
-	if err != nil {
-		return err
-	}
-	if got != at {
-		return fmt.Errorf("got receivedAt %q, want %q", got, at)
-	}
-	return nil
-}
-
 func (w *world) laborPlanViewReports(heads int, rate, hours float64) error {
 	gotHeads, err := w.numberField("plannedHeads")
 	if err != nil {
@@ -649,44 +567,7 @@ func (w *world) laborPlanViewObservedAt(at string) error {
 	return nil
 }
 
-// --- ADR-0019 reconciliation steps -------------------------------------
-
-func (w *world) laborPlanViewReportsDrift(heads int) error {
-	obj, err := w.decodeLast()
-	if err != nil {
-		return err
-	}
-	got, ok := obj["driftHeads"].(float64)
-	if !ok {
-		return fmt.Errorf("labor plan view carries no driftHeads: %s", string(w.lastBody))
-	}
-	if int(got) != heads {
-		return fmt.Errorf("got driftHeads %d, want %d", int(got), heads)
-	}
-	return nil
-}
-
-func (w *world) laborPlanViewDriftDetectedAt(at string) error {
-	got, err := w.stringField("driftDetectedAt")
-	if err != nil {
-		return err
-	}
-	if got != at {
-		return fmt.Errorf("got driftDetectedAt %q, want %q", got, at)
-	}
-	return nil
-}
-
-func (w *world) laborPlanViewHasNoDriftDetectedAt() error {
-	obj, err := w.decodeLast()
-	if err != nil {
-		return err
-	}
-	if _, present := obj["driftDetectedAt"]; present {
-		return fmt.Errorf("labor plan view carries driftDetectedAt although the plans agree: %s", string(w.lastBody))
-	}
-	return nil
-}
+// --- labor plan view without the retired drift (ADR-0049) ---------------
 
 func (w *world) laborPlanViewHasNoDrift() error {
 	obj, err := w.decodeLast()
@@ -695,15 +576,8 @@ func (w *world) laborPlanViewHasNoDrift() error {
 	}
 	for _, field := range []string{"driftHeads", "driftDetectedAt"} {
 		if _, present := obj[field]; present {
-			return fmt.Errorf("labor plan view carries %s before both plans were committed: %s", field, string(w.lastBody))
+			return fmt.Errorf("labor plan view carries %s although nothing reconciles it any more (ADR-0049): %s", field, string(w.lastBody))
 		}
-	}
-	return nil
-}
-
-func (w *world) driftEventsRaised(count int) error {
-	if got := w.h.published.count("PathPlanDriftDetected"); got != count {
-		return fmt.Errorf("got %d PathPlanDriftDetected events, want %d (published: %v)", got, count, w.h.published.names)
 	}
 	return nil
 }
@@ -821,22 +695,17 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	})
 
 	sc.Step(`^the WES Work Planning service is running$`, w.serviceIsRunning)
-	sc.Step(`^process path "([^"]*)" has (\d+) installed stations$`, w.pathHasInstalledStations)
 	sc.Step(`^the Work Pool for process path "([^"]*)" is empty$`, w.workPoolIsEmpty)
 	sc.Step(`^a release-fed Work Pool with a WIP limit of (\d+) is provisioned for process path "([^"]*)"$`, w.provisionPool)
 	sc.Step(`^Workforce Management committed a labor plan of (\d+) heads at ([\d.]+) units per hour for ([\d.]+) hours for process path "([^"]*)"$`, w.observeLaborPlan)
 	sc.Step(`^inventory changes of ([+-]?\d+) and ([+-]?\d+) units are observed for SKU "([^"]*)"$`, w.observeInventoryChanges)
 
-	sc.Step(`^a ShiftPlan is committed for process path "([^"]*)" with (\d+) planned heads at a rate of ([\d.]+) units per hour for ([\d.]+) hours$`, w.commitShiftPlan)
 	sc.Step(`^a WorkUnit "([^"]*)" with CPT "([^"]*)" and reference "([^"]*)" is enqueued to process path "([^"]*)"$`, w.enqueueWorkUnit)
 	sc.Step(`^(\d+) WorkUnits are enqueued to process path "([^"]*)"$`, w.enqueueNWorkUnits)
 	sc.Step(`^work is released from process path "([^"]*)"$`, w.releaseWork)
 	sc.Step(`^(\d+) WorkUnits are released from process path "([^"]*)"$`, w.releaseNWorkUnits)
 	sc.Step(`^the WorkUnit "([^"]*)" is recorded as completed$`, w.recordCompletion)
 	sc.Step(`^the rebalance decision is requested for process path "([^"]*)"$`, w.requestRebalanceDecision)
-	sc.Step(`^a charge forecast with buckets of (\d+) and (\d+) units is received for process path "([^"]*)"$`, w.receiveChargeForecast)
-	sc.Step(`^a charge forecast with a negative quantity is received for process path "([^"]*)"$`, w.receiveChargeForecastNegativeQuantity)
-	sc.Step(`^a charge forecast with no CPT buckets is received for process path "([^"]*)"$`, w.receiveChargeForecastNoBuckets)
 	sc.Step(`^the labor plan view is requested for process path "([^"]*)"$`, w.requestLaborPlanView)
 	sc.Step(`^the inventory view is requested for SKU "([^"]*)"$`, w.requestInventoryView)
 	sc.Step(`^work units are looked up by reference "([^"]*)"$`, w.lookupWorkUnitsByReference)
@@ -849,8 +718,6 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the request is rejected with status (\d+)$`, w.requestAccepted)
 	sc.Step(`^the problem detail title is "([^"]*)"$`, w.problemDetailTitle)
 	sc.Step(`^the problem detail type is "([^"]*)"$`, w.problemDetailType)
-	sc.Step(`^the committed PathPlan reports (\d+) planned heads against (\d+) installed stations$`, w.pathPlanReports)
-	sc.Step(`^the committed PathPlan reports a planned throughput of ([\d.]+) units$`, w.pathPlanThroughput)
 	sc.Step(`^the released WorkUnit is "([^"]*)"$`, w.releasedWorkUnitIs)
 	sc.Step(`^the released WorkUnit is in state "([^"]*)"$`, w.responseWorkUnitState)
 	sc.Step(`^the WorkUnit in the response is in state "([^"]*)"$`, w.responseWorkUnitState)
@@ -860,16 +727,11 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the rebalance recommendation action is "([^"]*)"$`, w.rebalanceAction)
 	sc.Step(`^the rebalance recommendation reports backlog depth (\d+) and WIP (\d+)$`, w.rebalanceReports)
 	sc.Step(`^the rebalance recommendation includes the observed labor plan with (\d+) planned heads$`, w.rebalanceLaborPlanHeads)
-	sc.Step(`^the charge forecast reports (\d+) CPT buckets$`, w.chargeForecastBucketCount)
-	sc.Step(`^the charge forecast reports a total quantity of (\d+) units$`, w.chargeForecastTotal)
-	sc.Step(`^the charge forecast was received at "([^"]*)"$`, w.chargeForecastReceivedAt)
 	sc.Step(`^the labor plan view reports (\d+) planned heads at a rate of ([\d.]+) units per hour for ([\d.]+) hours$`, w.laborPlanViewReports)
 	sc.Step(`^the labor plan view was observed at "([^"]*)"$`, w.laborPlanViewObservedAt)
-	sc.Step(`^the labor plan view reports a drift of ([+-]?\d+) heads$`, w.laborPlanViewReportsDrift)
-	sc.Step(`^the labor plan view reports the drift was detected at "([^"]*)"$`, w.laborPlanViewDriftDetectedAt)
-	sc.Step(`^the labor plan view reports no drift detection time$`, w.laborPlanViewHasNoDriftDetectedAt)
 	sc.Step(`^the labor plan view reports no drift$`, w.laborPlanViewHasNoDrift)
-	sc.Step(`^(\d+) PathPlanDriftDetected events? (?:was|were) raised$`, w.driftEventsRaised)
+	sc.Step(`^the problem detail names "([^"]*)"$`, w.problemDetailNames)
+	sc.Step(`^no event was published$`, w.noEventPublished)
 	sc.Step(`^the inventory view reports a usable quantity of ([+-]?\d+) units$`, w.inventoryViewQuantity)
 	sc.Step(`^the inventory view was observed at "([^"]*)"$`, w.inventoryViewObservedAt)
 	sc.Step(`^the work unit lookup returns (\d+) work units$`, w.workUnitLookupCount)

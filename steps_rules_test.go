@@ -275,22 +275,6 @@ func (s *docRulesSteps) lastEventIsFor(name, workUnitId, pathId string) error {
 	return nil
 }
 
-func (s *docRulesSteps) driftEventReports(ours, observed, drift int) error {
-	ev, err := s.lastEvent("PathPlanDriftDetected")
-	if err != nil {
-		return err
-	}
-	e, ok := ev.(shared.PathPlanDriftDetected)
-	if !ok {
-		return fmt.Errorf("unexpected drift event type %T", ev)
-	}
-	if e.WesPlannedHeads != ours || e.ObservedPlannedHeads != observed || e.DriftHeads != drift {
-		return fmt.Errorf("drift event reports %d ours, %d observed, drift %d; want %d, %d, %d",
-			e.WesPlannedHeads, e.ObservedPlannedHeads, e.DriftHeads, ours, observed, drift)
-	}
-	return nil
-}
-
 func registerRulesSteps(sc *godog.ScenarioContext, w *world, wv2 *wave2) {
 	s := &docRulesSteps{w: w, wave2: wv2}
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
@@ -325,5 +309,4 @@ func registerRulesSteps(sc *godog.ScenarioContext, w *world, wv2 *wave2) {
 
 	// Published events.
 	sc.Step(`^the last "([^"]*)" event is for WorkUnit "([^"]*)" on process path "([^"]*)"$`, s.lastEventIsFor)
-	sc.Step(`^the PathPlanDriftDetected event reports (\d+) planned heads of ours against (\d+) observed, a drift of ([+-]?\d+)$`, s.driftEventReports)
 }

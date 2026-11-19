@@ -1,133 +1,41 @@
 package http
 
-import (
-	"fmt"
-	"net/http"
+import "net/http"
 
-	"github.com/claudioed/wes-work-planning/internal/application/usecases"
-	"github.com/claudioed/wes-work-planning/internal/domain/shared"
+// ADR-0049 stage C: the charge forecast and the shift plan moved to
+// warehouse-planning (its ADR 0023). Their two POST routes stay one release
+// and answer 410 Gone for ANY body, naming the route to call instead; they
+// go in stage E. Nothing is decoded, recorded or published.
+const (
+	chargeForecastMovedSlug   = "charge-forecast-moved"
+	chargeForecastMovedTitle  = "Charge forecast moved to warehouse-planning"
+	chargeForecastMovedDetail = "the charge forecast moved to warehouse-planning (ADR-0049): send it as PUT /workload-forecasts/{site_id}/{path_id} on warehouse-planning"
+
+	shiftPlanMovedSlug   = "shift-plan-moved"
+	shiftPlanMovedTitle  = "Shift plan moved to warehouse-planning"
+	shiftPlanMovedDetail = "the shift plan moved to warehouse-planning (ADR-0049): send it as PUT /labour-plans/{site_id}/{shift_id}/{path_id} on warehouse-planning"
 )
 
-func (h *Handlers) postChargeForecast(w http.ResponseWriter, r *http.Request) {
-	pathId, err := pathIdParam(r)
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	if err := h.validatePathId(pathId); err != nil {
-		writeError(w, r, err)
-		return
-	}
-
-	var body receiveChargeForecastRequestDTO
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-
-	buckets := make([]usecases.CPTBucketInput, len(body.Buckets))
-	for i, b := range body.Buckets {
-		if b.CPT == nil {
-			writeError(w, r, fmt.Errorf("%w: buckets[%d].cpt is required", errMalformedBody, i))
-			return
-		}
-		if b.Quantity == nil {
-			writeError(w, r, fmt.Errorf("%w: buckets[%d].quantity is required", errMalformedBody, i))
-			return
-		}
-		qty, err := shared.NewQuantity(*b.Quantity)
-		if err != nil {
-			writeError(w, r, err)
-			return
-		}
-		pickUnit, err := pickUnitOf(b.PickUnit)
-		if err != nil {
-			writeError(w, r, err)
-			return
-		}
-		buckets[i] = usecases.CPTBucketInput{CPT: shared.NewCPT(*b.CPT), Quantity: qty, SKU: b.SKU, PickUnit: pickUnit}
-	}
-
-	forecast, err := h.ReceiveChargeForecast.Execute(r.Context(), usecases.ReceiveChargeForecastRequest{
-		PathId:  pathId,
-		Buckets: buckets,
-	})
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-
-	w.Header().Set("Location", "/paths/"+forecast.PathId().String()+"/charge")
-	writeJSON(w, http.StatusCreated, chargeForecastResponseDTO{
-		PathId:        forecast.PathId().String(),
-		TotalQuantity: forecast.TotalQuantity().Value(),
-		Buckets:       toBucketDTOs(forecast.Buckets()),
-		ReceivedAt:    forecast.ReceivedAt(),
-	})
+// postChargeForecast answers POST /paths/{pathId}/charge: always 410
+// charge-forecast-moved.
+func postChargeForecast(w http.ResponseWriter, r *http.Request) {
+	writeGone(w, r, chargeForecastMovedSlug, chargeForecastMovedTitle, chargeForecastMovedDetail)
 }
 
-func (h *Handlers) postShiftPlan(w http.ResponseWriter, r *http.Request) {
-	pathId, err := pathIdParam(r)
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	if err := h.validatePathId(pathId); err != nil {
-		writeError(w, r, err)
-		return
-	}
+// postShiftPlan answers POST /paths/{pathId}/plan: always 410
+// shift-plan-moved.
+func postShiftPlan(w http.ResponseWriter, r *http.Request) {
+	writeGone(w, r, shiftPlanMovedSlug, shiftPlanMovedTitle, shiftPlanMovedDetail)
+}
 
-	var body commitShiftPlanRequestDTO
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-
-	if body.PlannedHeads == nil {
-		writeError(w, r, fmt.Errorf("%w: plannedHeads is required", errMalformedBody))
-		return
-	}
-	if body.InstalledStations == nil {
-		writeError(w, r, fmt.Errorf("%w: installedStations is required", errMalformedBody))
-		return
-	}
-
-	heads, err := shared.NewStationCount(*body.PlannedHeads)
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	installed, err := shared.NewStationCount(*body.InstalledStations)
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	rate, err := shared.NewRate(body.RateUnitsPerHour)
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-
-	pickUnit, err := pickUnitOf(body.PickUnit)
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	shiftPlan, err := h.CommitShiftPlan.Execute(r.Context(), usecases.CommitShiftPlanRequest{
-		PathId:            pathId,
-		PlannedHeads:      heads,
-		InstalledStations: installed,
-		Rate:              rate,
-		Hours:             body.Hours,
-		FromLocationCode:  body.FromLocationCode,
-		ToLocationCode:    body.ToLocationCode,
-		SKU:               body.SKU,
-		PickUnit:          pickUnit,
+// writeGone writes a 410 RFC 7807 problem for a route whose decision moved
+// to another context.
+func writeGone(w http.ResponseWriter, r *http.Request, slug, title, detail string) {
+	writeProblem(w, http.StatusGone, problemDetails{
+		Type:     problemBaseURI + slug,
+		Title:    title,
+		Status:   http.StatusGone,
+		Detail:   detail,
+		Instance: r.URL.Path,
 	})
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-
-	pathPlan, _ := shiftPlan.PathPlan(pathId)
-	w.Header().Set("Location", "/paths/"+pathId.String()+"/plan")
-	writeJSON(w, http.StatusCreated, toShiftPlanResponseDTO(pathPlan))
 }

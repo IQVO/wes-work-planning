@@ -344,51 +344,6 @@ func (s *wave2) rebalanceOmitsLaborPlan() error {
 	return nil
 }
 
-// --- shift plan and charge forecast validation ---------------------------
-
-func (s *wave2) commitShiftPlanValues(pathId string, heads, stations int, rate, hours float64) error {
-	return s.w.do(http.MethodPost, "/paths/"+pathId+"/plan", map[string]any{
-		"plannedHeads":      heads,
-		"installedStations": stations,
-		"rateUnitsPerHour":  rate,
-		"hours":             hours,
-	})
-}
-
-func (s *wave2) commitShiftPlanWithout(pathId, field string) error {
-	body := map[string]any{
-		"plannedHeads":      6,
-		"installedStations": 8,
-		"rateUnitsPerHour":  95.5,
-		"hours":             8,
-	}
-	delete(body, field)
-	return s.w.do(http.MethodPost, "/paths/"+pathId+"/plan", body)
-}
-
-func (s *wave2) committedPlanHasNoTravelDistance() error {
-	obj, err := s.w.decodeLast()
-	if err != nil {
-		return err
-	}
-	for _, field := range []string{"travelDistanceM", "travelDistanceEstimated"} {
-		if value, present := obj[field]; present {
-			return fmt.Errorf("committed plan carries %s = %v although no hint was requested: %s", field, value, string(s.w.lastBody))
-		}
-	}
-	return nil
-}
-
-func (s *wave2) chargeForecastBody(body, pathId string) error {
-	return s.doRaw(http.MethodPost, "/paths/"+pathId+"/charge", body)
-}
-
-func (s *wave2) chargeForecastSingleBucket(quantity int, pathId string) error {
-	return s.w.do(http.MethodPost, "/paths/"+pathId+"/charge", map[string]any{
-		"buckets": []map[string]any{{"cpt": defaultCPT, "quantity": quantity}},
-	})
-}
-
 // --- Kafka-consumed use cases --------------------------------------------
 
 func (s *wave2) publishTaskCompleted(eventId, workUnitId string) error {
@@ -618,13 +573,6 @@ func registerWave2Steps(sc *godog.ScenarioContext, w *world) *wave2 {
 	sc.Step(`^the PathCapacityChanged event reports a cutoff of "([^"]*)" with (\d+) remaining units$`, s.capacityEventReports)
 	sc.Step(`^the PathCapacityChanged event reports a cutoff of "([^"]*)" with unknown remaining capacity$`, s.capacityEventUnknown)
 	sc.Step(`^the rebalance recommendation carries no labor plan$`, s.rebalanceOmitsLaborPlan)
-
-	// Shift plan and charge forecast validation.
-	sc.Step(`^a ShiftPlan is committed for process path "([^"]*)" with (-?\d+) planned heads and (-?\d+) installed stations at a rate of (-?[0-9.]+(?:[eE][+-]?\d+)?) units per hour for (-?[0-9.]+(?:[eE][+-]?\d+)?) hours$`, s.commitShiftPlanValues)
-	sc.Step(`^a ShiftPlan is committed for process path "([^"]*)" without the "([^"]*)" field$`, s.commitShiftPlanWithout)
-	sc.Step(`^the committed PathPlan reports no travel distance hint$`, s.committedPlanHasNoTravelDistance)
-	sc.Step(`^the charge forecast body (.+) is received for process path "([^"]*)"$`, s.chargeForecastBody)
-	sc.Step(`^a charge forecast with a single bucket of (\d+) units is received for process path "([^"]*)"$`, s.chargeForecastSingleBucket)
 
 	// Kafka-consumed use cases.
 	sc.Step(`^fulfillment-execution publishes TaskCompleted event "([^"]*)" for WorkUnit "([^"]*)"$`, s.publishTaskCompleted)

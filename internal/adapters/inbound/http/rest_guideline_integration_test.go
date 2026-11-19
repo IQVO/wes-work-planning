@@ -25,8 +25,9 @@ func doKeyed(router http.Handler, method, path, key, body string) *httptest.Resp
 	return rec
 }
 
-// TestIdempotency_EveryPostRequiresAKey: all four formerly unkeyed POSTs
-// (and enqueue) answer 400 idempotency-key-required without the header.
+// TestIdempotency_EveryPostRequiresAKey: every POST, the two always-410
+// planning routes of ADR-0049 included, answers 400 idempotency-key-required
+// without the header.
 func TestIdempotency_EveryPostRequiresAKey(t *testing.T) {
 	router := newIdempotencyRouter(t, idempotencyDB(t))
 	for _, path := range []string{
@@ -62,16 +63,16 @@ func TestIdempotency_InvalidKeyIs400(t *testing.T) {
 // global: the same key on another route is 409 idempotency-key-reused.
 func TestIdempotency_ReplayHeaderAndGlobalKey(t *testing.T) {
 	router := newIdempotencyRouter(t, idempotencyDB(t))
-	body := `{"buckets":[{"cpt":"2026-08-21T12:00:00Z","quantity":10}]}`
+	body := `{"workUnitId":"wu-guideline-1","cpt":"2026-08-21T12:00:00Z","reference":"order-guideline-1"}`
 
-	first := doKeyed(router, http.MethodPost, "/paths/pick-a/charge", "key-guideline-1", body)
+	first := doKeyed(router, http.MethodPost, "/paths/pick-a/work-units", "key-guideline-1", body)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first = %d %s", first.Code, first.Body.String())
 	}
 	if got := first.Header().Get("Idempotency-Replayed"); got != "" {
 		t.Fatalf("first answer carries Idempotency-Replayed=%q", got)
 	}
-	replay := doKeyed(router, http.MethodPost, "/paths/pick-a/charge", "key-guideline-1", body)
+	replay := doKeyed(router, http.MethodPost, "/paths/pick-a/work-units", "key-guideline-1", body)
 	if replay.Code != first.Code || replay.Body.String() != first.Body.String() {
 		t.Fatalf("replay = %d %s, want %d %s", replay.Code, replay.Body.String(), first.Code, first.Body.String())
 	}
@@ -82,11 +83,11 @@ func TestIdempotency_ReplayHeaderAndGlobalKey(t *testing.T) {
 		t.Fatalf("replay Location = %q, want %q", replay.Header().Get("Location"), first.Header().Get("Location"))
 	}
 
-	other := doKeyed(router, http.MethodPost, "/paths/pick-b/charge", "key-guideline-1", body)
+	other := doKeyed(router, http.MethodPost, "/paths/pick-b/work-units", "key-guideline-1", body)
 	if other.Code != http.StatusConflict || !strings.Contains(other.Body.String(), "idempotency-key-reused") {
 		t.Fatalf("same key other path = %d %s, want 409 idempotency-key-reused", other.Code, other.Body.String())
 	}
-	diffRoute := doKeyed(router, http.MethodPost, "/paths/pick-a/plan", "key-guideline-1", body)
+	diffRoute := doKeyed(router, http.MethodPost, "/paths/pick-a/rebalance-decisions", "key-guideline-1", body)
 	if diffRoute.Code != http.StatusConflict {
 		t.Fatalf("same key other route = %d, want 409", diffRoute.Code)
 	}

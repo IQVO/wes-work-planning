@@ -10,8 +10,8 @@ paths:
 ## REST API (inbound adapter, 14 operationIds in apis/openapi.yaml)
 
 - `GET  /healthz`                          → healthCheck
-- `POST /paths/{pathId}/charge`            → receiveChargeForecast
-- `POST /paths/{pathId}/plan`              → commitShiftPlan
+- `POST /paths/{pathId}/charge`            → receiveChargeForecast — always 410 `charge-forecast-moved` (ADR-0049; removed at stage E)
+- `POST /paths/{pathId}/plan`              → commitShiftPlan — always 410 `shift-plan-moved` (ADR-0049; removed at stage E)
 - `POST /paths/{pathId}/work-units`        → enqueueWorkUnit (optional `lineNo`, ADR-0036)
 - `POST /paths/{pathId}/work-releases`      → releaseNextWork (keyed)
 - `PUT  /paths/{pathId}/pool`              → configurePool (ADR-0034)
@@ -100,11 +100,14 @@ Topic `warehouse.work-planning.events`:
   order-management runs with `PATH_CATALOGUE_SOURCE=kafka`) (ADR-0018), and
   by network-fulfillment's `pathcapacitycache` adapter (process-unique
   consumer group, replays from the earliest offset).
-- `com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected` — published
-  by `CommitShiftPlan` or `ObserveLaborPlan` (whichever commits second) when
-  our `PathPlan` and Workforce's `LaborPlanObserved` disagree on planned
-  heads (ADR-0019). `data`: `{"path_id","wes_planned_heads",
-  "observed_planned_heads","drift_heads","observed_at"}`. No consumer today.
+- RETIRED (ADR-0049), no longer published on either topic:
+  `com.warehouse.wes.work-planning.charge.ChargeForecastReceived`,
+  `com.warehouse.wes.work-planning.plan.ShiftPlanCommitted` and
+  `com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected`. The
+  forecast, the labour plan and the drift now belong to warehouse-planning
+  (its `WorkloadForecastReceived`, `LabourPlanCommitted`,
+  `LabourPlanDriftDetected`). The analytics projector still acknowledges the
+  historical types without projecting them.
 - All other domain events are also published to this topic for
   observability; only `WorkReleased` and `PathCapacityChanged` have live
   consumers today.

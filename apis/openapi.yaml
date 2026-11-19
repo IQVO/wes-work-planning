@@ -3,22 +3,21 @@ info:
   title: WES — Work Planning & Release
   version: "1.0.0"
   description: >
-    The core bounded context of a Warehouse Execution System (WES). It turns
-    a shift's **charge** (volume due by each CPT — Critical Pull Time, the
-    last moment a parcel can be manifested and still make its truck) into a
-    **plan** (rate × heads per process path), releases work continuously in
-    priority order (waveless — no discrete wave batches), and performs flow
-    balancing off live buffer telemetry using Drum-Buffer-Rope with CPT as
-    the drum. It is the "conductor": downstream of WMS planning/inventory,
-    upstream of WCS equipment control.
+    The core bounded context of a Warehouse Execution System (WES). It
+    releases work continuously in CPT priority order (waveless — no discrete
+    wave batches; CPT is the Critical Pull Time, the last moment a parcel can
+    be manifested and still make its truck) and performs flow balancing off
+    live buffer telemetry using Drum-Buffer-Rope with CPT as the drum. It is
+    the "conductor": downstream of WMS planning/inventory, upstream of WCS
+    equipment control.
 
 
-    Aggregates owned by this service: `ChargeForecast` (volume due by CPT
-    bucket), `ShiftPlan`/`PathPlan` (committed rate × heads × hours split per
-    process path, enforcing `plannedHeads <= installedStations`), `WorkPool`
-    (the priority queue for one process path — release-fed pools enforce a
-    hard WIP limit, flow-fed pools only alarm), and `WorkUnit` (a releasable
-    unit of work with at-most-once assignment and no double-complete).
+    Aggregates owned by this service: `WorkPool` (the priority queue for one
+    process path — release-fed pools enforce a hard WIP limit, flow-fed pools
+    only alarm) and `WorkUnit` (a releasable unit of work with at-most-once
+    assignment and no double-complete). The charge forecast and the shift
+    plan moved to warehouse-planning (ADR-0049): their two POST routes answer
+    `410 Gone` for one release, naming warehouse-planning's routes.
 
 
     This service does **not** own equipment control (WCS), inventory
@@ -38,14 +37,14 @@ servers:
 tags:
   - name: Charge Forecast
     description: >
-      The volume that must clear a process path, bucketed by CPT. Not "total
-      due today" — a charge is a set of CPT/quantity pairs.
+      Retired (ADR-0049): the volume due by CPT on a path is
+      warehouse-planning's workload forecast now. The route answers `410`.
   - name: Shift Plan
     description: >
-      This service's own committed split of headcount across process paths:
-      rate × heads × hours per path, enforcing `plannedHeads <=
-      installedStations`. Distinct from Workforce Management's own
-      `ShiftPlan` concept — see the Labor Plan View tag for that.
+      Retired (ADR-0049): rate × heads × hours on a path is
+      warehouse-planning's labour plan now. The route answers `410`. Distinct
+      from Workforce Management's reported labor plan — see the Labor Plan
+      View tag for that.
   - name: Work Units
     description: >
       A releasable unit of work (e.g. a pick task) enqueued onto a process
@@ -160,171 +159,51 @@ paths:
   /paths/{pathId}/charge:
     post:
       operationId: receiveChargeForecast
-      summary: Receive a charge forecast for a process path
+      deprecated: true
+      summary: Moved — the charge forecast is warehouse-planning's (always 410)
       description: >
-        Records the volume due by CPT for a process path — the ReceiveChargeForecast
-        use case. Replaces any existing forecast for the path with the new set
-        of CPT buckets (each bucket is an exact CPT timestamp and the quantity
-        due at that CPT). Publishes `ChargeForecastReceived`. This is the
-        input side of the "charge → plan → release" pipeline: a plan is later
-        committed against this charge, and work units enqueued against it are
-        released against a `WorkPool` in CPT priority order. A bucket may
-        optionally name a `sku` and a `pickUnit` (`EACH` | `CASE`) for a
-        pack-aware estimate (ADR-0045): `quantity` stays in eaches and the
-        response bucket adds `handles`, `cubeMm3` and `weightG` from the SKU's
-        local pack copy. A plain bucket is unchanged.
+        Retired by ADR-0049 (stage C). The charge forecast — the volume due by
+        each CPT on a process path — is a planning decision and moved to
+        warehouse-planning (its ADR 0023), which takes it as
+        `PUT /workload-forecasts/{site_id}/{path_id}`. This route records
+        nothing, publishes nothing and answers `410 Gone` with the problem
+        type `charge-forecast-moved` for any body; it disappears in stage E.
+        The `Idempotency-Key` header is still checked first, as on every POST.
       tags: [Charge Forecast]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/PathId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReceiveChargeForecastRequest"
-            examples:
-              plain:
-                summary: Plain buckets (quantity only)
-                value:
-                  buckets:
-                    - cpt: "2026-08-21T12:00:00Z"
-                      quantity: 4200
-                    - cpt: "2026-08-21T18:00:00Z"
-                      quantity: 1800
-              packAware:
-                summary: Pack-aware bucket (36 eaches of a 12-per-case SKU, as cases)
-                value:
-                  buckets:
-                    - cpt: "2026-08-21T12:00:00Z"
-                      quantity: 36
-                      sku: sku-482910
-                      pickUnit: CASE
       responses:
-        "201":
-          description: >
-            Charge forecast recorded. `Location` identifies the created
-            forecast's canonical resource path (this service has no dedicated
-            GET for a standalone charge forecast today — the total shows up
-            in `GET /paths/{pathId}/telemetry` once work is enqueued and
-            released against it).
-          headers:
-            Idempotency-Replayed:
-              $ref: "#/components/headers/IdempotencyReplayed"
-            Location:
-              schema:
-                type: string
-              description: Canonical URI of the created charge forecast.
-              example: /paths/pick-a/charge
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ChargeForecastResponse"
-              examples:
-                plain:
-                  summary: Plain buckets
-                  value:
-                    pathId: pick-a
-                    totalQuantity: 6000
-                    buckets:
-                      - cpt: "2026-08-21T12:00:00Z"
-                        quantity: 4200
-                      - cpt: "2026-08-21T18:00:00Z"
-                        quantity: 1800
-                    receivedAt: "2026-08-21T08:00:00Z"
-                packAware:
-                  summary: >-
-                    Pack-aware bucket: 36 eaches of a 12-per-case SKU as CASE
-                    is 3 cases (`quantity` stays in eaches)
-                  value:
-                    pathId: pick-a
-                    totalQuantity: 36
-                    buckets:
-                      - cpt: "2026-08-21T12:00:00Z"
-                        quantity: 36
-                        sku: sku-482910
-                        pickUnit: CASE
-                        handles: 3
-                        cubeMm3: 72000000
-                        weightG: 19500
-                    receivedAt: "2026-08-21T08:00:00Z"
         "400":
           description: >
             The `Idempotency-Key` header is missing (`idempotency-key-required`)
             or not 1-128 printable ASCII characters (`idempotency-key-invalid`),
-            or: malformed request body (invalid JSON), a missing required field,
-            an invalid field value (e.g. negative quantity), a `pathId`
-            outside the deployment's declared process-path families
-            (`unknown-path-id`), or a NUL character (U+0000) in the body
-            (`malformed-request-body`). For pack-aware buckets: a `pickUnit`
-            other than `EACH` / `CASE` (`unknown-pick-unit`), a `pickUnit`
-            without a `sku` (`invalid-pick-plan`), or a `quantity` below 1
-            with a `sku` (`invalid-pick-quantity`).
+            or a NUL character (U+0000) is in the body (`malformed-request-body`).
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
-              examples:
-                unknownPickUnit:
-                  summary: pickUnit is neither EACH nor CASE
-                  value:
-                    type: https://errors.wes-work-planning.warehouse-systems.dev/unknown-pick-unit
-                    title: Unknown pick unit
-                    status: 400
-                    detail: 'unknown pick unit: "PALLET" (want EACH or CASE)'
-                    instance: /paths/pick-a/charge
-                invalidQuantity:
-                  summary: Negative quantity
-                  value:
-                    type: https://errors.wes-work-planning.warehouse-systems.dev/invalid-quantity
-                    title: Invalid quantity
-                    status: 400
-                    detail: "quantity must be non-negative"
-                    instance: /paths/pick-a/charge
-        "422":
-          description: >
-            A pack-aware bucket cannot be estimated as asked. Either
-            `pickUnit` is `CASE` but the SKU has no active CASE pack level in
-            this service's local copy (`no-active-case-level`; an unknown SKU
-            is the same), or `quantity` is not a whole number of cases
-            (`quantity-not-case-multiple`). Nothing is recorded; send the
-            bucket with `pickUnit` `EACH` or without a `sku` to forecast it
-            without a pack estimate.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-              examples:
-                noActiveCaseLevel:
-                  summary: CASE requested for a SKU with no active CASE level
-                  value:
-                    type: https://errors.wes-work-planning.warehouse-systems.dev/no-active-case-level
-                    title: The SKU has no active CASE pack level
-                    status: 422
-                    detail: "pick load: the SKU has no active CASE pack level in the local copy: sku-482910"
-                    instance: /paths/pick-a/charge
-                quantityNotCaseMultiple:
-                  summary: 35 eaches of a 12-per-case SKU
-                  value:
-                    type: https://errors.wes-work-planning.warehouse-systems.dev/quantity-not-case-multiple
-                    title: Quantity is not a whole number of cases
-                    status: 422
-                    detail: "pick load: quantity is not a whole number of cases: 35 eaches with 12 per case"
-                    instance: /paths/pick-a/charge
         "409":
           description: >
-            Business conflict (see the operation description), or the `Idempotency-Key`
-            was already used with a different request (`idempotency-key-reused`;
-            fingerprint = method + path + body hash). Distinguish by the problem `type`.
+            The `Idempotency-Key` was already used with a different request
+            (`idempotency-key-reused`; fingerprint = method + path + body hash).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "410":
+          description: >
+            Always: the charge forecast moved to warehouse-planning. The
+            `detail` names the route to call instead.
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
               example:
-                type: https://errors.wes-work-planning.warehouse-systems.dev/idempotency-key-reused
-                title: Idempotency-Key was already used with a different request
-                status: 409
-                detail: "idempotency key reused: the Idempotency-Key header on this request was already used with a request that had a different body; use a new Idempotency-Key for a genuinely different request"
+                type: https://errors.wes-work-planning.warehouse-systems.dev/charge-forecast-moved
+                title: Charge forecast moved to warehouse-planning
+                status: 410
+                detail: "the charge forecast moved to warehouse-planning (ADR-0049): send it as PUT /workload-forecasts/{site_id}/{path_id} on warehouse-planning"
                 instance: /paths/pick-a/charge
         "500":
           $ref: "#/components/responses/InternalError"
@@ -332,113 +211,54 @@ paths:
   /paths/{pathId}/plan:
     post:
       operationId: commitShiftPlan
-      summary: Commit this service's shift plan for a process path
+      deprecated: true
+      summary: Moved — the shift plan is warehouse-planning's (always 410)
       description: >
-        Commits the rate × heads × hours split for a process path — the
-        CommitShiftPlan use case. Enforces the `PathPlan` aggregate invariant
-        `plannedHeads <= installedStations`; violating it fails the whole
-        commit (no partial commit). This is THIS service's own `ShiftPlan`
-        aggregate, distinct from the labor plan Workforce Management reports
-        (see `GET /paths/{pathId}/labor-plan-view`) even though both are
-        called "ShiftPlan" — classic same-term-different-bounded-context.
-        Publishes `ShiftPlanCommitted`. The request may optionally name a
-        `sku` and a `pickUnit` (`EACH` | `CASE`, default `EACH`) for a
-        pack-aware plan (ADR-0045): the response then carries `handle`, the
-        load of one handle of that SKU and the carry estimate derived from it.
+        Retired by ADR-0049 (stage C). The shift plan — rate × heads × hours
+        on a process path with its `plannedHeads <= installedStations`
+        invariant — is a planning decision and moved to warehouse-planning
+        (its ADR 0023), which takes it as
+        `PUT /labour-plans/{site_id}/{shift_id}/{path_id}`. This route commits
+        nothing, publishes nothing and answers `410 Gone` with the problem
+        type `shift-plan-moved` for any body; it disappears in stage E. The
+        `Idempotency-Key` header is still checked first, as on every POST.
+        The labor plan Workforce Management reports stays readable through
+        `GET /paths/{pathId}/labor-plan-view`.
       tags: [Shift Plan]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/PathId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CommitShiftPlanRequest"
-            example:
-              plannedHeads: 6
-              installedStations: 8
-              rateUnitsPerHour: 95.5
-              hours: 8
       responses:
-        "201":
-          description: >
-            Shift plan committed. `Location` identifies the committed plan's
-            canonical resource path (no dedicated GET for a standalone plan
-            today — `plannedThroughput` and the committed split are also
-            visible indirectly via the `laborPlan` context of
-            `POST /paths/{pathId}/rebalance-decisions`).
-          headers:
-            Idempotency-Replayed:
-              $ref: "#/components/headers/IdempotencyReplayed"
-            Location:
-              schema:
-                type: string
-              description: Canonical URI of the committed shift plan.
-              example: /paths/pick-a/plan
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShiftPlanResponse"
-              example:
-                pathId: pick-a
-                plannedHeads: 6
-                installedStations: 8
-                rateUnitsPerHour: 95.5
-                hours: 8
-                plannedThroughput: 4584
         "400":
           description: >
             The `Idempotency-Key` header is missing (`idempotency-key-required`)
-            or malformed (`idempotency-key-invalid`), a `pathId` outside the
-            declared process-path families (`unknown-path-id`), a `pickUnit`
-            other than `EACH` / `CASE` (`unknown-pick-unit`), or: malformed
-            body, a missing required field (`plannedHeads`,
-            `installedStations`, `rateUnitsPerHour`, `hours` — zero-valued
-            defaults are never silently accepted), an invalid field value
-            (e.g. non-positive rate or hours), the `plannedHeads <=
-            installedStations` invariant was violated, or the computed
-            `plannedThroughput` (rate × heads × hours) is not representable
-            as a finite number.
+            or not 1-128 printable ASCII characters (`idempotency-key-invalid`),
+            or a NUL character (U+0000) is in the body (`malformed-request-body`).
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
-              example:
-                type: https://errors.wes-work-planning.warehouse-systems.dev/heads-exceed-installed-stations
-                title: Planned heads exceed installed stations
-                status: 400
-                detail: "planned heads exceeds installed stations"
-                instance: /paths/pick-a/plan
-        "422":
-          description: >
-            `pickUnit` is `CASE` but the `sku` has no active CASE pack level in
-            this service's local copy (`no-active-case-level`; an unknown SKU
-            is the same). Nothing is committed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-              example:
-                type: https://errors.wes-work-planning.warehouse-systems.dev/no-active-case-level
-                title: The SKU has no active CASE pack level
-                status: 422
-                detail: "pick load: the SKU has no active CASE pack level in the local copy: sku-482910"
-                instance: /paths/pick-a/plan
         "409":
           description: >
-            Business conflict (see the operation description), or the `Idempotency-Key`
-            was already used with a different request (`idempotency-key-reused`;
-            fingerprint = method + path + body hash). Distinguish by the problem `type`.
+            The `Idempotency-Key` was already used with a different request
+            (`idempotency-key-reused`; fingerprint = method + path + body hash).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "410":
+          description: >
+            Always: the shift plan moved to warehouse-planning. The `detail`
+            names the route to call instead.
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
               example:
-                type: https://errors.wes-work-planning.warehouse-systems.dev/idempotency-key-reused
-                title: Idempotency-Key was already used with a different request
-                status: 409
-                detail: "idempotency key reused: the Idempotency-Key header on this request was already used with a request that had a different body; use a new Idempotency-Key for a genuinely different request"
+                type: https://errors.wes-work-planning.warehouse-systems.dev/shift-plan-moved
+                title: Shift plan moved to warehouse-planning
+                status: 410
+                detail: "the shift plan moved to warehouse-planning (ADR-0049): send it as PUT /labour-plans/{site_id}/{shift_id}/{path_id} on warehouse-planning"
                 instance: /paths/pick-a/plan
         "500":
           $ref: "#/components/responses/InternalError"
@@ -877,10 +697,9 @@ paths:
         `planned_heads`/`planned_rate`/`planned_hours` Workforce Management
         published on its `ShiftPlanCommitted` integration event for this
         path, projected via the Kafka consumer (Task 7). This is a read-only
-        projection from a DIFFERENT bounded context's `ShiftPlan` concept —
-        it is never fed into this service's own `PathPlan`/`ShiftPlan`
-        aggregate or `CommitShiftPlan` use case. `404` until at least one
-        `ShiftPlanCommitted` event has been observed for the path.
+        projection from a DIFFERENT bounded context's `ShiftPlan` concept.
+        `404` until at least one `ShiftPlanCommitted` event has been observed
+        for the path.
       tags: [Labor Plan View]
       parameters:
         - $ref: "#/components/parameters/PathId"
@@ -897,8 +716,6 @@ paths:
                 plannedRate: 95.5
                 plannedHours: 8
                 observedAt: "2026-08-21T09:00:00Z"
-                driftHeads: 1
-                driftDetectedAt: "2026-08-21T09:05:00Z"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -1178,9 +995,9 @@ components:
         catalogue (ADR-0012; today the fleet's sortable-fc topology
         declares the pick/pack/rebin/slam families, each optionally
         carrying a "-"-delimited station/zone suffix, e.g. pick-a or
-        pack-station-1). The write endpoints (receiveChargeForecast,
-        commitShiftPlan, enqueueWorkUnit) reject ids outside the declared
-        families with `400 unknown-path-id`; read endpoints surface a
+        pack-station-1). The write endpoints (enqueueWorkUnit,
+        configurePool) reject ids outside the declared families with
+        `400 unknown-path-id`; read endpoints surface a
         missing pool/projection as `404` instead.
       schema:
         type: string
@@ -1264,7 +1081,7 @@ components:
             title: Invalid quantity
             status: 400
             detail: "quantity must be non-negative"
-            instance: /paths/pick-a/charge
+            instance: /paths/pick-a/work-units
     NotFound:
       description: >-
         No resource exists at this path/id (a NUL character, U+0000, in the
@@ -1290,7 +1107,7 @@ components:
             title: Internal server error
             status: 500
             detail: "event store unavailable"
-            instance: /paths/pick-a/charge
+            instance: /paths/pick-a/work-releases
 
   schemas:
     Problem:
@@ -1326,269 +1143,6 @@ components:
           description: The request path that produced the error, omitted if there is no natural resource path.
           example: /work-units/wu-482910/completions
       required: [type, title, status, detail]
-
-    CPTBucket:
-      type: object
-      description: An exact CPT (Critical Pull Time) and the quantity due at it.
-      properties:
-        cpt:
-          type: string
-          format: date-time
-          description: The last moment a parcel in this bucket can be manifested and still make its truck.
-          example: "2026-08-21T12:00:00Z"
-        quantity:
-          type: integer
-          format: int64
-          minimum: 0
-          description: >
-            Units due by this CPT. int64, not int32: the impl and its JSONB
-            store accept quantities across the full 64-bit range.
-          example: 4200
-        sku:
-          type: string
-          nullable: true
-          description: >-
-            OPTIONAL (ADR-0045, pack-aware estimate). The SKU this bucket
-            counts. With a `sku`, the response bucket also carries `handles`,
-            `cubeMm3` and `weightG`, estimated from this service's local copy
-            of the SKU's pack levels (never a live lookup). `quantity` stays
-            in EACHES either way. Omit it (or send null or a blank value, all
-            treated as absent) for a plain bucket, which is returned exactly
-            as before.
-          example: sku-482910
-        pickUnit:
-          type: string
-          nullable: true
-          enum: [EACH, CASE, null]
-          description: >-
-            OPTIONAL (ADR-0045; null is treated as omitted), only meaningful
-            with `sku` (sent without one it is a `400 invalid-pick-plan`). `EACH` (the default when `sku`
-            is given without it) estimates one handle per each. `CASE`
-            estimates cases: it needs an active CASE pack level for the SKU
-            (otherwise `422 no-active-case-level`) and a `quantity` that is a
-            whole number of cases (otherwise `422 quantity-not-case-multiple`).
-            Exact, case-sensitive match; any other value is a
-            `400 unknown-pick-unit`. With `sku`, `quantity` must be at least 1.
-          example: CASE
-        handles:
-          type: integer
-          format: int32
-          minimum: 1
-          readOnly: true
-          description: >-
-            Response only; present when the bucket was sent with a `sku`.
-            What an operator handles to move `quantity` eaches: cases for
-            `pickUnit` `CASE` (`quantity` / units per case), eaches for `EACH`.
-          example: 3
-        cubeMm3:
-          type: integer
-          format: int64
-          minimum: 1
-          readOnly: true
-          description: >-
-            Response only; total cube of all `handles`, in cubic millimetres.
-            Omitted (never reported as 0) when the pack level has no size on
-            record.
-          example: 72000000
-        weightG:
-          type: integer
-          format: int64
-          minimum: 1
-          readOnly: true
-          description: >-
-            Response only; total weight of all `handles`, in grams. Omitted
-            (never reported as 0) when the pack level has no weight on record.
-          example: 19500
-      required: [cpt, quantity]
-
-    ReceiveChargeForecastRequest:
-      type: object
-      properties:
-        buckets:
-          type: array
-          minItems: 1
-          description: At least one CPT/quantity bucket is required.
-          items:
-            $ref: "#/components/schemas/CPTBucket"
-      required: [buckets]
-
-    ChargeForecastResponse:
-      type: object
-      properties:
-        pathId:
-          type: string
-          example: pick-a
-        totalQuantity:
-          type: integer
-          format: int64
-          description: Sum of all bucket quantities.
-          example: 6000
-        buckets:
-          type: array
-          items:
-            $ref: "#/components/schemas/CPTBucket"
-        receivedAt:
-          type: string
-          format: date-time
-          description: When this forecast was recorded (server clock).
-          example: "2026-08-21T08:00:00Z"
-      required: [pathId, totalQuantity, buckets, receivedAt]
-
-    CommitShiftPlanRequest:
-      type: object
-      properties:
-        plannedHeads:
-          type: integer
-          format: int32
-          minimum: 0
-          description: Headcount committed to this path for the shift. Must not exceed installedStations.
-          example: 6
-        installedStations:
-          type: integer
-          format: int32
-          minimum: 0
-          description: Physical stations installed at this path.
-          example: 8
-        rateUnitsPerHour:
-          type: number
-          format: double
-          exclusiveMinimum: true
-          minimum: 0
-          description: Service rate per head, in units/hour.
-          example: 95.5
-        hours:
-          type: number
-          format: double
-          exclusiveMinimum: true
-          minimum: 0
-          description: Length of the shift in hours.
-          example: 8
-        fromLocationCode:
-          type: string
-          nullable: true
-          description: >
-            Optional facility-layout LocationCode enriching the committed
-            plan with a real travel-distance hint (ADR-0017). Must be set
-            together with toLocationCode to attempt the lookup; either
-            omitted — or null, which is treated exactly like omitted —
-            skips it entirely. This is a caller-opt-in enrichment, not a
-            required field.
-          example: WH1-STOR-AMB-A07-01-01-A
-        toLocationCode:
-          type: string
-          nullable: true
-          description: >
-            Optional facility-layout LocationCode enriching the committed
-            plan with a real travel-distance hint (ADR-0017). See
-            fromLocationCode; null is treated exactly like omitted.
-          example: WH1-STOR-AMB-A09-03-01-A
-        sku:
-          type: string
-          nullable: true
-          description: >-
-            OPTIONAL (ADR-0045, pack-aware plan). The SKU whose handle load the
-            plan records; the response then carries `handle`. Omit (or send
-            null) for a plain plan.
-          example: sku-482910
-        pickUnit:
-          type: string
-          nullable: true
-          enum: [EACH, CASE, null]
-          description: >-
-            OPTIONAL (ADR-0045), default `EACH` when `sku` is given. `CASE`
-            needs an active CASE pack level for the SKU (otherwise
-            `422 no-active-case-level`). Exact, case-sensitive match; any
-            other value is `400 unknown-pick-unit`.
-          example: CASE
-      required: [plannedHeads, installedStations, rateUnitsPerHour, hours]
-
-    ShiftPlanResponse:
-      type: object
-      properties:
-        pathId:
-          type: string
-          example: pick-a
-        plannedHeads:
-          type: integer
-          format: int32
-          example: 6
-        installedStations:
-          type: integer
-          format: int32
-          example: 8
-        rateUnitsPerHour:
-          type: number
-          format: double
-          example: 95.5
-        hours:
-          type: number
-          format: double
-          example: 8
-        plannedThroughput:
-          type: number
-          format: double
-          description: plannedHeads × rateUnitsPerHour × hours.
-          example: 4584
-        travelDistanceM:
-          type: number
-          format: double
-          description: >
-            The real travel distance, in metres, between fromLocationCode
-            and toLocationCode as reported by facility-layout at commit
-            time (ADR-0017). Omitted entirely — not defaulted to 0 —
-            when no travel-distance hint was recorded: either the
-            request did not supply both location codes, or the lookup
-            was unavailable/unknown/refused (e.g. the two locations sit
-            in different zones).
-          example: 4.4
-        travelDistanceEstimated:
-          type: boolean
-          description: >
-            True when the recorded travel distance used a zone's bay
-            pitch fallback rather than real aisle centreline geometry
-            (mirrors facility-layout's own TravelDistance.estimated
-            field). Omitted together with travelDistanceM when no hint
-            was recorded.
-          example: false
-        handle:
-          $ref: "#/components/schemas/HandleLoad"
-      required:
-        - pathId
-        - plannedHeads
-        - installedStations
-        - rateUnitsPerHour
-        - hours
-        - plannedThroughput
-
-    HandleLoad:
-      type: object
-      description: >-
-        The load of ONE handle (a whole case for `CASE`) of a pack-aware plan
-        and the carry estimate derived from it (ADR-0045). Omitted from the
-        plan response when the request named no `sku`.
-      properties:
-        pickUnit:
-          type: string
-          enum: [EACH, CASE]
-          example: CASE
-        weightG:
-          type: integer
-          format: int64
-          description: Weight of one handle in grams; omitted when the pack level has no weight on record.
-          example: 6500
-        cubeMm3:
-          type: integer
-          format: int64
-          description: Cube of one handle in cubic millimetres; omitted when the pack level has no size on record.
-          example: 24000000
-        carryKgM:
-          type: number
-          format: double
-          description: >-
-            Carry estimate in kilogram-metres; present only when the weight
-            AND a travel distance are both known, never zero-filled.
-          example: 28.6
-      required: [pickUnit]
 
     CaseBreak:
       type: object
@@ -2005,7 +1559,7 @@ components:
       type: object
       description: >
         The latest labor plan Workforce Management reported for a path — a
-        read-only projection, distinct from this service's own Shift Plan.
+        read-only projection of Workforce Management's plan.
       properties:
         pathId:
           type: string
@@ -2030,21 +1584,22 @@ components:
         driftHeads:
           type: integer
           format: int32
+          deprecated: true
           description: >
-            ADR-0019 reconciliation of this service's own committed PathPlan
-            against Workforce's observed plan: `plannedHeads` here minus our
-            `PathPlan` planned heads — signed, never absolute, and no opinion
-            about which side is right. `0` means the plans agree. **Present
-            only once a comparison has been computed** (both a committed
-            PathPlan and an observed plan exist); omitted, not zeroed,
-            otherwise.
+            No longer computed (ADR-0049: the drift reconciliation of ADR-0019
+            moved to warehouse-planning with the shift plan). Present only on
+            a path whose last observed plan was reconciled before that, until
+            the path's next observed plan; removed in stage E. Signed:
+            `plannedHeads` here minus the planned heads of this service's old
+            committed PathPlan, `0` when they agreed.
           example: 1
         driftDetectedAt:
           type: string
           format: date-time
+          deprecated: true
           description: >
-            When this service detected the drift (the later of the two commits).
-            Present only when `driftHeads` is non-zero.
+            No longer computed (ADR-0049); see `driftHeads`. When the drift was
+            detected, present only when `driftHeads` is non-zero.
           example: "2026-08-21T09:05:00Z"
       required: [pathId, plannedHeads, plannedRate, plannedHours, observedAt]
 

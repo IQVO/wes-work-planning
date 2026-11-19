@@ -24,9 +24,9 @@ Read the relevant ADR before reversing a documented decision.
 - 0014 transactional outbox
 - 0015 REST identity / static bearer scopes (added auth; SUPERSEDED by 0016)
 - 0016 removes REST/MCP static-bearer auth fleet-wide
-- 0017 travel-distance lookup on `CommitShiftPlan`
+- 0017 travel-distance lookup on `CommitShiftPlan` (SUPERSEDED by 0049: removed)
 - 0018 `PathCapacityChanged` integration event (consumed by order-management and network-fulfillment)
-- 0019 reconcile committed `PathPlan` against `LaborPlanObserved`
+- 0019 reconcile committed `PathPlan` against `LaborPlanObserved` (SUPERSEDED by 0049: the drift moved to warehouse-planning)
 - 0020 FlowFed paths stay `Known=false`; observed-throughput signal proposed
 - 0021 CloudEvents dual-mode migration (SUPERSEDED by 0027)
 - 0022 Idempotency-Key middleware for `POST /paths/{pathId}/work-units`
@@ -46,3 +46,4 @@ Read the relevant ADR before reversing a documented decision.
 - 0036 `WorkUnit` stores the order `line_no` it already receives on `OrderAllocated`; `WorkReleased` v1 carries it as an optional `line_no` on the integration and analytics topics (per-line pick confirmation downstream)
 - 0044 Postgres and Kafka are the only runtime: `cmd/wes`, `cmd/mcp`, `cmd/wes-projector` have no in-memory repos, log sink, direct publisher or optional relay/consumer; mandatory env vars and `permissive`/`off`/`log` are boot errors that name the variable; real `/readyz`; memory adapters are test doubles
 - 0048 `WorkReleased` publishes top-level `site_id` for every work kind whose unit carries one (transfer ADR-0033, order work via OrderAllocated/OrderPartiallyAllocated's additive `site_id`, RELOCATE plan site, REPLENISH request site); pick plans gain `from_bin` from the local slot-plan forward-pick face (Phase 2: reserved-bin propagation); golden fixtures for RELOCATE/REPLENISH now carry `site_id`, site-less payloads unchanged
+- 0049 charge forecast and shift plan move to warehouse-planning: both POSTs answer 410, `ChargeForecastReceived`/`ShiftPlanCommitted`/`PathPlanDriftDetected` retired, travel distance and drift reconciliation removed, tables kept (supersedes 0017 and 0019)

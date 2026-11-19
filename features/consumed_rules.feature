@@ -157,22 +157,3 @@ Feature: Consumed-event rules from the documentation
     And the inventory view reports a usable quantity of 0 units
     When the inventory view is requested for SKU "SKU-B"
     Then the inventory view reports a usable quantity of -2 units
-
-  @bdd
-  Scenario: The drift event names both head counts and the signed difference
-    Given process path "pick-zone-a" has 20 installed stations
-    And a ShiftPlan is committed for process path "pick-zone-a" with 6 planned heads at a rate of 95.5 units per hour for 8 hours
-    When Workforce Management publishes labor plan event "lp-1" of 9 heads at 95.5 units per hour for 8 hours for process path "pick-zone-a"
-    Then 1 PathPlanDriftDetected event was raised
-    And the PathPlanDriftDetected event reports 6 planned heads of ours against 9 observed, a drift of 3
-
-  @bdd
-  Scenario: Re-committing our plan to match Workforce Management clears the drift
-    Given process path "pick-zone-a" has 20 installed stations
-    And a ShiftPlan is committed for process path "pick-zone-a" with 6 planned heads at a rate of 95.5 units per hour for 8 hours
-    And Workforce Management publishes labor plan event "lp-1" of 8 heads at 95.5 units per hour for 8 hours for process path "pick-zone-a"
-    When a ShiftPlan is committed for process path "pick-zone-a" with 8 planned heads at a rate of 95.5 units per hour for 8 hours
-    And the labor plan view is requested for process path "pick-zone-a"
-    Then the labor plan view reports a drift of 0 heads
-    And the labor plan view reports no drift detection time
-    And 1 PathPlanDriftDetected event was raised

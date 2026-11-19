@@ -37,8 +37,6 @@ func goldenCases(t *testing.T) []goldenCase {
 	pathId := mustPathId(t, "pick-a")
 	const prefix = "com.warehouse.wes.work-planning."
 	return []goldenCase{
-		{"ChargeForecastReceived", shared.NewChargeForecastReceived(pathId, at), prefix + "charge.ChargeForecastReceived", "pick-a"},
-		{"ShiftPlanCommitted", shared.NewShiftPlanCommitted(pathId, at), prefix + "plan.ShiftPlanCommitted", "pick-a"},
 		{"WorkUnitCreated", shared.NewWorkUnitCreated("wu-gold", pathId, at), prefix + "workunit.WorkUnitCreated", "wu-gold"},
 		{"WorkReleased", shared.NewWorkReleased("wu-gold", pathId, at), prefix + "workunit.WorkReleased", "wu-gold"},
 		{"WorkUnitCompleted", shared.NewWorkUnitCompleted("wu-gold", pathId, at), prefix + "workunit.WorkUnitCompleted", "wu-gold"},
@@ -47,7 +45,6 @@ func goldenCases(t *testing.T) []goldenCase {
 		{"PathThrottled", shared.NewPathThrottled(pathId, at), prefix + "workpool.PathThrottled", "pick-a"},
 		{"LaborReassignmentFlagged", shared.NewLaborReassignmentFlagged(pathId, at), prefix + "workpool.LaborReassignmentFlagged", "pick-a"},
 		{"PathCapacityChanged", shared.NewPathCapacityChanged(pathId, time.Date(2026, 9, 30, 18, 0, 0, 0, time.UTC), 42, true, at), prefix + "workpool.PathCapacityChanged", "pick-a"},
-		{"PathPlanDriftDetected", shared.NewPathPlanDriftDetected(pathId, 6, 8, time.Date(2026, 9, 30, 11, 30, 0, 0, time.UTC), at), prefix + "pathplan.PathPlanDriftDetected", "pick-a"},
 	}
 }
 

@@ -1,6 +1,6 @@
 // Package pickload estimates the handling load of a pick in the units the
 // operator actually handles (ADR-0045). A CASE_PICK moves whole sealed cases,
-// so its charge is counted in cases and its cube and weight are the CASE
+// so its load is counted in cases and its cube and weight are the CASE
 // level's; an EACH pick counts eaches with the EACH level's size when known.
 // It is a pure domain service over the pack facts of
 // productclassificationview: no adapter, no clock, no I/O.
@@ -25,7 +25,7 @@ var (
 	ErrNotCaseMultiple = errors.New("pick load: quantity is not a whole number of cases")
 )
 
-// Load is the handling load of one pick or charge bucket.
+// Load is the handling load of one pick.
 type Load struct {
 	Unit workunit.PickUnit
 	// Eaches is the quantity in eaches, the ledger unit (contracts G1).
@@ -74,19 +74,6 @@ func Estimate(unit workunit.PickUnit, eaches int, view productclassificationview
 	}
 }
 
-// PerHandle is the load of ONE handle of unit: one case (units-per-pack
-// eaches) for CASE, one each for EACH. It is the per-trip figure the travel
-// estimate uses.
-func PerHandle(unit workunit.PickUnit, view productclassificationview.ProductClassificationView) (Load, error) {
-	if unit == workunit.PickUnitCase {
-		if view.Case == nil || view.Case.UnitsPerPack < 1 {
-			return Load{}, fmt.Errorf("%w: %s", ErrNoActiveCaseLevel, view.SKU)
-		}
-		return Estimate(unit, view.Case.UnitsPerPack, view)
-	}
-	return Estimate(unit, 1, view)
-}
-
 func totals(unit workunit.PickUnit, eaches, handles int, per productclassificationview.PackFacts) Load {
 	l := Load{Unit: unit, Eaches: eaches, Handles: handles}
 	if cube := per.CubeMm3(); cube > 0 {
@@ -96,16 +83,4 @@ func totals(unit workunit.PickUnit, eaches, handles int, per productclassificati
 		l.WeightG, l.WeightKnown = int64(weight)*int64(handles), true
 	}
 	return l
-}
-
-// CarryKgM is the carry load of moving one handle over metresM: the handle's
-// weight in kilograms times the distance. ok is false when the handle weight
-// is unknown. It is a planning figure for comparing a case path to an each
-// path over the same travel hint, not a labour standard.
-func (l Load) CarryKgM(metresM float64) (kgM float64, ok bool) {
-	if !l.WeightKnown || l.Handles < 1 {
-		return 0, false
-	}
-	perHandleKg := float64(l.WeightG) / float64(l.Handles) / 1000
-	return perHandleKg * metresM, true
 }

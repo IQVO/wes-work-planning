@@ -25,8 +25,7 @@ Feature: Release-fed Work Pool admission capacity and WIP backpressure
     Given the WES Work Planning service is running
 
   # The WIP limit is provisioned on the pool directly (the REST surface
-  # auto-provisions pools with the fleet default of 1000), mirroring how
-  # installedStations is seeded for ShiftPlan scenarios.
+  # auto-provisions pools with the fleet default of 1000).
   @bdd
   Scenario: Sampling telemetry with a CPT cutoff reports remaining admission capacity
     Given a release-fed Work Pool with a WIP limit of 2 is provisioned for process path "pick-zone-a"

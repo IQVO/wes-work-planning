@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
-	"github.com/claudioed/wes-work-planning/internal/domain/charge"
-	"github.com/claudioed/wes-work-planning/internal/domain/plan"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
@@ -73,32 +71,6 @@ type scopedSaves struct {
 
 func newScopedSaves() *scopedSaves {
 	return &scopedSaves{fixture: newFixture()}
-}
-
-type scopedPlanRepo struct {
-	*scopedSaves
-}
-
-func (r scopedPlanRepo) Save(ctx context.Context, pathId shared.PathId, sp *plan.ShiftPlan) error {
-	r.saves = append(r.saves, inScope(ctx))
-	return r.plans.Save(ctx, pathId, sp)
-}
-
-func (r scopedPlanRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (*plan.ShiftPlan, error) {
-	return r.plans.FindByPathId(ctx, pathId)
-}
-
-type scopedChargeRepo struct {
-	*scopedSaves
-}
-
-func (r scopedChargeRepo) Save(ctx context.Context, f *charge.ChargeForecast) error {
-	r.saves = append(r.saves, inScope(ctx))
-	return r.charges.Save(ctx, f)
-}
-
-func (r scopedChargeRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (*charge.ChargeForecast, error) {
-	return r.charges.FindByPathId(ctx, pathId)
 }
 
 type scopedWorkUnitRepo struct {
@@ -172,115 +144,6 @@ func assertRolledBack(t *testing.T, err error, uow *recordingUnitOfWork) {
 }
 
 var errOutbox = errors.New("outbox insert failed")
-
-// --- ReceiveChargeForecast -------------------------------------------------
-
-func chargeReq(t *testing.T, f fixture) usecases.ReceiveChargeForecastRequest {
-	t.Helper()
-	pathId, _ := shared.NewPathId("pick-a")
-	qty, _ := shared.NewQuantity(10)
-	return usecases.ReceiveChargeForecastRequest{PathId: pathId, Buckets: []usecases.CPTBucketInput{{CPT: shared.NewCPT(f.clock.Now().Add(time.Hour)), Quantity: qty}}}
-}
-
-func TestReceiveChargeForecast_SaveAndPublishInsideOneUnitOfWork(t *testing.T) {
-	s := newScopedSaves()
-	pub := &scopedPublisher{}
-	uow := &recordingUnitOfWork{}
-	uc := usecases.NewReceiveChargeForecast(scopedChargeRepo{s}, pub, s.clock).WithUnitOfWork(uow)
-
-	if _, err := uc.Execute(context.Background(), chargeReq(t, s.fixture)); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	assertOneCommittedScope(t, uow, pub, s.saves, 1)
-}
-
-func TestReceiveChargeForecast_PublishFailureRollsBack(t *testing.T) {
-	s := newScopedSaves()
-	uow := &recordingUnitOfWork{}
-	uc := usecases.NewReceiveChargeForecast(scopedChargeRepo{s}, &scopedPublisher{err: errOutbox}, s.clock).WithUnitOfWork(uow)
-	_, err := uc.Execute(context.Background(), chargeReq(t, s.fixture))
-	assertRolledBack(t, err, uow)
-}
-
-func TestReceiveChargeForecast_UnitOfWorkBeginFailurePropagates(t *testing.T) {
-	s := newScopedSaves()
-	pub := &scopedPublisher{}
-	uc := usecases.NewReceiveChargeForecast(scopedChargeRepo{s}, pub, s.clock).WithUnitOfWork(&recordingUnitOfWork{beginErr: errors.New("begin failed")})
-	if _, err := uc.Execute(context.Background(), chargeReq(t, s.fixture)); err == nil || err.Error() != "begin failed" {
-		t.Fatalf("expected begin error, got %v", err)
-	}
-	if len(pub.events) != 0 || len(s.saves) != 0 {
-		t.Fatal("expected nothing saved or published when the unit of work cannot begin")
-	}
-}
-
-func TestReceiveChargeForecast_NilUnitOfWorkStillSavesAndPublishes(t *testing.T) {
-	s := newScopedSaves()
-	pub := &scopedPublisher{}
-	uc := usecases.NewReceiveChargeForecast(scopedChargeRepo{s}, pub, s.clock)
-	if _, err := uc.Execute(context.Background(), chargeReq(t, s.fixture)); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(pub.events) != 1 || pub.inScope[0] || len(s.saves) != 1 || s.saves[0] {
-		t.Fatalf("expected save+publish outside any scope, got saves=%v inScope=%v", s.saves, pub.inScope)
-	}
-}
-
-// --- CommitShiftPlan --------------------------------------------------------
-
-func planReq(t *testing.T) usecases.CommitShiftPlanRequest {
-	t.Helper()
-	pathId, _ := shared.NewPathId("pick-a")
-	rate, _ := shared.NewRate(50)
-	heads, _ := shared.NewStationCount(4)
-	installed, _ := shared.NewStationCount(5)
-	return usecases.CommitShiftPlanRequest{PathId: pathId, PlannedHeads: heads, InstalledStations: installed, Rate: rate, Hours: 8}
-}
-
-func TestCommitShiftPlan_SaveAndPublishInsideOneUnitOfWork(t *testing.T) {
-	s := newScopedSaves()
-	pub := &scopedPublisher{}
-	uow := &recordingUnitOfWork{}
-	uc := usecases.NewCommitShiftPlan(scopedPlanRepo{s}, pub, s.clock).WithUnitOfWork(uow)
-	if _, err := uc.Execute(context.Background(), planReq(t)); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	assertOneCommittedScope(t, uow, pub, s.saves, 1)
-}
-
-func TestCommitShiftPlan_PublishFailureRollsBack(t *testing.T) {
-	s := newScopedSaves()
-	uow := &recordingUnitOfWork{}
-	uc := usecases.NewCommitShiftPlan(scopedPlanRepo{s}, &scopedPublisher{err: errOutbox}, s.clock).WithUnitOfWork(uow)
-	_, err := uc.Execute(context.Background(), planReq(t))
-	assertRolledBack(t, err, uow)
-}
-
-func TestCommitShiftPlan_InvariantViolationOpensNoScope(t *testing.T) {
-	s := newScopedSaves()
-	uow := &recordingUnitOfWork{}
-	uc := usecases.NewCommitShiftPlan(scopedPlanRepo{s}, &scopedPublisher{}, s.clock).WithUnitOfWork(uow)
-	req := planReq(t)
-	req.PlannedHeads, _ = shared.NewStationCount(9)
-	if _, err := uc.Execute(context.Background(), req); !errors.Is(err, plan.ErrHeadsExceedStations) {
-		t.Fatalf("expected invariant error, got %v", err)
-	}
-	if uow.opened != 0 {
-		t.Fatalf("a rejected plan must not open a unit of work, got opened=%d", uow.opened)
-	}
-}
-
-func TestCommitShiftPlan_NilUnitOfWorkStillWorks(t *testing.T) {
-	s := newScopedSaves()
-	pub := &scopedPublisher{}
-	uc := usecases.NewCommitShiftPlan(scopedPlanRepo{s}, pub, s.clock)
-	if _, err := uc.Execute(context.Background(), planReq(t)); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(pub.events) != 1 || pub.inScope[0] {
-		t.Fatalf("expected one publish outside any scope, got %v", pub.inScope)
-	}
-}
 
 // --- EnqueueWorkUnit --------------------------------------------------------
 

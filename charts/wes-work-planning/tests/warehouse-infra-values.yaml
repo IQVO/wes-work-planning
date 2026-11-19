@@ -78,10 +78,6 @@ extraEnv:
     value: kafka
   - name: PRODUCT_CLASSIFICATION_CONSUMER_GROUP
     value: wes-work-planning-product-classification
-  - name: TRAVEL_DISTANCE_MODE
-    value: http
-  - name: FACILITY_LAYOUT_BASE_URL
-    value: http://facility-layout.warehouse-systems.svc.cluster.local:80
   # REPLENISH work from pick-face-replenishment's ReplenishmentRequested /
   # ReplenishmentCancelled (wes-work-planning ADR 0042, cmd/wes/replenishment.go;
   # topic warehouse.pick-face-replenishment.events). The chart has no dedicated

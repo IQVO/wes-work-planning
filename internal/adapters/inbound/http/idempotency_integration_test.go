@@ -53,8 +53,6 @@ func newIdempotencyRouter(t *testing.T, pool *pgxpool.Pool) http.Handler {
 	t.Helper()
 	workUnits := postgres.NewWorkUnitRepo(pool)
 	pools := postgres.NewWorkPoolRepo(pool)
-	charges := postgres.NewChargeRepo(pool)
-	plans := postgres.NewPlanRepo(pool)
 	// The log publisher (never Kafka) keeps this suite hermetic; the
 	// point under test is the Postgres transaction boundary, not event
 	// delivery. It is still wrapped in the SAME UnitOfWork scope as the
@@ -68,8 +66,6 @@ func newIdempotencyRouter(t *testing.T, pool *pgxpool.Pool) http.Handler {
 	clock := memory.FixedClock{At: time.Date(2026, 9, 27, 9, 0, 0, 0, time.UTC)}
 
 	handlers := &inboundhttp.Handlers{
-		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(charges, publisher, clock).WithUnitOfWork(uow),
-		CommitShiftPlan:         usecases.NewCommitShiftPlan(plans, publisher, clock).WithUnitOfWork(uow),
 		EnqueueWorkUnit:         usecases.NewEnqueueWorkUnit(workUnits, pools, publisher, clock).WithUnitOfWork(uow),
 		ReleaseNextWork:         usecases.NewReleaseNextWork(pools, workUnits, publisher, clock).WithUnitOfWork(uow),
 		RecordCompletion:        usecases.NewRecordCompletion(workUnits, pools, publisher, clock).WithUnitOfWork(uow),

@@ -8,9 +8,7 @@ import (
 	"time"
 
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
-	"github.com/claudioed/wes-work-planning/internal/domain/charge"
 	"github.com/claudioed/wes-work-planning/internal/domain/laborview"
-	"github.com/claudioed/wes-work-planning/internal/domain/plan"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
@@ -23,120 +21,6 @@ func TestPostgresRepos(t *testing.T) {
 	pool := outboxDB(t)
 
 	pathId, _ := shared.NewPathId("integration-pick-a")
-
-	t.Run("charge repo round trip", func(t *testing.T) {
-		repo := postgres.NewChargeRepo(pool)
-		qty, _ := shared.NewQuantity(42)
-		cpt := shared.NewCPT(time.Now().Add(time.Hour).Truncate(time.Microsecond))
-
-		f, err := charge.NewChargeForecast(pathId, []charge.CPTBucket{{CPT: cpt, Quantity: qty}}, time.Now().Truncate(time.Microsecond))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if err := repo.Save(ctx, f); err != nil {
-			t.Fatalf("save: %v", err)
-		}
-
-		got, err := repo.FindByPathId(ctx, pathId)
-		if err != nil {
-			t.Fatalf("find: %v", err)
-		}
-		if got.TotalQuantity().Value() != 42 {
-			t.Fatalf("got total %d, want 42", got.TotalQuantity().Value())
-		}
-	})
-
-	t.Run("plan repo round trip", func(t *testing.T) {
-		repo := postgres.NewPlanRepo(pool)
-		heads, _ := shared.NewStationCount(3)
-		installed, _ := shared.NewStationCount(5)
-		rate, _ := shared.NewRate(40)
-
-		pp, err := plan.NewPathPlan(pathId, heads, installed, rate, 8)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		sp, err := plan.NewShiftPlan([]plan.PathPlan{pp})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if err := repo.Save(ctx, pathId, sp); err != nil {
-			t.Fatalf("save: %v", err)
-		}
-
-		got, err := repo.FindByPathId(ctx, pathId)
-		if err != nil {
-			t.Fatalf("find: %v", err)
-		}
-		if _, ok := got.PathPlan(pathId); !ok {
-			t.Fatalf("expected path plan to round trip")
-		}
-	})
-
-	t.Run("plan repo round trips the ADR-0017 travel-distance hint", func(t *testing.T) {
-		repo := postgres.NewPlanRepo(pool)
-		heads, _ := shared.NewStationCount(3)
-		installed, _ := shared.NewStationCount(5)
-		rate, _ := shared.NewRate(40)
-
-		save := func(p shared.PathId, hint func(*plan.PathPlan)) {
-			t.Helper()
-			pp, err := plan.NewPathPlan(p, heads, installed, rate, 8)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if hint != nil {
-				hint(&pp)
-			}
-			sp, err := plan.NewShiftPlan([]plan.PathPlan{pp})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if err := repo.Save(ctx, p, sp); err != nil {
-				t.Fatalf("save: %v", err)
-			}
-		}
-		load := func(p shared.PathId) plan.PathPlan {
-			t.Helper()
-			sp, err := repo.FindByPathId(ctx, p)
-			if err != nil {
-				t.Fatalf("find: %v", err)
-			}
-			pp, ok := sp.PathPlan(p)
-			if !ok {
-				t.Fatalf("expected path plan to round trip")
-			}
-			return pp
-		}
-
-		withHint, _ := shared.NewPathId("integration-travel-hint")
-		save(withHint, func(pp *plan.PathPlan) { pp.SetTravelDistance(42.5, true) })
-		got := load(withHint)
-		if !got.TravelDistanceKnown() || got.TravelDistanceM() != 42.5 || !got.TravelDistanceEstimated() {
-			t.Fatalf("hint did not round trip: known=%v m=%v est=%v", got.TravelDistanceKnown(), got.TravelDistanceM(), got.TravelDistanceEstimated())
-		}
-
-		// A zero distance is a valid hint and must stay distinct from "no hint".
-		zero, _ := shared.NewPathId("integration-travel-zero")
-		save(zero, func(pp *plan.PathPlan) { pp.SetTravelDistance(0, false) })
-		got = load(zero)
-		if !got.TravelDistanceKnown() || got.TravelDistanceM() != 0 || got.TravelDistanceEstimated() {
-			t.Fatalf("zero hint did not round trip: known=%v m=%v est=%v", got.TravelDistanceKnown(), got.TravelDistanceM(), got.TravelDistanceEstimated())
-		}
-
-		// No hint stays "not known" (NULL columns).
-		none, _ := shared.NewPathId("integration-travel-none")
-		save(none, nil)
-		if load(none).TravelDistanceKnown() {
-			t.Fatalf("path plan without a hint must not report a known distance")
-		}
-
-		// Re-committing without a hint clears a previously stored one (upsert).
-		save(withHint, nil)
-		if load(withHint).TravelDistanceKnown() {
-			t.Fatalf("re-commit without a hint must clear the stored hint")
-		}
-	})
 
 	t.Run("work pool and work unit repo round trip", func(t *testing.T) {
 		poolRepo := postgres.NewWorkPoolRepo(pool)

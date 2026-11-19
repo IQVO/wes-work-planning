@@ -49,7 +49,7 @@ envelope, no dual mode, no envelope env var, no hand-rolled struct:
 
 - `type` = `com.warehouse.wes.work-planning.<entity>.<EventName>`; add the
   event's entity to `eventTypeEntity` in `publisher.go` (entities:
-  `charge`, `plan`, `workunit`, `workpool` — take it from the AsyncAPI tag).
+  `workunit`, `workpool` — take it from the AsyncAPI tag).
 - `id` is a UUID v4 minted ONCE in `Encode` (the outbox persists it, the relay
   republishes it unchanged) and is the integration-topic Kafka key.
 - `subject` = aggregate id (add a case to `subjectFor`); never empty.

@@ -160,8 +160,10 @@ func sendSIGTERM(t *testing.T) {
 // database itself and serves /healthz; (2) the consumer replays the topic from
 // the beginning (fresh group, StartOffset FirstOffset) and projects the five
 // throughput-moving events the repo's own encoder published, counting each
-// into its documented rollup column, while a published ShiftPlanCommitted is
-// acknowledged WITHOUT being projected or marked processed; (3) a SIGTERM
+// into its documented rollup column, while a published LaborReassignmentFlagged
+// is acknowledged WITHOUT being projected or marked processed (the ADR-0049
+// retired types are proved the same way by
+// TestAnalyticsConsumer_AcknowledgesRetiredHistoricalTypes); (3) a SIGTERM
 // drains to a clean nil-error exit.
 func TestProjectorRunMigratesProjectsAndDrainsCleanly(t *testing.T) {
 	ctx := context.Background()
@@ -197,7 +199,7 @@ func TestProjectorRunMigratesProjectsAndDrainsCleanly(t *testing.T) {
 		shared.NewRateDeviationDetected(rate, projHour.Add(45*time.Minute)),
 		// Published to the analytics topic but outside the projection
 		// contract: the projector must acknowledge it without projecting.
-		shared.NewShiftPlanCommitted(pick, projHour.Add(50*time.Minute)),
+		shared.NewLaborReassignmentFlagged(pick, projHour.Add(50*time.Minute)),
 	)
 	if err != nil {
 		t.Fatalf("publish analytics events: %v", err)
@@ -262,10 +264,11 @@ func TestProjectorRunMigratesProjectsAndDrainsCleanly(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM analytics_processed_events`).Scan(&processed); err != nil {
 		t.Fatal(err)
 	}
-	// ShiftPlanCommitted is acknowledged without touching the read model or
-	// the processed set, so exactly the five projecting events are claimed.
+	// LaborReassignmentFlagged is acknowledged without touching the read
+	// model or the processed set, so exactly the five projecting events are
+	// claimed.
 	if processed != 5 {
-		t.Fatalf("analytics_processed_events count = %d, want 5 (ShiftPlanCommitted must not be projected)", processed)
+		t.Fatalf("analytics_processed_events count = %d, want 5 (LaborReassignmentFlagged must not be projected)", processed)
 	}
 
 	sendSIGTERM(t)

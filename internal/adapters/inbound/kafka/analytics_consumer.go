@@ -139,9 +139,10 @@ func (c *AnalyticsConsumer) HandleMessage(ctx context.Context, raw []byte) error
 	}
 
 	// Only the five throughput-moving events project; everything else
-	// (WorkUnitCreated, ChargeForecastReceived, ShiftPlanCommitted,
-	// LaborReassignmentFlagged, PathCapacityChanged, PathPlanDriftDetected) is acknowledged without
-	// touching the read model or the processed set.
+	// (WorkUnitCreated, LaborReassignmentFlagged, PathCapacityChanged, and
+	// the ADR-0049 retired ChargeForecastReceived, ShiftPlanCommitted and
+	// PathPlanDriftDetected still in the topic's history) is acknowledged
+	// without touching the read model or the processed set.
 	switch evt.Type() {
 	case typeWorkReleased, typeWorkUnitCompleted, typeBacklogThresholdBreached, typePathThrottled, typeRateDeviationDetected:
 	default:

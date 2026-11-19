@@ -2,7 +2,6 @@ package pickload_test
 
 import (
 	"errors"
-	"math"
 	"testing"
 
 	"github.com/claudioed/wes-work-planning/internal/domain/pickload"
@@ -61,37 +60,5 @@ func TestEstimate(t *testing.T) {
 				t.Fatalf("load = %+v, want %+v", got, c.want)
 			}
 		})
-	}
-}
-
-func TestPerHandle(t *testing.T) {
-	got, err := pickload.PerHandle(workunit.PickUnitCase, view(eachSized, caseOf12))
-	if err != nil || got.Handles != 1 || got.Eaches != 12 || got.WeightG != 6500 || got.CubeMm3 != 400*300*200 {
-		t.Fatalf("case handle = %+v, %v", got, err)
-	}
-	got, err = pickload.PerHandle(workunit.PickUnitEach, view(eachSized, caseOf12))
-	if err != nil || got.Handles != 1 || got.Eaches != 1 || got.WeightG != 450 {
-		t.Fatalf("each handle = %+v, %v", got, err)
-	}
-	if _, err := pickload.PerHandle(workunit.PickUnitCase, view(eachSized, nil)); !errors.Is(err, pickload.ErrNoActiveCaseLevel) {
-		t.Fatalf("no case level: err = %v", err)
-	}
-}
-
-func TestCarryKgM(t *testing.T) {
-	load, err := pickload.Estimate(workunit.PickUnitCase, 24, view(nil, caseOf12))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Two cases of 6.5 kg: the carry is per HANDLE (6.5 kg), over 40 m.
-	got, ok := load.CarryKgM(40)
-	if !ok || math.Abs(got-6.5*40) > 1e-9 {
-		t.Fatalf("carry = %v ok=%v, want %v", got, ok, 6.5*40)
-	}
-	if _, ok := (pickload.Load{Handles: 2}).CarryKgM(40); ok {
-		t.Fatal("an unknown weight must not produce a carry figure")
-	}
-	if _, ok := (pickload.Load{WeightKnown: true, WeightG: 10}).CarryKgM(40); ok {
-		t.Fatal("no handles must not produce a carry figure")
 	}
 }

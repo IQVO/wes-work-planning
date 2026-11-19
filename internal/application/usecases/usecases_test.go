@@ -9,15 +9,12 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/events"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
-	"github.com/claudioed/wes-work-planning/internal/domain/plan"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
 type fixture struct {
-	charges   *memory.ChargeRepo
-	plans     *memory.PlanRepo
 	pools     *memory.WorkPoolRepo
 	workUnits *memory.WorkUnitRepo
 	publisher *events.LogPublisher
@@ -26,89 +23,10 @@ type fixture struct {
 
 func newFixture() fixture {
 	return fixture{
-		charges:   memory.NewChargeRepo(),
-		plans:     memory.NewPlanRepo(),
 		pools:     memory.NewWorkPoolRepo(),
 		workUnits: memory.NewWorkUnitRepo(),
 		publisher: events.NewLogPublisher(nil),
 		clock:     memory.FixedClock{At: time.Date(2026, 8, 21, 8, 0, 0, 0, time.UTC)},
-	}
-}
-
-func TestReceiveChargeForecast(t *testing.T) {
-	f := newFixture()
-	uc := usecases.NewReceiveChargeForecast(f.charges, f.publisher, f.clock)
-	pathId, _ := shared.NewPathId("pick-a")
-	qty, _ := shared.NewQuantity(100)
-	cpt := shared.NewCPT(f.clock.Now().Add(time.Hour))
-
-	forecast, err := uc.Execute(context.Background(), usecases.ReceiveChargeForecastRequest{
-		PathId:  pathId,
-		Buckets: []usecases.CPTBucketInput{{CPT: cpt, Quantity: qty}},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if forecast.TotalQuantity().Value() != 100 {
-		t.Fatalf("got total %d, want 100", forecast.TotalQuantity().Value())
-	}
-
-	stored, err := f.charges.FindByPathId(context.Background(), pathId)
-	if err != nil {
-		t.Fatalf("unexpected error fetching stored forecast: %v", err)
-	}
-	if stored.TotalQuantity().Value() != 100 {
-		t.Fatalf("stored forecast total = %d, want 100", stored.TotalQuantity().Value())
-	}
-
-	if len(f.publisher.Events()) != 1 {
-		t.Fatalf("got %d events, want 1", len(f.publisher.Events()))
-	}
-}
-
-func TestCommitShiftPlan_EnforcesHeadsInvariant(t *testing.T) {
-	f := newFixture()
-	uc := usecases.NewCommitShiftPlan(f.plans, f.publisher, f.clock)
-	pathId, _ := shared.NewPathId("pick-a")
-	rate, _ := shared.NewRate(50)
-	heads, _ := shared.NewStationCount(6)
-	installed, _ := shared.NewStationCount(5)
-
-	_, err := uc.Execute(context.Background(), usecases.CommitShiftPlanRequest{
-		PathId:            pathId,
-		PlannedHeads:      heads,
-		InstalledStations: installed,
-		Rate:              rate,
-		Hours:             8,
-	})
-	if !errors.Is(err, plan.ErrHeadsExceedStations) {
-		t.Fatalf("got err %v, want %v", err, plan.ErrHeadsExceedStations)
-	}
-}
-
-func TestCommitShiftPlan_Success(t *testing.T) {
-	f := newFixture()
-	uc := usecases.NewCommitShiftPlan(f.plans, f.publisher, f.clock)
-	pathId, _ := shared.NewPathId("pick-a")
-	rate, _ := shared.NewRate(50)
-	heads, _ := shared.NewStationCount(4)
-	installed, _ := shared.NewStationCount(5)
-
-	sp, err := uc.Execute(context.Background(), usecases.CommitShiftPlanRequest{
-		PathId:            pathId,
-		PlannedHeads:      heads,
-		InstalledStations: installed,
-		Rate:              rate,
-		Hours:             8,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, ok := sp.PathPlan(pathId); !ok {
-		t.Fatalf("expected committed plan to be retrievable")
-	}
-	if len(f.publisher.Events()) != 1 {
-		t.Fatalf("got %d events, want 1", len(f.publisher.Events()))
 	}
 }
 

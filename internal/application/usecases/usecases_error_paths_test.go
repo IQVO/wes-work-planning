@@ -9,8 +9,6 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
-	"github.com/claudioed/wes-work-planning/internal/domain/charge"
-	"github.com/claudioed/wes-work-planning/internal/domain/plan"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
@@ -22,24 +20,6 @@ type erroringEventPublisher struct {
 
 func (p erroringEventPublisher) Publish(ctx context.Context, events ...shared.DomainEvent) error {
 	return p.err
-}
-
-type saveErrPlanRepo struct {
-	*memory.PlanRepo
-	err error
-}
-
-func (r saveErrPlanRepo) Save(ctx context.Context, pathId shared.PathId, shiftPlan *plan.ShiftPlan) error {
-	return r.err
-}
-
-type saveErrChargeRepo struct {
-	*memory.ChargeRepo
-	err error
-}
-
-func (r saveErrChargeRepo) Save(ctx context.Context, forecast *charge.ChargeForecast) error {
-	return r.err
 }
 
 type saveErrWorkUnitRepo struct {
@@ -70,26 +50,6 @@ func (r findErrWorkPoolRepo) FindByPathId(ctx context.Context, pathId shared.Pat
 
 func (r findErrWorkPoolRepo) Save(ctx context.Context, pool *release.WorkPool) error {
 	return nil
-}
-
-func TestCommitShiftPlan_InvalidHours(t *testing.T) {
-	f := newFixture()
-	uc := usecases.NewCommitShiftPlan(f.plans, f.publisher, f.clock)
-	pathId, _ := shared.NewPathId("pick-a")
-	rate, _ := shared.NewRate(50)
-	heads, _ := shared.NewStationCount(4)
-	installed, _ := shared.NewStationCount(5)
-
-	_, err := uc.Execute(context.Background(), usecases.CommitShiftPlanRequest{
-		PathId:            pathId,
-		PlannedHeads:      heads,
-		InstalledStations: installed,
-		Rate:              rate,
-		Hours:             0,
-	})
-	if !errors.Is(err, shared.ErrInvalidHours) {
-		t.Fatalf("got err %v, want %v", err, shared.ErrInvalidHours)
-	}
 }
 
 func TestEnqueueWorkUnit_ValidatesWorkUnit(t *testing.T) {
@@ -127,20 +87,6 @@ func TestEnqueueWorkUnit_RejectsDuplicateEntry(t *testing.T) {
 	})
 	if !errors.Is(err, release.ErrDuplicateEntry) {
 		t.Fatalf("got err %v, want %v", err, release.ErrDuplicateEntry)
-	}
-}
-
-func TestReceiveChargeForecast_NoBuckets(t *testing.T) {
-	f := newFixture()
-	uc := usecases.NewReceiveChargeForecast(f.charges, f.publisher, f.clock)
-	pathId, _ := shared.NewPathId("pick-a")
-
-	_, err := uc.Execute(context.Background(), usecases.ReceiveChargeForecastRequest{
-		PathId:  pathId,
-		Buckets: nil,
-	})
-	if !errors.Is(err, charge.ErrNoBuckets) {
-		t.Fatalf("got err %v, want %v", err, charge.ErrNoBuckets)
 	}
 }
 
@@ -460,72 +406,6 @@ func TestObserveInventoryChange_TryMarkProcessedError(t *testing.T) {
 	}
 }
 
-func TestCommitShiftPlan_PublishesShiftPlanCommittedEvent(t *testing.T) {
-	f := newFixture()
-	uc := usecases.NewCommitShiftPlan(f.plans, f.publisher, f.clock)
-	pathId, _ := shared.NewPathId("pick-b")
-	rate, _ := shared.NewRate(30)
-	heads, _ := shared.NewStationCount(2)
-	installed, _ := shared.NewStationCount(2)
-
-	_, err := uc.Execute(context.Background(), usecases.CommitShiftPlanRequest{
-		PathId:            pathId,
-		PlannedHeads:      heads,
-		InstalledStations: installed,
-		Rate:              rate,
-		Hours:             6,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	stored, err := f.plans.FindByPathId(context.Background(), pathId)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, ok := stored.PathPlan(pathId); !ok {
-		t.Fatalf("expected stored plan to contain path plan")
-	}
-	if len(f.publisher.Events()) != 1 {
-		t.Fatalf("got %d events, want 1", len(f.publisher.Events()))
-	}
-}
-
-func TestCommitShiftPlan_SaveError(t *testing.T) {
-	f := newFixture()
-	wantErr := errors.New("plan store unavailable")
-	repo := saveErrPlanRepo{PlanRepo: f.plans, err: wantErr}
-	uc := usecases.NewCommitShiftPlan(repo, f.publisher, f.clock)
-	pathId, _ := shared.NewPathId("pick-a")
-	rate, _ := shared.NewRate(50)
-	heads, _ := shared.NewStationCount(4)
-	installed, _ := shared.NewStationCount(5)
-
-	_, err := uc.Execute(context.Background(), usecases.CommitShiftPlanRequest{
-		PathId: pathId, PlannedHeads: heads, InstalledStations: installed, Rate: rate, Hours: 8,
-	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("got err %v, want %v", err, wantErr)
-	}
-}
-
-func TestCommitShiftPlan_PublishError(t *testing.T) {
-	f := newFixture()
-	wantErr := errors.New("broker unavailable")
-	uc := usecases.NewCommitShiftPlan(f.plans, erroringEventPublisher{err: wantErr}, f.clock)
-	pathId, _ := shared.NewPathId("pick-a")
-	rate, _ := shared.NewRate(50)
-	heads, _ := shared.NewStationCount(4)
-	installed, _ := shared.NewStationCount(5)
-
-	_, err := uc.Execute(context.Background(), usecases.CommitShiftPlanRequest{
-		PathId: pathId, PlannedHeads: heads, InstalledStations: installed, Rate: rate, Hours: 8,
-	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("got err %v, want %v", err, wantErr)
-	}
-}
-
 func TestEnqueueWorkUnit_PoolLookupError(t *testing.T) {
 	f := newFixture()
 	wantErr := errors.New("pool store unavailable")
@@ -582,39 +462,6 @@ func TestEnqueueWorkUnit_PublishError(t *testing.T) {
 
 	_, err := uc.Execute(context.Background(), usecases.EnqueueWorkUnitRequest{
 		WorkUnitId: "wu-1", PathId: pathId, CPT: cpt, Reference: "ref-1",
-	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("got err %v, want %v", err, wantErr)
-	}
-}
-
-func TestReceiveChargeForecast_SaveError(t *testing.T) {
-	f := newFixture()
-	wantErr := errors.New("charge store unavailable")
-	repo := saveErrChargeRepo{ChargeRepo: f.charges, err: wantErr}
-	uc := usecases.NewReceiveChargeForecast(repo, f.publisher, f.clock)
-	pathId, _ := shared.NewPathId("pick-a")
-	qty, _ := shared.NewQuantity(100)
-	cpt := shared.NewCPT(f.clock.Now().Add(time.Hour))
-
-	_, err := uc.Execute(context.Background(), usecases.ReceiveChargeForecastRequest{
-		PathId: pathId, Buckets: []usecases.CPTBucketInput{{CPT: cpt, Quantity: qty}},
-	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("got err %v, want %v", err, wantErr)
-	}
-}
-
-func TestReceiveChargeForecast_PublishError(t *testing.T) {
-	f := newFixture()
-	wantErr := errors.New("broker unavailable")
-	uc := usecases.NewReceiveChargeForecast(f.charges, erroringEventPublisher{err: wantErr}, f.clock)
-	pathId, _ := shared.NewPathId("pick-a")
-	qty, _ := shared.NewQuantity(100)
-	cpt := shared.NewCPT(f.clock.Now().Add(time.Hour))
-
-	_, err := uc.Execute(context.Background(), usecases.ReceiveChargeForecastRequest{
-		PathId: pathId, Buckets: []usecases.CPTBucketInput{{CPT: cpt, Quantity: qty}},
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("got err %v, want %v", err, wantErr)

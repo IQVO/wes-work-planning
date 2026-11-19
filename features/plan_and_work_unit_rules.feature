@@ -1,18 +1,18 @@
-# Documentation-derived rules of the ChargeForecast and ShiftPlan aggregates
-# and of the work-unit REST surface.
+# Documentation-derived rules of the work-unit REST surface.
 #
 # Sources:
 #   - warehouse-docs docs/contexts/wes-work-planning/aggregate-design-canvas.md
-#     ChargeForecast C1-C3, ShiftPlan P1-P4 (and the shared value objects
-#     table), WorkUnit U4-U6;
-#   - use-cases.md ReceiveChargeForecast / CommitShiftPlan / EnqueueWorkUnit
-#     invariants and the Queries table (keyset paging, 400 reference-required);
+#     WorkUnit U4-U6 (and the shared value objects table);
+#   - use-cases.md EnqueueWorkUnit invariants and the Queries table (keyset
+#     paging, 400 reference-required);
 #   - troubleshooting.md "HTTP problem types": unknown-path-id on the routes
 #     that can create an aggregate, malformed-request-body for a NUL, the
 #     work-unit lifecycle slugs;
 #   - docs/docs/adr/0012 (catalogue prefix-family match) and the fleet REST
 #     guideline (page.go: limit 1..500, opaque cursor, unknown parameters).
-Feature: Plan, charge and work-unit rules from the documentation
+# The charge forecast and shift plan rules moved to warehouse-planning with
+# their aggregates (ADR-0049); features/planning_moved.feature pins the 410s.
+Feature: Work-unit rules from the documentation
   As the WES conductor
   I want the documented invariants, limits and error rows of the commands and queries pinned at their boundaries
   So that a bad commitment is refused with the documented slug and a read is paged exactly as the contract says
@@ -21,57 +21,7 @@ Feature: Plan, charge and work-unit rules from the documentation
     Given the WES Work Planning service is running
 
   @bdd
-  Scenario Outline: Planned heads may equal the installed stations and a count may reach the 32-bit maximum
-    When a ShiftPlan is committed for process path "pick-zone-a" with <heads> planned heads and <stations> installed stations at a rate of 1 units per hour for 1 hours
-    Then the request is accepted with status 201
-    And the committed PathPlan reports <heads> planned heads against <stations> installed stations
-
-    Examples:
-      | heads      | stations   |
-      | 8          | 8          |
-      | 0          | 0          |
-      | 2147483647 | 2147483647 |
-
-  @bdd
-  Scenario Outline: A shift plan that breaks an invariant is refused with its documented slug and announces nothing
-    When a ShiftPlan is committed for process path "pick-zone-a" with <heads> planned heads and <stations> installed stations at a rate of <rate> units per hour for <hours> hours
-    Then the request is rejected with status 400
-    And the problem type slug is "<slug>"
-    And 0 "ShiftPlanCommitted" events were published
-
-    Examples:
-      | heads      | stations   | rate  | hours | slug                           |
-      | 9          | 8          | 95.5  | 8     | heads-exceed-installed-stations |
-      | 2147483648 | 2147483648 | 95.5  | 8     | invalid-station-count          |
-      | -1         | 8          | 95.5  | 8     | invalid-station-count          |
-      | 6          | -1         | 95.5  | 8     | invalid-station-count          |
-      | 6          | 8          | 0     | 8     | invalid-rate                   |
-      | 6          | 8          | -10   | 8     | invalid-rate                   |
-      | 6          | 8          | 95.5  | 0     | invalid-hours                  |
-      | 6          | 8          | 95.5  | -1    | invalid-hours                  |
-      | 4          | 8          | 1e308 | 8     | planned-throughput-not-finite  |
-
-  @bdd
-  Scenario Outline: A shift plan without a required count is malformed
-    When a ShiftPlan is committed for process path "pick-zone-a" without the "<field>" field
-    Then the request is rejected with status 400
-    And the problem type slug is "malformed-request-body"
-
-    Examples:
-      | field             |
-      | plannedHeads      |
-      | installedStations |
-
-  @bdd
   Scenario Outline: Commands that can create an aggregate refuse a path outside the catalogue family
-    When a charge forecast with a single bucket of 500 units is received for process path "<path>"
-    Then the request is rejected with status 400
-    And the problem type slug is "unknown-path-id"
-    And 0 "ChargeForecastReceived" events were published
-    When a ShiftPlan is committed for process path "<path>" with 6 planned heads and 8 installed stations at a rate of 95.5 units per hour for 8 hours
-    Then the request is rejected with status 400
-    And the problem type slug is "unknown-path-id"
-    And 0 "ShiftPlanCommitted" events were published
     When a WorkUnit "wu-1" with CPT "2026-08-21T12:00:00Z" and reference "order-line-1" is submitted to process path "<path>"
     Then the request is rejected with status 400
     And the problem type slug is "unknown-path-id"
@@ -86,49 +36,14 @@ Feature: Plan, charge and work-unit rules from the documentation
 
   @bdd
   Scenario Outline: A path of a declared family is accepted whatever its case or suffix
-    When a charge forecast with a single bucket of 500 units is received for process path "<path>"
-    Then the request is accepted with status 201
+    When the pool for process path "<path>" is configured as "ReleaseFed" with a WIP limit of 5
+    Then the request is accepted with status 200
 
     Examples:
       | path        |
       | pick        |
       | PICK-Zone-B |
       | pack-3-b    |
-
-  @bdd
-  Scenario Outline: A charge quantity is non-negative, so zero is accepted and below zero is refused
-    When the charge forecast body {"buckets": [{"cpt": "2026-08-21T12:00:00Z", "quantity": <quantity>}]} is received for process path "pick-zone-a"
-    Then the request is <outcome> with status <status>
-
-    Examples:
-      | quantity | outcome  | status |
-      | 0        | accepted | 201    |
-      | 1        | accepted | 201    |
-      | -1       | rejected | 400    |
-
-  @bdd
-  Scenario: A charge forecast totals every bucket and is announced once per revision
-    When the charge forecast body {"buckets": [{"cpt": "2026-08-21T12:00:00Z", "quantity": 120}, {"cpt": "2026-08-21T15:00:00Z", "quantity": 80}, {"cpt": "2026-08-21T18:00:00Z", "quantity": 50}]} is received for process path "pick-zone-a"
-    Then the request is accepted with status 201
-    And the charge forecast reports 3 CPT buckets
-    And the charge forecast reports a total quantity of 250 units
-    When a charge forecast with a single bucket of 40 units is received for process path "pick-zone-a"
-    Then 2 "ChargeForecastReceived" events were published
-
-  @bdd
-  Scenario Outline: A charge forecast that breaks the documented shape is refused with its slug
-    When the charge forecast body <body> is received for process path "pick-zone-a"
-    Then the request is rejected with status 400
-    And the problem type slug is "<slug>"
-    And 0 "ChargeForecastReceived" events were published
-
-    Examples:
-      | body                                                           | slug                             |
-      | {}                                                             | charge-forecast-requires-buckets |
-      | {"buckets": []}                                                | charge-forecast-requires-buckets |
-      | {"buckets": [{"quantity": 5}]}                                 | malformed-request-body           |
-      | {"buckets": [{"cpt": "2026-08-21T12:00:00Z"}]}                 | malformed-request-body           |
-      | {"buckets": [{"cpt": "2026-08-21T12:00:00Z", "quantity": -3}]} | invalid-quantity                 |
 
   @bdd
   Scenario Outline: A line number must be 1 to 2147483647 when given

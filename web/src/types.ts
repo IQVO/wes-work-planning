@@ -34,12 +34,10 @@ export interface RebalanceRecommendation {
   laborPlan?: LaborPlanView;
 }
 
-/** POST /paths/{pathId}/charge body and response, and the pool
- *  configuration PUT -- mirror poolConfigResponseDTO /
- *  configurePoolRequestDTO / receiveChargeForecastRequestDTO /
- *  chargeForecastResponseDTO / cptBucketDTO in
- *  internal/adapters/inbound/http/dto.go exactly (same hand-in-sync
- *  convention as the read types above; see types.ts header note). */
+/** The pool configuration PUT -- mirrors poolConfigResponseDTO /
+ *  configurePoolRequestDTO in internal/adapters/inbound/http/dto.go exactly
+ *  (same hand-in-sync convention as the read types above; see types.ts
+ *  header note). */
 
 /** FeedMode (internal/domain/release) -- exactly two legal values. */
 export type PoolMode = "ReleaseFed" | "FlowFed";
@@ -60,26 +58,6 @@ export interface PoolConfigResponse {
   wipLimit: number;
   wip: number;
   backlogDepth: number;
-}
-
-/** One CPT bucket: the last moment a parcel can be manifested and still make
- *  its truck, and the quantity due by that moment. */
-export interface CPTBucket {
-  cpt: string;
-  quantity: number;
-}
-
-/** POST /paths/{pathId}/charge body -- at least one bucket. */
-export interface ReceiveChargeForecastRequest {
-  buckets: CPTBucket[];
-}
-
-/** POST /paths/{pathId}/charge 201 response. */
-export interface ChargeForecastResponse {
-  pathId: string;
-  totalQuantity: number;
-  buckets: CPTBucket[];
-  receivedAt: string;
 }
 
 /** WorkUnit.State enum values (internal/domain/workunit/work_unit.go) --

@@ -1,12 +1,10 @@
 import { NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { PlanningScreen } from "./screens/PlanningScreen";
 import { PoolConfigScreen } from "./screens/PoolConfigScreen";
-import { ChargeForecastScreen } from "./screens/ChargeForecastScreen";
 
 const SUB_NAV = [
   { to: ".", label: "Dashboard", end: true },
   { to: "pool", label: "Pool configuration", end: true },
-  { to: "charge", label: "Charge forecast", end: true },
 ];
 
 const linkStyle = ({ isActive }: { isActive: boolean }) => ({
@@ -26,7 +24,7 @@ const linkStyle = ({ isActive }: { isActive: boolean }) => ({
  *  path="/planning/*">`. A relative `<NavLink>` rendered straight in that
  *  splat route resolves against the FULL current URL (react-router 7 uses the
  *  last path-contributing match's pathname, splat included), so from
- *  /planning/charge the link `pool` would point at /planning/charge/pool. A
+ *  /planning/pool the link `.` would point at /planning/pool. A
  *  pathless layout route does not help (react-router drops pathless routes
  *  from relative resolution); a layout route WITH path "/" does: its own
  *  match is the mount point, under any prefix and standalone at "/".
@@ -53,15 +51,16 @@ function PlanningLayout() {
  *
  *  - (index): the existing telemetry/rebalance dashboard + work-unit search.
  *  - pool: configure a path's work pool (PUT /paths/{pathId}/pool).
- *  - charge: the planner's manual charge-forecast intake (POST
- *    /paths/{pathId}/charge, Idempotency-Key per submission). */
+ *
+ *  The charge-forecast intake screen is retired (ADR-0049): the planner sends
+ *  the workload forecast to warehouse-planning, and this context's POST
+ *  /paths/{pathId}/charge answers 410. */
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<PlanningLayout />}>
         <Route index element={<PlanningScreen />} />
         <Route path="pool" element={<PoolConfigScreen />} />
-        <Route path="charge" element={<ChargeForecastScreen />} />
       </Route>
     </Routes>
   );

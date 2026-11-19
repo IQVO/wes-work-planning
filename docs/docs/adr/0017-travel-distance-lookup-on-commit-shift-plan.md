@@ -10,7 +10,7 @@ description: ADR 0017 — why PathPlan gains an optional real travel-distance hi
 
 ## Status
 
-> Retired by [ADR-0049](./0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md) on cutover (2026-11-18): the lookup goes with `CommitShiftPlan`.
+> Superseded by [ADR-0049](./0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md).
 
 Accepted — implemented in the same change that introduced this record.
 

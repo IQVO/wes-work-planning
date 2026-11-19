@@ -250,6 +250,45 @@ channels:
           - $ref: "#/components/messages/ProcessPathUpdated"
           - $ref: "#/components/messages/ProcessPathDeactivated"
 
+  warehouse.warehouse-planning.events:
+    description: |
+      warehouse-planning's integration topic (its ADR 0023; the
+      `LabourPlanTopic` constant in
+      `internal/adapters/inbound/kafka/labour_plan_consumer.go`), CONSUMED by
+      this service, not published: `source=/warehouse/warehouse-planning`,
+      key and `subject` = `site_id/shift_id/path_id`. This service acts ONLY
+      on `LabourPlanCommitted` (ADR 0043) and commits past every other type
+      on the topic (CapacityPlan*, Shortage/Bottleneck,
+      WorkloadForecastReceived, LabourPlanDriftDetected). The consumer runs
+      in `cmd/workforce` only, on the STABLE, shared consumer group of the
+      required `LABOUR_PLAN_CONSUMER_GROUP` (chart default
+      `workforce-management-labour-plans`), starting a new group at the
+      earliest offset; `cmd/mcp` and `cmd/a2a` read the copy and never
+      consume. This channel mirrors warehouse-planning's own
+      apis/asyncapi.yaml read-only.
+    subscribe:
+      operationId: consumeWarehousePlanningEvents
+      summary: Keep the local copy of the published labour plan current.
+      description: |
+        Upsert `labour_requirements` (one row per `site_id` stored as
+        `site_code`, `shift_id`, `path_id`: `planned_heads`,
+        `rate_units_per_hour`, `hours`, `heads_source`, `version`) only when
+        the message's `version` is greater than the stored one; an equal or
+        lower version is a no-op. The claim on the CloudEvents `id` and the
+        upsert commit in one transaction, so a redelivery is a no-op.
+        `installed_stations` and the optional `shift_start` are part of
+        the contract but not kept. A message that is not a valid CloudEvents 1.0 event or that
+        breaks the contract (missing site/shift/path or planned_heads,
+        negative heads, version < 1) is dead-lettered to
+        `warehouse.warehouse-planning.events.dlq` and committed past. Read by
+        POST /paths/{pathId}/plan-proposals (no charge + shiftId) and shown
+        as `requiredHeads` on staffing-gap and committed plan lines.
+      tags:
+        - name: warehouse-planning
+          description: Consumed from the warehouse-planning bounded context.
+      message:
+        $ref: "#/components/messages/LabourPlanCommitted"
+
 components:
   messages:
     ShiftPlanCommitted:
@@ -829,6 +868,69 @@ components:
           description: Consumed from process-path-management.
       payload:
         $ref: "#/components/schemas/ProcessPathDeactivatedEvent"
+    LabourPlanCommitted:
+      name: LabourPlanCommitted
+      title: Labour Plan Committed (from warehouse-planning, consumed)
+      summary: The heads the demand requires on one path for a site's shift.
+      description: |
+        CONSUMED, not produced (ADR 0043). Pinned by warehouse-planning ADR
+        0023 decision 2: type
+        `com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted`,
+        `source=/warehouse/warehouse-planning`, subject and Kafka key
+        `site_id/shift_id/path_id`, dataschema
+        `urn:warehouse:warehouse-planning:events:LabourPlanCommitted:v1`.
+        `version` grows by 1 per accepted change of the key.
+      contentType: application/cloudevents+json
+      tags:
+        - name: warehouse-planning
+          description: Consumed from warehouse-planning.
+      payload:
+        $ref: "#/components/schemas/LabourPlanCommittedEvent"
+      examples:
+        - name: forecastDayShift
+          summary: Six heads required on PICK for the WH1 day shift (with shift_start).
+          payload:
+            specversion: "1.0"
+            id: 7f1c2a9e-3b4d-4e5f-8a6b-1c2d3e4f5a6b
+            source: /warehouse/warehouse-planning
+            type: com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted
+            subject: WH1/2026-11-18-day/PICK
+            time: "2026-11-18T05:30:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:warehouse-planning:events:LabourPlanCommitted:v1"
+            data:
+              site_id: WH1
+              shift_id: 2026-11-18-day
+              path_id: PICK
+              planned_heads: 6
+              rate_units_per_hour: 120
+              hours: 8
+              installed_stations: 10
+              shift_start: "2026-11-18T06:00:00Z"
+              heads_source: forecast
+              version: 2
+        - name: requestNightShiftNoShiftStart
+          summary: Zero heads requested on PACK for the night shift (shift_start absent).
+          payload:
+            specversion: "1.0"
+            id: 0b9d8c7e-6f5a-4b3c-9d2e-1f0a9b8c7d6e
+            source: /warehouse/warehouse-planning
+            type: com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted
+            subject: WH1/2026-11-18-night/PACK
+            time: "2026-11-18T17:30:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:warehouse-planning:events:LabourPlanCommitted:v1"
+            data:
+              site_id: WH1
+              shift_id: 2026-11-18-night
+              path_id: PACK
+              planned_heads: 0
+              rate_units_per_hour: 45.5
+              hours: 7.5
+              installed_stations: 4
+              heads_source: request
+              version: 1
+
   schemas:
     CloudEventBase:
       type: object
@@ -1586,3 +1688,95 @@ components:
           properties:
             path_id:
               type: string
+    LabourPlanCommittedEvent:
+      type: object
+      description: |
+        CloudEvents 1.0 envelope of warehouse-planning's LabourPlanCommitted,
+        as consumed here (not composed from CloudEventBase, whose `source` is
+        this service's own). Snake_case data, pinned by warehouse-planning
+        ADR 0023 decision 2.
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - dataschema
+        - data
+      properties:
+        specversion:
+          type: string
+          enum: ["1.0"]
+        id:
+          type: string
+          description: CloudEvents id; the consumer's claim (dedupe) key.
+        source:
+          type: string
+          enum: ["/warehouse/warehouse-planning"]
+        type:
+          type: string
+          const: "com.warehouse.wes.warehouse-planning.labourplan.LabourPlanCommitted"
+        subject:
+          type: string
+          description: site_id/shift_id/path_id (also the Kafka key).
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+          enum: ["application/json"]
+        dataschema:
+          type: string
+          description: urn:warehouse:warehouse-planning:events:LabourPlanCommitted:v1
+        data:
+          type: object
+          required:
+            - site_id
+            - shift_id
+            - path_id
+            - planned_heads
+            - rate_units_per_hour
+            - hours
+            - installed_stations
+            - heads_source
+            - version
+          properties:
+            site_id:
+              type: string
+              minLength: 1
+              description: The facility-layout site code (ADR 0035); stored here as site_code.
+            shift_id:
+              type: string
+              minLength: 1
+            path_id:
+              type: string
+              minLength: 1
+            planned_heads:
+              type: integer
+              minimum: 0
+              description: The heads the demand requires; the proposal's proposedHeads when no charge is sent.
+            rate_units_per_hour:
+              type: number
+              format: double
+              exclusiveMinimum: 0
+            hours:
+              type: number
+              format: double
+              exclusiveMinimum: 0
+            installed_stations:
+              type: integer
+              minimum: 0
+              description: Not kept by this service; at least planned_heads.
+            shift_start:
+              type: string
+              format: date-time
+              description: OPTIONAL; may be absent. Not kept by this service.
+            heads_source:
+              type: string
+              enum: [request, forecast]
+            version:
+              type: integer
+              minimum: 1
+              description: +1 per accepted change of the key; the copy applies only a greater version.

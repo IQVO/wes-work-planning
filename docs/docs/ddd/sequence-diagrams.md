@@ -251,79 +251,34 @@ Source: `internal/adapters/inbound/kafka/consumer.go` (`handleSlottingEvent`),
 `internal/application/usecases/record_completion.go`,
 `internal/domain/relocation/plan.go` ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)).
 
-## 4. Commit a shift plan (travel hint and drift reconciliation)
+## 4. Commit a shift plan — moved (always `410`)
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Planner
     participant HTTP as HTTP adapter
-    participant UC as CommitShiftPlan
-    participant Plan as PathPlan and ShiftPlan
-    participant FL as facility-layout
-    participant PlanRepo as PlanRepo
-    participant LV as LaborPlanViewRepo
-    participant Outbox as outbox_events
+    participant WPL as warehouse-planning
 
-    Planner->>HTTP: POST /paths/{pathId}/plan
-    HTTP->>UC: Execute heads, stations, rate, hours, from, to
-    UC->>Plan: NewPathPlan
-    alt heads above installed stations
-        Plan-->>HTTP: ErrHeadsExceedStations, 422
-    end
-    opt both location codes supplied
-        UC->>FL: GET /distance?from=&to=
-        FL-->>UC: TravelDistanceView, failure means no hint
-    end
-    UC->>Plan: NewShiftPlan with one PathPlan
-    UC->>PlanRepo: Save, upsert on path_id
-    UC->>Outbox: insert ShiftPlanCommitted rows
-    UC->>LV: FindByPathId
-    alt labor plan already observed
-        UC->>LV: SaveDrift signed heads difference
-        opt heads differ
-            UC->>Outbox: insert PathPlanDriftDetected rows
-        end
-    end
-    UC-->>HTTP: ShiftPlan
-    HTTP-->>Planner: 201 with plannedThroughput and optional travel distance
+    Planner->>HTTP: POST /paths/{pathId}/plan with Idempotency-Key and any body
+    HTTP-->>Planner: 410 shift-plan-moved, detail names PUT /labour-plans/{site_id}/{shift_id}/{path_id}
+    Planner->>WPL: PUT /labour-plans/{site_id}/{shift_id}/{path_id}
 ```
 
-Source: `internal/application/usecases/commit_shift_plan.go`,
-`internal/application/usecases/drift_reconciliation.go`,
-`internal/domain/plan/path_plan.go`,
-`internal/adapters/outbound/traveldistance/`. Omits: the circuit breaker and
-retry around the facility-layout call (ADR-0023) and
-`TRAVEL_DISTANCE_MODE=permissive`, which never calls out.
+Source: `internal/adapters/inbound/http/handlers_plan.go` (`postShiftPlan`),
+`internal/adapters/inbound/http/router.go`. No use case, repository or outbox
+is involved: nothing is decoded, recorded or published. The shift plan, its
+`plannedHeads ≤ installedStations` invariant and the plan-vs-labour drift
+check moved to warehouse-planning
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)),
+which publishes `LabourPlanDriftDetected`. The route is `deprecated` and goes
+in stage E.
 
-## 5. Receive a charge forecast
+## 5. Receive a charge forecast — moved (always `410`)
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Planner
-    participant HTTP as HTTP adapter
-    participant UC as ReceiveChargeForecast
-    participant CF as ChargeForecast
-    participant Repo as ChargeRepo
-    participant Outbox as outbox_events
-
-    Planner->>HTTP: POST /paths/{pathId}/charge with buckets
-    HTTP->>HTTP: validate path and each bucket quantity
-    HTTP->>UC: Execute
-    UC->>CF: NewChargeForecast
-    alt no buckets
-        CF-->>HTTP: ErrNoBuckets, 422
-    end
-    UC->>Repo: Save, upsert on path_id
-    UC->>Outbox: insert ChargeForecastReceived rows
-    UC-->>HTTP: ChargeForecast
-    HTTP-->>Planner: 201 with totalQuantity
-```
-
-Source: `internal/application/usecases/receive_charge_forecast.go`,
-`internal/domain/charge/forecast.go`,
-`internal/adapters/inbound/http/handlers.go` (`postChargeForecast`).
+Same shape as section 4: `POST /paths/{pathId}/charge` answers `410`
+`charge-forecast-moved` (`postChargeForecast`), whose detail names
+warehouse-planning's `PUT /workload-forecasts/{site_id}/{path_id}`.
 
 ## 6. Sample backlog and decide a rebalance (REST or MCP)
 
@@ -417,23 +372,14 @@ sequenceDiagram
     participant OLP as ObserveLaborPlan
     participant OIC as ObserveInventoryChange
     participant PE as ProcessedEventRepo
-    participant PlanRepo as PlanRepo
     participant LV as LaborPlanViewRepo
     participant IV as InventoryViewRepo
-    participant Outbox as outbox_events
 
     WM->>KIN: evt com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted
     KIN->>KIN: validate path_id against catalogue
     KIN->>OLP: Execute
     OLP->>PE: TryMarkProcessed id
-    OLP->>PlanRepo: FindByPathId
-    opt our PathPlan exists
-        OLP->>OLP: reconcileHeads, drift is observed minus ours
-    end
-    OLP->>LV: Save LaborPlanObserved with drift
-    opt drift not zero
-        OLP->>Outbox: insert PathPlanDriftDetected rows
-    end
+    OLP->>LV: Save LaborPlanObserved as reported, no drift
 
     INV->>KIN: evt com.warehouse.wms.inventory-storage.reservation.StockReserved
     KIN->>OIC: Execute delta minus quantity
@@ -444,8 +390,9 @@ sequenceDiagram
 ```
 
 Source: `internal/application/usecases/observe_labor_plan.go`,
-`internal/application/usecases/observe_inventory_change.go`,
-`internal/application/usecases/drift_reconciliation.go`. Omits: the
+`internal/application/usecases/observe_inventory_change.go`. `ObserveLaborPlan`
+publishes nothing: since ADR-0049 there is no plan of ours to compare with,
+and the save clears a drift recorded before it. Omits: the
 retry-then-DLQ handling common to every consumed event (diagram 3).
 
 ## 9. Outbox relay to Kafka

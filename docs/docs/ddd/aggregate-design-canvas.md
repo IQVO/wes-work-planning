@@ -9,11 +9,18 @@ description: "ddd-crew Aggregate Design Canvas v1.1 for every aggregate root in 
 # Aggregate design canvas
 
 One [ddd-crew Aggregate Design Canvas](https://github.com/ddd-crew/aggregate-design-canvas)
-(v1.1) per aggregate root in `internal/domain`. There are **four aggregate
-roots** — `ChargeForecast`, `ShiftPlan`, `WorkPool`, `WorkUnit` — plus one
-domain service (`ReleasePolicy`) and five shared value objects. Every
-invariant below is enforced inside the domain layer and has a failing-path
-unit test next to it (`*_test.go` in the same package).
+(v1.1) per aggregate root in `internal/domain`. There are **two aggregate
+roots** — `WorkPool` and `WorkUnit` — plus one domain service
+(`ReleasePolicy`) and five shared value objects. Every invariant below is
+enforced inside the domain layer and has a failing-path unit test next to it
+(`*_test.go` in the same package).
+
+The former `ChargeForecast` and `ShiftPlan`/`PathPlan` aggregates moved to
+warehouse-planning
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)):
+its workload forecast (`PUT /workload-forecasts/{site_id}/{path_id}`) and its
+`LabourPlan` (`PUT /labour-plans/{site_id}/{shift_id}/{path_id}`), which keeps
+the `plannedHeads ≤ installedStations` invariant.
 
 Read models are **not** aggregates and are listed separately at the
 [end of this page](#not-aggregates-read-models-and-views).
@@ -28,170 +35,13 @@ Read models are **not** aggregates and are listed separately at the
 | `Quantity` | must be **non-negative** | `ErrInvalidQuantity` |
 | `StationCount` | **non-negative** and at most `math.MaxInt32`; comparable (`LessThan`, `GreaterThan`) | `ErrInvalidStationCount` |
 
-`hours` on a path plan is a plain `float64` validated to be positive
-(`shared.ErrInvalidHours`). These exist so an illegal value cannot be
-constructed at all: a negative quantity never becomes a `Quantity`.
+These exist so an illegal value cannot be constructed at all: a negative
+quantity never becomes a `Quantity`.
 
 Every aggregate is **one row (plus child rows) per process path or per work
 unit**, and every aggregate-changing use case saves the aggregate and inserts
 its events into the transactional outbox in one Postgres transaction
 (`UnitOfWork`, [ADR-0014](../adr/0014-transactional-outbox.md)).
-
----
-
-## ChargeForecast
-
-### 1. Name
-
-`ChargeForecast` — `internal/domain/charge/forecast.go`. Identity: the
-`PathId` (one forecast per path; `charge_forecasts.path_id` is the primary
-key).
-
-### 2. Description
-
-The volume that must clear one process path this shift, bucketed by CPT
-(`[]CPTBucket`, each a `CPT` plus a `Quantity`). It is an **input fact**, not
-a decision: receiving a revised forecast replaces the previous one.
-
-### 3. State transitions
-
-`ChargeForecast` has no status enum. Its only lifecycle is "created" and
-"replaced by a newer forecast for the same path" (the Postgres repo upserts
-on `path_id`).
-
-```mermaid
-stateDiagram-v2
-    [*] --> Received: NewChargeForecast with at least one bucket
-    [*] --> Rejected: NewChargeForecast with no buckets returns ErrNoBuckets
-    Received --> Received: ReceiveChargeForecast again for the same path replaces it
-    Rejected --> [*]
-```
-
-Source: `internal/domain/charge/forecast.go`,
-`internal/application/usecases/receive_charge_forecast.go`,
-`internal/adapters/outbound/postgres/charge_repo.go`. Omits: the HTTP
-validation of each bucket (`malformed-request-body`, `invalid-quantity`)
-that happens before the aggregate is constructed.
-
-### 4. Enforced invariants
-
-| # | Invariant | Enforced by |
-|---|---|---|
-| C1 | A forecast has **at least one CPT bucket** | `NewChargeForecast` → `charge.ErrNoBuckets` |
-| C2 | Querying a CPT that has no bucket is an error, not a zero | `QuantityForCPT` → `charge.ErrUnknownCPT` |
-| C3 | The bucket slice is never shared with callers | `NewChargeForecast` and `Buckets()` copy the slice |
-
-C2 matters: "nothing is due at 18:00" and "I have no idea what is due at
-18:00" are operationally different answers.
-
-### 5. Corrective policies
-
-None. A wrong forecast is corrected by posting a new one for the path.
-
-### 6. Handled commands
-
-| Command | Entry point |
-|---|---|
-| `ReceiveChargeForecast` | `POST /paths/{pathId}/charge` |
-
-### 7. Created events
-
-| Event | Full CloudEvents type |
-|---|---|
-| `ChargeForecastReceived` | `com.warehouse.wes.work-planning.charge.ChargeForecastReceived` |
-
-### 8. Throughput (estimate)
-
-Estimate: low — one write per path per planning cycle (a handful per path
-per shift). No concurrency control beyond the upsert; last writer wins.
-
-### 9. Size (estimate)
-
-Estimate: one event per instance per revision; a forecast carries one
-bucket per CPT wave of the shift (tens, not thousands). Lifetime: until
-replaced.
-
----
-
-## ShiftPlan
-
-### 1. Name
-
-`ShiftPlan` — `internal/domain/plan/shift_plan.go`, composed of
-`PathPlan` values (`internal/domain/plan/path_plan.go`). Identity: the
-`PathId` it is saved under (`PlanRepo.Save(ctx, pathId, shiftPlan)`;
-`shift_plans.path_id` is the primary key).
-
-### 2. Description
-
-This service's **committed** split of headcount across process paths:
-`rate × plannedHeads × hours` per path. Not `workforce-management`'s
-`ShiftPlan` — that one arrives as `LaborPlanObserved`, a read model
-([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)). Today
-`CommitShiftPlan` always builds a single-`PathPlan` `ShiftPlan`.
-
-### 3. State transitions
-
-No status enum. A plan either fails construction or is committed; a later
-commit for the same path replaces it (upsert on `path_id`).
-
-```mermaid
-stateDiagram-v2
-    [*] --> Committed: NewPathPlan and NewShiftPlan succeed
-    [*] --> Rejected: heads above stations, hours not positive, throughput not finite, or no path plans
-    Committed --> Committed: CommitShiftPlan again for the same path replaces it
-    Rejected --> [*]
-```
-
-Source: `internal/domain/plan/path_plan.go`, `internal/domain/plan/shift_plan.go`,
-`internal/application/usecases/commit_shift_plan.go`. Omits: the optional
-travel-distance enrichment (it never changes state validity).
-
-### 4. Enforced invariants
-
-| # | Invariant | Enforced by |
-|---|---|---|
-| P1 | **`plannedHeads ≤ installedStations`** | `NewPathPlan` → `plan.ErrHeadsExceedStations` |
-| P2 | `hours` must be **positive** | `NewPathPlan` → `shared.ErrInvalidHours` |
-| P3 | Planned throughput must be finite | `NewPathPlan` → `plan.ErrThroughputNotFinite` |
-| P4 | A shift plan has **at least one path plan** | `NewShiftPlan` → `plan.ErrNoPathPlans` |
-
-P1 is the headline invariant: you cannot staff more people than there are
-places to stand, and enforcing it at construction means an invalid plan
-never exists even transiently.
-
-### 5. Corrective policies
-
-- **Drift reconciliation** ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)):
-  inside the same transaction, `CommitShiftPlan` compares the new
-  `PathPlan.PlannedHeads` with Workforce's `LaborPlanObserved` for the path
-  (if one exists), stores the signed difference on the view and raises
-  `PathPlanDriftDetected` when it is non-zero. `ObserveLaborPlan` runs the
-  same comparison when Workforce commits second.
-- **Travel-distance hint** ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)):
-  fail-open; a failed lookup simply omits the hint.
-
-### 6. Handled commands
-
-| Command | Entry point |
-|---|---|
-| `CommitShiftPlan` | `POST /paths/{pathId}/plan` |
-
-### 7. Created events
-
-| Event | Full CloudEvents type |
-|---|---|
-| `ShiftPlanCommitted` | `com.warehouse.wes.work-planning.plan.ShiftPlanCommitted` |
-| `PathPlanDriftDetected` (only on drift) | `com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected` |
-
-### 8. Throughput (estimate)
-
-Estimate: low — a few commits per path per shift. Last writer wins.
-
-### 9. Size (estimate)
-
-Estimate: one or two events per commit; one `PathPlan` per instance today.
-Lifetime: until the next commit for the path.
 
 ---
 
@@ -421,8 +271,6 @@ the pool aggregate ([ADR-0002](../adr/0002-waveless-continuous-release.md)).
 - **`WorkPool` and `WorkUnit` are separate.** The pool holds entry records
   keyed by work unit id, not `WorkUnit` objects. They are updated in the same
   use case and the same transaction, but each has its own invariants.
-- **`ChargeForecast` and `ShiftPlan` are separate.** Charge is an input fact;
-  the plan is a decision.
 
 ## Not aggregates: read models and views
 
@@ -432,9 +280,8 @@ facts belong to someone else or are computed on read. See
 
 | Type | Package | Kind |
 |---|---|---|
-| `LaborPlanObserved` (+ `Drift`) | `internal/domain/laborview` | Kafka projection of Workforce's `ShiftPlanCommitted`, persisted in `labor_plan_view` |
+| `LaborPlanObserved` | `internal/domain/laborview` | Kafka projection of Workforce's `ShiftPlanCommitted`, persisted in `labor_plan_view`; its drift fields are deprecated read-backs (ADR-0049) |
 | `UsableInventoryObserved` | `internal/domain/inventoryview` | Kafka projection of `StockReserved` / `ReservationRevoked`, persisted in `usable_inventory_view`. Decided 2026-10-06: read-only context by design ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)); gating release on it would be a new business rule |
 | `ProductClassificationView` | `internal/domain/productclassificationview` | read at release from `product_classification_copy`, a version-guarded local copy of product-master's `ProductClassified` ([ADR-0035](../adr/0035-product-classification-local-copy.md)) |
-| `TravelDistanceView` | `internal/domain/traveldistanceview` | synchronous REST read from facility-layout at plan commit, never persisted |
 | `PathDefinition` / `Catalogue` | `internal/domain/pathcatalog` | in-memory copy of process-path-management's catalogue |
 | `BacklogSnapshot`, `RebalanceRecommendation` | `internal/application/usecases` | computed on read from a `WorkPool` |

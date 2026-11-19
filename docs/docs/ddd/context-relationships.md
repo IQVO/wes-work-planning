@@ -31,7 +31,7 @@ Open-Host Service (OHS), Published Language (PL), Partnership (P).
 | `pick-face-replenishment` | upstream of us | **Customer/Supplier**, with an **ACL on our side** | `ReplenishmentRequested` becomes one `REPLENISH` `WorkUnit` per request; `ReplenishmentCancelled` withdraws it while it is Pending ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)). |
 | `order-management` (capacity edge) | downstream of us | **Customer/Supplier**, we are the supplier; **OHS + Published Language** | We publish `PathCapacityChanged` (ADR-0018); its `kafkapathcapacity` adapter caches remaining capacity per (path, cutoff). |
 | `network-fulfillment` | downstream of us | **OHS + Published Language** on our side, **Conformist** on theirs | Its `pathcapacitycache` adapter consumes the same `PathCapacityChanged` into its `CapabilityOffer`; we do not know about it. |
-| `facility-layout` | upstream of us | **Conformist to its OHS** | `CommitShiftPlan` reads `GET /distance` once at commit time (ADR-0017); permissive by default and fail-open. |
+| `warehouse-planning` | neither | **no integration** | Owns the charge forecast (workload forecast) and the labour plan, with their drift, since [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md). No message flows between us; our two old planning POSTs answer `410` naming its routes. |
 | `process-path-management` | upstream of us | **Conformist to its OHS/PL** | Owns the process-path catalogue every `pathId` is validated against (ADR-0012); consumed from Kafka with `PATH_CATALOGUE_SOURCE=kafka`, else from the same catalogue as YAML. |
 
 ## WMS → WES: Customer/Supplier, ACL in both directions
@@ -95,22 +95,18 @@ Modelling it as two matters: the two edges have different contracts
 payloads, and different failure modes. On the feedback edge we are the customer
 and conform to *their* published `TaskCompleted` shape.
 
-## The Conformist relationships
+## The Conformist relationship
 
-`facility-layout` is a **Generic subdomain** providing an Open Host Service for
-physical-location truth (`Site → Zone → Aisle → LocationSlot`, with an
-industry-standard `Site-Area-Zone-Aisle-Bay-Level-Position` code). This context
-conforms to it for exactly one fact: the travel distance between two location
-codes, read from `GET /distance` once when a shift plan is committed
-([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)).
-Travel time, congestion and route choice remain modelled here; geography is
-not. We do not consume its Kafka topic.
+This context no longer conforms to `facility-layout`: its one fact, the
+distance between two location codes read when a shift plan was committed,
+was retired with the shift plan
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
 
-`process-path-management` is likewise Generic and owns the process-path
+`process-path-management` is a **Generic subdomain** and owns the process-path
 catalogue. We conform to it rather than keeping our own list of paths
 ([ADR-0012](../adr/0012-process-path-catalogue-validation.md)).
 
-Both follow the reference model's guidance to extract generic logic once
+This follows the reference model's guidance to extract generic logic once
 instead of duplicating it in every context. See the
 [context map](../ecosystem/context-map.md).
 

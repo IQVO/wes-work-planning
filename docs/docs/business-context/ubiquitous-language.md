@@ -79,20 +79,21 @@ intersection of several others, and hits it more than once.
 Since ADR-0049 this context has no `ShiftPlan` of its own (the labour plan is
 warehouse-planning's); the trap below stays for readers of its history.
 
-`workforce-management` has a `ShiftPlan`. This service has a `ShiftPlan`. They
-are **not** the same model and are deliberately not shared.
+`workforce-management` has a `ShiftPlan`. This service had one too. They
+were **not** the same model and were deliberately not shared.
 
-- **Ours** is a committed decision this context makes and enforces
-  (`plannedHeads ≤ installedStations`). It is an aggregate with invariants.
+- **Ours** was a committed decision this context made and enforced
+  (`plannedHeads ≤ installedStations`), an aggregate with invariants. It now
+  lives in warehouse-planning as its `LabourPlan`.
 - **Theirs** is a fact about labour that arrives over Kafka as
   `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted`. It is
   projected into a *different type* named `LaborPlanObserved` — a plain
-  read-model value with no invariants at all. The two are *compared*
-  (drift, [ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)),
-  never merged.
+  read-model value with no invariants at all. The two used to be *compared*
+  (drift, [ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md),
+  superseded by ADR-0049), never merged.
 
-Feeding Workforce's event into our aggregate would make an external system able
-to violate our invariant. See
+Feeding Workforce's event into our aggregate would have let an external
+system violate our invariant. See
 [ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md).
 
 ### Trap 2 — `WorkUnit` here is not `Task` downstream
@@ -106,9 +107,10 @@ anti-corruption boundary, not a shared type.
 
 ### Trap 3 — read models are not aggregate state
 
-Backlog depth, remaining capacity and plan-vs-labor drift are
+Backlog depth, remaining capacity and the observed labour plan are
 **projections**. They are computed from pool state or built from events;
-none of them is a field maintained on an aggregate. See
+none of them is a field maintained on an aggregate (plan-vs-labour drift is
+warehouse-planning's since ADR-0049). See
 [Read models](../ddd/read-models.md).
 
 ### Trap 4 — `ProductClassificationView` is not `UsableInventoryObserved`
@@ -150,5 +152,5 @@ still holds it.
 
 `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` (theirs,
 consumed) and `com.warehouse.wes.work-planning.plan.ShiftPlanCommitted` (ours,
-published) share an event name. Consumers must dispatch on the **full**
+retired) share an event name. Consumers must dispatch on the **full**
 `type`, never the short name.

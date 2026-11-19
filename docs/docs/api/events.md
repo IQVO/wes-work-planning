@@ -88,28 +88,22 @@ the past-tense domain event name used in the code. For this service the
 subdomain is `wes` and the bounded context is `work-planning`:
 
 ```
-com.warehouse.wes.work-planning.charge.ChargeForecastReceived
-com.warehouse.wes.work-planning.plan.ShiftPlanCommitted
 com.warehouse.wes.work-planning.workunit.WorkReleased
 com.warehouse.wes.work-planning.workpool.PathThrottled
-com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected
 ```
 
-The `<entity>` segment names the aggregate that raised the event: `charge`
-(ChargeForecast), `plan` (ShiftPlan/PathPlan), `workpool` (WorkPool and the
-flow-balancing decisions taken against it), `workunit` (WorkUnit), and
-`pathplan` for the ADR-0019 plan-vs-labor reconciliation outcome. The mapping
-lives in `eventTypeEntity` in `internal/adapters/outbound/kafka/publisher.go`.
+The `<entity>` segment names the aggregate that raised the event: `workpool`
+(WorkPool and the flow-balancing decisions taken against it) and `workunit`
+(WorkUnit). The mapping lives in `eventTypeEntity` in
+`internal/adapters/outbound/kafka/publisher.go`.
 
 ## Events published
 
-Topic `warehouse.work-planning.events`. Eleven event types are catalogued; the
+Topic `warehouse.work-planning.events`. Eight event types are published; the
 `data` shape of each is below.
 
 | Event (`type` suffix after `com.warehouse.wes.work-planning.`) | `data` fields | Raised when |
 |---|---|---|
-| `charge.ChargeForecastReceived` | `path_id` | a charge forecast is recorded for a path |
-| `plan.ShiftPlanCommitted` | `path_id` | **this** context commits its own rate × heads × hours plan |
 | `workunit.WorkUnitCreated` | `path_id`, `work_unit_id` (+ optional `reference`, `line_no`, [ADR-0041](../adr/0041-work-unit-created-origin.md)) | a work unit is enqueued into a pool |
 | **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` (+ optional `required_capabilities`, `fragile`, `gift_wrap`, `line_no`) | the release policy admits the earliest-CPT unit |
 | `workunit.WorkUnitCompleted` | `path_id`, `work_unit_id` | a released unit completes |
@@ -118,7 +112,13 @@ Topic `warehouse.work-planning.events`. Eleven event types are catalogued; the
 | `workpool.PathThrottled` | `path_id` | flow balancing decides to throttle upstream release |
 | `workpool.LaborReassignmentFlagged` | `path_id` | flow balancing recommends moving headcount |
 | `workpool.PathCapacityChanged` | `path_id`, `cutoff_at`, `remaining_units`, `known` | `SampleBacklog` is called with a `cutoffAt` query parameter (ADR-0018) |
-| `pathplan.PathPlanDriftDetected` | `path_id`, `wes_planned_heads`, `observed_planned_heads`, `drift_heads`, `observed_at` | our committed `PathPlan` and Workforce's `LaborPlanObserved` disagree on planned heads, whichever side commits second (ADR-0019) |
+
+Three types are retired and no longer published
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)):
+`charge.ChargeForecastReceived`, `plan.ShiftPlanCommitted` and
+`pathplan.PathPlanDriftDetected`. The forecast, the labour plan and its drift
+are warehouse-planning's now (`LabourPlanDriftDetected` replaces the drift
+event). The analytics projector still acknowledges the historical messages.
 
 **`WorkReleased` and `PathCapacityChanged` are the only ones any other
 service consumes today** — `fulfillment-execution` turns `WorkReleased` into a
@@ -174,12 +174,14 @@ CloudEvents attributes; the payload from `DataAs`.
 
 | `type` | `data` | Effect here |
 |---|---|---|
-| `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `building_id`, `shift_id`, `path_id`, `planned_heads`, `planned_rate`, `planned_hours` | `path_id` validated against the process-path catalogue; upserts the `LaborPlanObserved` projection for `path_id`; if we have a committed `PathPlan` for that path, records the drift and raises `PathPlanDriftDetected` when the heads disagree (ADR-0019) |
+| `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `building_id`, `shift_id`, `path_id`, `planned_heads`, `planned_rate`, `planned_hours` | `path_id` validated against the process-path catalogue; upserts the `LaborPlanObserved` projection for `path_id`. A pure projection: nothing is compared and nothing is published (the drift check moved to warehouse-planning, ADR-0049) |
 
 Workforce publishes **one message per path line**, which is why the projection
-keys cleanly on `path_id`. This is *not* fed into this context's own
-`ShiftPlan` aggregate — see
-[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md).
+keys cleanly on `path_id`. This context holds no shift plan of its own (the
+plan is warehouse-planning's since
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md));
+the projection stays as
+[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md) set it up.
 
 ### `warehouse.inventory.events` — from `inventory-storage`
 

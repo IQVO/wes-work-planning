@@ -22,8 +22,6 @@ flowchart LR
         KAFKA["Kafka consumers (cmd/wes)"]
     end
     subgraph commands["Commands"]
-        RCF["ReceiveChargeForecast"]
-        CSP["CommitShiftPlan"]
         EWU["EnqueueWorkUnit"]
         RNW["ReleaseNextWork"]
         RC["RecordCompletion"]
@@ -43,8 +41,6 @@ flowchart LR
         ARR["ApplyReplenishmentRequested"]
         ARC["ApplyReplenishmentCancelled"]
     end
-    REST --> RCF
-    REST --> CSP
     REST --> EWU
     REST --> RNW
     REST --> RC
@@ -74,36 +70,12 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 
 ## Commands
 
-### ReceiveChargeForecast
-
-- **Trigger**: `POST /paths/{pathId}/charge` → `201`.
-- **Inputs**: `pathId`; `buckets[]` of `{cpt, quantity}`.
-- **Invariants**: `pathId` is declared in the process-path catalogue
-  (`400 unknown-path-id`); every bucket has both fields
-  (`400 malformed-request-body`); at least one bucket
-  (`charge-forecast-requires-buckets`); quantity is not negative
-  (`invalid-quantity`).
-- **State**: one `ChargeForecast` per path, replaced on every call (upsert on
-  `path_id`).
-- **Events**: `ChargeForecastReceived`.
-
-### CommitShiftPlan
-
-- **Trigger**: `POST /paths/{pathId}/plan` → `201`.
-- **Inputs**: `plannedHeads`, `installedStations` (required), `rateUnitsPerHour`,
-  `hours`, optional `fromLocationCode` + `toLocationCode`.
-- **Invariants**: catalogue; `plannedHeads <= installedStations`
-  (`heads-exceed-installed-stations`); counts within 0..2147483647; rate and
-  hours positive; planned throughput finite.
-- **Enrichment**: when both location codes are given and
-  `TRAVEL_DISTANCE_MODE=http`, one facility-layout lookup stamps
-  `travelDistanceM`/`travelDistanceEstimated`; any failure is fail-open
-  ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)).
-- **Reconciliation**: if Workforce's `LaborPlanObserved` exists for the path,
-  the head counts are compared and the outcome stored on the view
-  ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)).
-- **Events**: `ShiftPlanCommitted`; `PathPlanDriftDetected` when the heads
-  disagree.
+`ReceiveChargeForecast` and `CommitShiftPlan` are gone: the charge forecast
+and the shift plan moved to warehouse-planning
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
+`POST /paths/{pathId}/charge` and `/plan` answer `410` (`charge-forecast-moved`,
+`shift-plan-moved`) naming `PUT /workload-forecasts/{site_id}/{path_id}` and
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}` there.
 
 ### EnqueueWorkUnit
 
@@ -201,7 +173,7 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 |---|---|---|---|
 | `GetWorkUnit` | `GET /work-units/{id}` | one work unit (`id`, `pathId`, `cpt`, `reference`, `state`, `giftWrap`, `sku`, `lineNo`, `releasedAt`, `completedAt`, `cancelledAt`; RELOCATE units add `relocation` = `planId`, `moveSeq`, `kind`, `siteId`, `fromSlot`, `toSlot`, `blockedBy`) | `404` |
 | `GetWorkUnitsByReference` | `GET /work-units?reference=` | every work unit with that reference, keyset-paged (`{items,nextCursor}`; `items` empty when none) | `400 reference-required` when the parameter is missing |
-| `LaborPlanView` | `GET /paths/{pathId}/labor-plan-view` | the `LaborPlanObserved` projection, with the ADR-0019 drift outcome | `404` until a `ShiftPlanCommitted` for the path arrives |
+| `LaborPlanView` | `GET /paths/{pathId}/labor-plan-view` | the `LaborPlanObserved` projection; its drift fields are deprecated read-backs (ADR-0049) | `404` until a `ShiftPlanCommitted` for the path arrives |
 | `InventoryView` | `GET /inventory-view/{sku}` | the `UsableInventoryObserved` projection | `404` until an inventory event for the SKU arrives |
 
 ## Inbound-event use cases
@@ -215,7 +187,7 @@ re-applies the event. The consumer that calls them is described on
 
 | Use case | Event (topic) | Effect | Invariants / failure | Events raised |
 |---|---|---|---|---|
-| `ObserveLaborPlan` | `ShiftPlanCommitted` (`warehouse.workforce.events`) | upserts `LaborPlanObserved` for `path_id`; compares with our committed `PathPlan` if one exists | the adapter rejects a `path_id` outside the catalogue (retried, then DLQ) | `PathPlanDriftDetected` when heads disagree |
+| `ObserveLaborPlan` | `ShiftPlanCommitted` (`warehouse.workforce.events`) | upserts `LaborPlanObserved` for `path_id` as reported; a pure projection since ADR-0049 | the adapter rejects a `path_id` outside the catalogue (retried, then DLQ) | none |
 | `ObserveInventoryChange` | `StockReserved` / `ReservationRevoked` (`warehouse.inventory.events`) | applies `-quantity` / `+quantity` to `UsableInventoryObserved` for the SKU | — | none |
 | `ApplyTaskCompleted` | `TaskCompleted` (`warehouse.fulfillment.events`) | runs `RecordCompletion` for `work_unit_id` | an unknown work unit is a logged skip (still marked processed); any other error is retried, then DLQ | `WorkUnitCompleted` (via `RecordCompletion`) |
 | `ApplyOrderAllocated` | `OrderAllocated` / `OrderPartiallyAllocated` (`warehouse.order-management.events`) | one `EnqueueWorkUnit` per line: id `{order_id}-line-{line_no}`, CPT = `promise_date`, reference = `order_id`, plus `sku`, `gift_wrap`, `line_no` ([ADR-0031](../adr/0031-order-allocated-choreography.md), [ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)) | every line's `path_id` checked against the catalogue before anything is enqueued; an out-of-range `line_no` is stored as unknown; a line already in the pool is skipped | `WorkUnitCreated` per new line |

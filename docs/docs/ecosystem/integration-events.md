@@ -89,10 +89,11 @@ correlated against a CPT cutoff timestamp — not process-path-management's
 for a `FlowFed` path (no hard admission ceiling) or a `ReleaseFed` path with
 no WIP limit provisioned. See [ADR-0018](../adr/0018-path-capacity-changed.md).
 
-The other nine domain events (including `PathPlanDriftDetected`, ADR-0019)
-are also written to this topic by the outbound adapter with a
-`{"path_id": ...}`-shaped payload, but nothing consumes them
-today. (Separately, a second publisher also writes
+The other six domain events are also written to this topic by the outbound
+adapter with a `{"path_id": ...}`-shaped payload, but nothing consumes them
+today. `ChargeForecastReceived`, `plan.ShiftPlanCommitted` and
+`PathPlanDriftDetected` are retired and no longer published
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)). (Separately, a second publisher also writes
 every domain event to `warehouse.wes.analytics` for the analytics data product
 — same CloudEvents `type`, `dataschema` `urn:warehouse:wes-work-planning:analytics:<EventName>:v1` — see [ADR-0011](../adr/0011-analytical-data-product.md).) See the [full catalogue](../api/events.md#events-published).
 
@@ -151,14 +152,13 @@ Projected into `LaborPlanObserved`, keyed by `path_id`, read at
 path line** of its own shift plan, which is why the projection keys on
 `path_id` with one row per path.
 
-**It is not fed into this service's `ShiftPlan` aggregate or `CommitShiftPlan`
-use case.** Same word, different bounded context —
-[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md). It is, however,
-*compared* with our committed `PathPlan` for the same path when one exists:
-the signed head difference is recorded on the view (`drift_heads`,
-`drift_detected_at`) and `PathPlanDriftDetected` is published when they
-disagree ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)).
-The `path_id` must match the process-path catalogue or the event is
+This context holds no shift plan of its own since
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md),
+so the projection is pure: nothing is compared and nothing is published. The
+plan and its drift check (`LabourPlanDriftDetected`) are warehouse-planning's.
+The deprecated `drift_heads` / `drift_detected_at` columns only read back a
+drift recorded before ADR-0049, until the path's next observed plan clears
+them. The `path_id` must match the process-path catalogue or the event is
 retried and dead-lettered.
 
 ### `warehouse.inventory.events` — `com.warehouse.wms.inventory-storage.reservation.StockReserved`, `...ReservationRevoked`
@@ -435,10 +435,10 @@ always on. Every other type on the topic (`ProductClassified`,
 
 `ObservePackLevel` claims the CloudEvents `id` in `processed_events` and runs
 the version-guarded write in one transaction. The copy is what the SKU's
-`EACH` and `CASE` pack facts are read from by `EnqueueWorkUnit` (to verify a
-CASE pick), `CommitShiftPlan` (pack-aware travel estimate) and
-`ReceiveChargeForecast` (pack-aware charge estimate); the dimensions used are
-the measured ones when a measurement exists, else the declared ones.
+`CASE` pack facts are read from by `EnqueueWorkUnit`, to verify a CASE pick;
+the dimensions used are the measured ones when a measurement exists, else the
+declared ones. (The pick-load annotations of a charge bucket and a shift plan
+went with those aggregates, ADR-0049.)
 
 Failure behaviour: a message that is not a valid CloudEvent is logged at WARN
 and committed past. A handled type whose `data` is undecodable or invalid (a
@@ -544,13 +544,21 @@ Kafka carries every business integration, but not every edge:
 
 | Direction | Peer | Protocol | Contract | Failure behaviour |
 |---|---|---|---|---|
-| outbound | `facility-layout` | REST | `GET <FACILITY_LAYOUT_BASE_URL>/distance?from=&to=`, only on `POST /paths/{pathId}/plan` with both location codes and `TRAVEL_DISTANCE_MODE=http` ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) | 5 s per call, 3 attempts with jitter, per-dependency circuit breaker; any failure is **fail-open** — the plan commits without a travel-distance hint ([ADR-0023](../adr/0023-resilience-circuit-breakers-retry-dlq-shutdown.md)) |
 | inbound | `warehouse-console` (this repo's `web/` remote, `planning_mfe`) | REST via Kong (`/api/wes-work-planning/*`) | `apis/openapi.yaml` | RFC 7807 problems ([Errors](../api/errors.md)) |
 | inbound | `warehouse-ops-agent` | MCP (`WES_WORK_PLANNING_MCP_ENDPOINT`) and REST (`WES_WORK_PLANNING_REST_URL`, `WES_WORK_PLANNING_REPORTS_REST_URL`) in that repo's config | [MCP tools](../mcp/tools.md), `apis/openapi.yaml`, `/reports/throughput` | tool errors / problem responses; this service keeps no state about the caller |
 | inbound | `e2e-tests` harness | REST and Kafka | same | must use its own `KAFKA_CONSUMER_GROUP` when it runs a local binary |
 
 Absent edges, on purpose:
 
+- **facility-layout → REST**: the commit-time travel-distance lookup was
+  retired with the shift plan; `TRAVEL_DISTANCE_MODE` and
+  `FACILITY_LAYOUT_BASE_URL` are gone
+  ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
+  This service makes no outbound synchronous call.
+- **warehouse-planning**: it owns the charge forecast and the labour plan
+  (`PUT /workload-forecasts/{site_id}/{path_id}`,
+  `PUT /labour-plans/{site_id}/{shift_id}/{path_id}`); no message flows
+  between us, and our two old planning POSTs answer `410` naming those routes.
 - **order-management → REST**: it no longer calls
   `POST /paths/{pathId}/work-units`; `OrderAllocated` choreography replaced it
   ([ADR-0031](../adr/0031-order-allocated-choreography.md)). There is no reply
@@ -558,10 +566,10 @@ Absent edges, on purpose:
 - **inventory-storage → REST**: the synchronous classification lookup was
   retired; `PRODUCT_CLASSIFICATION_MODE=http` fails the boot
   ([ADR-0035](../adr/0035-product-classification-local-copy.md)).
-- **workforce-management**: only its `ShiftPlanCommitted` is consumed; this
-  service never calls it, and its plan never feeds our `ShiftPlan`
+- **workforce-management**: only its `ShiftPlanCommitted` is consumed, as a
+  pure projection; this service never calls it
   ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)).
-- **Nine of the eleven published events** have no consumer today (only
+- **Six of the eight published events** have no consumer today (only
   `WorkReleased` and `PathCapacityChanged` do, besides this service's own
   analytics projector).
 - No REST or MCP surface requires authentication

@@ -27,11 +27,11 @@ erDiagram
     charge_forecasts {
         text path_id PK
         timestamptz received_at
-        jsonb buckets "array of cpt and quantity"
+        jsonb buckets "kept, no longer written, ADR-0049"
     }
     shift_plans {
         text path_id PK
-        integer planned_heads
+        integer planned_heads "kept, no longer written, ADR-0049"
         integer installed_stations
         double_precision rate_units_per_hr
         double_precision hours
@@ -69,8 +69,8 @@ erDiagram
         double_precision planned_rate
         double_precision planned_hours
         timestamptz observed_at
-        integer drift_heads "nullable, 0009"
-        timestamptz drift_detected_at "nullable, 0009"
+        integer drift_heads "nullable, 0009, deprecated"
+        timestamptz drift_detected_at "nullable, 0009, deprecated"
     }
     usable_inventory_view {
         text sku PK
@@ -169,10 +169,10 @@ logically, by value, with no constraint — on purpose:
   (`WorkPool`, `WorkUnit`) referenced by identity. A foreign key would couple
   their consistency boundaries; the use cases keep them aligned inside one
   transaction, and `WorkPool.Reconcile` heals a stale entry.
-- `work_units.path_id`, `shift_plans.path_id`, `charge_forecasts.path_id`,
-  `labor_plan_view.path_id` ↔ `work_pools.path_id` — each is a separate
-  aggregate or projection keyed by the same process-path id, whose catalogue
-  is owned by process-path-management.
+- `work_units.path_id`, `labor_plan_view.path_id` (and the kept
+  `shift_plans.path_id`, `charge_forecasts.path_id`) ↔ `work_pools.path_id` —
+  each is a separate aggregate or projection keyed by the same process-path
+  id, whose catalogue is owned by process-path-management.
 - `usable_inventory_view.sku` ↔ `work_units.sku` — different contexts' keys;
   inventory-storage owns the SKU.
 - `product_classification_copy.sku` ↔ `work_units.sku` — product-master owns
@@ -230,11 +230,11 @@ migrator (`CREATE TABLE IF NOT EXISTS` in `migrate.go`), not a migration file.
 
 | Table | What it is | Owner in code |
 |---|---|---|
-| `charge_forecasts` | `ChargeForecast` aggregate (buckets as JSONB) | `postgres.ChargeRepo` |
-| `shift_plans` | `ShiftPlan` aggregate, one `PathPlan` row per path | `postgres.PlanRepo` |
+| `charge_forecasts` | **Kept, no longer written** (ADR-0049): the former `ChargeForecast` aggregate (buckets as JSONB) | — (no repository since ADR-0049) |
+| `shift_plans` | **Kept, no longer written** (ADR-0049): the former `ShiftPlan` aggregate, one row per path | — (no repository since ADR-0049) |
 | `work_pools` + `work_pool_entries` | `WorkPool` aggregate root + its entries | `postgres.WorkPoolRepo` (rewrites every entry on save, guarded by `version`; the `work_pools` row's `mode` / `wip_limit` are set by `ConfigurePool`, [ADR-0034](../adr/0034-configure-pool-command.md), or seeded `ReleaseFed`/1000 by the first enqueue) |
 | `work_units` | `WorkUnit` aggregate | `postgres.WorkUnitRepo` |
-| `labor_plan_view` | **Read model** `LaborPlanObserved` + ADR-0019 drift | `postgres.LaborPlanViewRepo` |
+| `labor_plan_view` | **Read model** `LaborPlanObserved`; its drift columns are deprecated read-backs, no longer computed (ADR-0049) | `postgres.LaborPlanViewRepo` |
 | `usable_inventory_view` | **Read model** `UsableInventoryObserved` | `postgres.InventoryViewRepo` |
 | `product_classification_copy` | **Local copy** of product-master's classification, read as `ProductClassificationView` ([ADR-0035](../adr/0035-product-classification-local-copy.md)) | `productclassificationcopy.Store` |
 | `slot_plans` | **Local record** of slotting-optimization's approved plans this context applied or superseded ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) | `postgres.SlotPlanRepo` |
@@ -246,7 +246,9 @@ migrator (`CREATE TABLE IF NOT EXISTS` in `migrate.go`), not a migration file.
 | `throughput_rollup` | **Analytics projection** (not a source of truth) | `analyticsstore.PostgresProjection` / `PostgresReport` |
 | `analytics_processed_events`, `analytics_consumed_events` | **Infrastructure**: analytics idempotency layers | `analyticsstore` |
 
-`travelDistanceM` / `travelDistanceEstimated` on `PathPlan` (the optional
-ADR-0017 hint) are stored in the nullable `shift_plans.travel_distance_m` /
-`travel_distance_estimated` columns (migration `0010`); `NULL`
-`travel_distance_m` means no hint was recorded.
+`charge_forecasts` and `shift_plans` (with the `travel_distance_m` /
+`travel_distance_estimated` columns of migration `0010`) are kept but no
+longer written or read: the charge forecast and the shift plan moved to
+warehouse-planning
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)),
+and dropping them waits for an explicit approval and its own migration.

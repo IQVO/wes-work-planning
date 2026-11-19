@@ -78,8 +78,11 @@ API-key, token or scope variable to set.
 | `PRODUCT_CLASSIFICATION_MODE` | `kafka` | no | Unset or `kafka`: product-master's `ProductClassified` is consumed into the Postgres `product_classification_copy` table and the hazmat/fragile hints are read from it ([ADR-0035](../adr/0035-product-classification-local-copy.md)). `permissive`, `off`, `http` (the retired live lookup) and every other value **fail the boot**, naming the variable ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)). | `cmd/wes/classification.go` |
 | `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | *(none)* | **yes** | Stable consumer group of the `ProductClassified` consumer, shared by every replica (the copy is shared state). Missing is the boot error `PRODUCT_CLASSIFICATION_CONSUMER_GROUP is required`. warehouse-infra sets `wes-work-planning-product-classification`. | `cmd/wes/classification.go` |
 | `PACK_VIEW_CONSUMER_GROUP` | *(none)* | **yes** | Stable consumer group of the pack-level consumer, shared by every replica: it feeds `product_pack_level_copy` from product-master's `ProductPackLevelDeclared`, `ProductPackLevelRetired` and `ProductPackLevelMeasured` on `warehouse.product-master.events` ([ADR-0045](../adr/0045-pack-aware-work-units.md)). Missing is the boot error `PACK_VIEW_CONSUMER_GROUP is required`; a value equal to `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` is the boot error `PACK_VIEW_CONSUMER_GROUP must differ from PRODUCT_CLASSIFICATION_CONSUMER_GROUP` (the classification group has already committed past the pack events, so it could never replay them). Chart value `config.packViewConsumerGroup` (default `wes-work-planning-pack-view`). | `cmd/wes/packview.go` |
-| `TRAVEL_DISTANCE_MODE` | `permissive` | no | REST sync edge, outside ADR-0044 (still `permissive` by default): `http` (case-insensitive) enables the facility-layout travel-distance lookup on `POST /paths/{pathId}/plan`, wrapped in a circuit breaker plus a 3-attempt jittered retry ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md), [ADR-0023](../adr/0023-resilience-circuit-breakers-retry-dlq-shutdown.md)). Anything else is the no-op lookup. | `cmd/wes/repositories.go:44` |
-| `FACILITY_LAYOUT_BASE_URL` | *(unset)* | yes, in `http` mode | Base URL of facility-layout; the client calls `GET <base>/distance?from=&to=`. Not validated at boot: an empty value makes every lookup fail, which is fail-open (the plan commits without a travel-distance hint). | `cmd/wes/repositories.go:44` |
+
+`TRAVEL_DISTANCE_MODE` and `FACILITY_LAYOUT_BASE_URL` are gone with the
+facility-layout travel-distance lookup
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md));
+the binary no longer reads them.
 
 ### Housekeeping
 
@@ -214,13 +217,15 @@ address. `charts/wes-work-planning/tests/render_test.sh` (CI job
 | `analytics.reports.httpAddr` | `HTTP_ADDR` | reports |
 | `a2a.httpAddr`, `a2a.agentUrl` (empty = the release's in-cluster Service DNS), `a2a.eventPublisher` | `A2A_ADDR`, `A2A_AGENT_URL`, `EVENT_PUBLISHER` | a2a (only with `a2a.enabled=true`; also gets `DATABASE_URL`, `KAFKA_BROKERS`, `LOG_LEVEL` and, with `otel.enabled`, the telemetry variables; `a2a.extraEnv` adds the rest) |
 | `analytics.database.*` (secret keys `ANALYTICS_DATABASE_URL`, `ANALYTICS_READER_DATABASE_URL`) | `ANALYTICS_DATABASE_URL` | projector (writer key), reports (reader key) |
-| `extraEnv` | everything else (`PATH_CATALOGUE_SOURCE`, `TRAVEL_DISTANCE_MODE`, `FACILITY_LAYOUT_BASE_URL`, `OUTBOX_RELAY_INTERVAL`, housekeeping, `CORS_ALLOWED_ORIGINS`) | api |
+| `extraEnv` | everything else (`PATH_CATALOGUE_SOURCE`, `OUTBOX_RELAY_INTERVAL`, housekeeping, `CORS_ALLOWED_ORIGINS`) | api |
 
 In the kind cluster, warehouse-infra's `terraform/locals.tf` adds
-`PRODUCT_CLASSIFICATION_MODE=kafka`,
-`PRODUCT_CLASSIFICATION_CONSUMER_GROUP=wes-work-planning-product-classification`,
-`TRAVEL_DISTANCE_MODE=http` and `FACILITY_LAYOUT_BASE_URL` to the api
-container, and `PRODUCT_CLASSIFICATION_MODE=kafka` to the MCP container.
+`PRODUCT_CLASSIFICATION_MODE=kafka` and
+`PRODUCT_CLASSIFICATION_CONSUMER_GROUP=wes-work-planning-product-classification`
+to the api container, and `PRODUCT_CLASSIFICATION_MODE=kafka` to the MCP
+container. It no longer sets `TRAVEL_DISTANCE_MODE` or
+`FACILITY_LAYOUT_BASE_URL` (ADR-0049; the chart's render test fails if its
+mirror of the infra values does).
 
 ## Related pages
 

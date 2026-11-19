@@ -8,9 +8,13 @@ description: What each warehouse-systems bounded context this service integrates
 
 # Sibling services
 
-Eight of the eleven bounded contexts this service integrates with directly,
-summarised from each repository's own `CLAUDE.md` and adapter code. Each is an independent Go service with its own model, its own
-database and its own deployment lifecycle. The other three,
+Eight bounded contexts this service integrates with or used to integrate
+with, summarised from each repository's own `CLAUDE.md` and adapter code
+(facility-layout has had no edge to this service since
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
+Each is an independent Go service with its own model, its own
+database and its own deployment lifecycle. The other three directly
+integrated contexts,
 network-inventory-planning, slotting-optimization and pick-face-replenishment,
 each feed this service work by Kafka event and are covered on the
 [context map](./context-map.md) and in
@@ -96,11 +100,12 @@ seconds).
 | Publishes | `ShiftPlanCommitted` — **one message per path line** — on `warehouse.workforce.events` |
 
 **Relationship to this service:** upstream Customer/Supplier. Its `ShiftPlan`
-and ours share a name and nothing else: theirs is a labour-side commitment
-across a building's paths; ours is this context's own rate × heads × hours
-decision with the `plannedHeads ≤ installedStations` invariant. We project
-theirs into `LaborPlanObserved` and never near our aggregate —
-[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md).
+is a labour-side commitment across a building's paths; we project it into
+`LaborPlanObserved` and nothing else
+([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)). This context's
+own shift plan, with the `plannedHeads ≤ installedStations` invariant, moved
+to warehouse-planning's `LabourPlan`
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
 
 Note the pleasing symmetry with our `RebalanceDecision`: Workforce surfaces
 `PathUnderstaffed` as *a flag, not a decision*; we surface `ReassignLabor` the
@@ -186,12 +191,10 @@ explicitly does **not** own occupancy or stock; that stays in
 | Read endpoints | `GET /sites/{siteCode}/layout`, `GET /distance`, among others |
 | Publishes | `warehouse.facility.events` (not consumed by this service) |
 
-**Relationship to this service: Conformist, read-only.** `CommitShiftPlan`
-calls `GET /distance` once, at commit time, for two caller-supplied location
-codes and stamps the result on the `PathPlan`
-([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)). The
-lookup is off by default (`TRAVEL_DISTANCE_MODE=permissive`) and fails open.
-We do not consume its topic. Classified Generic for the same reason the
+**Relationship to this service: none since
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md).**
+The commit-time `GET /distance` lookup was retired with the shift plan, and
+we do not consume its topic. Classified Generic for the same reason the
 reference model puts Cartonization there: extract it once rather than
 duplicating geography in every context.
 

@@ -34,8 +34,8 @@ not-ready first on graceful shutdown
 
 | # | Method | Path | Use case | OpenAPI `operationId` |
 |---:|---|---|---|---|
-| 1 | `POST` | `/paths/{pathId}/charge` | ReceiveChargeForecast | `receiveChargeForecast` |
-| 2 | `POST` | `/paths/{pathId}/plan` | CommitShiftPlan | `commitShiftPlan` |
+| 1 | `POST` | `/paths/{pathId}/charge` | — (deprecated, always `410 charge-forecast-moved`, [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)) | `receiveChargeForecast` |
+| 2 | `POST` | `/paths/{pathId}/plan` | — (deprecated, always `410 shift-plan-moved`, ADR-0049) | `commitShiftPlan` |
 | 3 | `POST` | `/paths/{pathId}/work-units` | EnqueueWorkUnit | `enqueueWorkUnit` |
 | 4 | `POST` | `/paths/{pathId}/work-releases` | ReleaseNextWork | `releaseNextWork` |
 | 5 | `POST` | `/work-units/{id}/completions` | RecordCompletion | `recordCompletion` |
@@ -72,5 +72,5 @@ create a resource. Like every POST they are idempotent through `Idempotency-Key`
 Both return the affected representation with `200`, not `201` — there is no new
 URI to point a `Location` header at.
 
-Creation endpoints (`/charge`, `/plan`, `/work-units`) do return `201` with a
-`Location` header.
+The creation endpoint (`/work-units`) does return `201` with a `Location`
+header. The two moved planning routes answer `410` (ADR-0049).

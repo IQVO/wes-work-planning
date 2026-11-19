@@ -87,28 +87,32 @@ pending step fails) against the real use cases wired to in-memory test doubles.
 
 | Feature file | Scenario headings | Executed scenarios |
 |---|---|---|
-| `charge_forecast.feature` | 3 | 3 |
 | `completion_telemetry.feature` | 2 | 2 |
 | `consumed_events.feature` | 15 | 17 |
-| `consumed_rules.feature` | 12 | 18 |
-| `labor_plan_reconciliation.feature` | 4 | 4 |
-| `plan_and_work_unit_rules.feature` | 15 | 47 |
+| `consumed_rules.feature` | 10 | 16 |
+| `plan_and_work_unit_rules.feature` | 9 | 24 |
+| `planning_moved.feature` | 3 | 9 |
 | `pool_configuration.feature` | 15 | 17 |
 | `read_model_views.feature` | 8 | 8 |
 | `rebalance.feature` | 2 | 2 |
 | `relocation_rules.feature` | 18 | 26 |
-| `request_validation_and_probes.feature` | 14 | 28 |
-| `shift_plan.feature` | 2 | 2 |
+| `request_validation_and_probes.feature` | 5 | 5 |
 | `slot_plan_relocation.feature` | 5 | 5 |
 | `work_pool_capacity.feature` | 2 | 2 |
 | `work_pool_rules.feature` | 15 | 27 |
 | `work_release.feature` | 2 | 2 |
 | `work_unit_enqueue.feature` | 12 | 17 |
-| **17 files** | **146** | **227** (1366 steps) |
+| **15 files** | **123** | **179** (1143 steps) |
+
+`planning_moved.feature` pins the two always-`410` planning routes and the
+pure labour-plan projection
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md));
+the former charge-forecast, shift-plan and labour-plan reconciliation features
+went with the code.
 
 "Executed" counts Scenario Outline example rows; the totals are godog's own
 summary from `go test . -run TestFeatures -count=1 -v`:
-`227 scenarios (227 passed)`, `1366 steps (1366 passed)`. All 146 headings
+`179 scenarios (179 passed)`, `1143 steps (1143 passed)`. All 123 headings
 (`git grep -c -E "^[[:space:]]*Scenario" -- features`) run. The former
 `@known-bug` scenario in `relocation_rules.feature` (`completeWorkUnit` on a
 cancelled unit: the specification and [ADR-0040](../adr/0040-slot-plan-relocation-work.md)
@@ -172,14 +176,19 @@ go test -tags=integration ./internal/adapters/outbound/postgres/... -run Outbox 
 service against a **real Postgres (`DATABASE_URL`) and a real Kafka
 (`KAFKA_BROKERS`)** on `127.0.0.1:18086` (`CONTRACT_PORT`), waits for
 `/readyz`, then runs
-`st run apis/openapi.yaml --max-examples 100 --workers 4 --exclude-operation-id commitShiftPlan --generation-allow-x00 false`
+`st run apis/openapi.yaml --max-examples 100 --workers 4 --generation-allow-x00 false --exclude-operation-id receiveChargeForecast --exclude-operation-id commitShiftPlan`
 with the `scripts/contract_hooks.py` hook that gives every request a fresh
 `Idempotency-Key` (`CONTRACT_MAX_EXAMPLES` overrides 100). The CI `contract`
 job provides `postgres:16` and `confluentinc/confluent-local:7.6.1` service
 containers (the Kafka one advertises `PLAINTEXT_HOST://localhost:<port>`);
-locally start disposable ones (the commands are in the script header). `commitShiftPlan` is excluded because
-its `plannedHeads <= installedStations` invariant cannot be expressed in
-OpenAPI 3.0.3; it is covered by BDD and unit tests instead. The
+locally start disposable ones (the commands are in the script header).
+`receiveChargeForecast` and `commitShiftPlan` are excluded because both answer
+`410` for every body since
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md),
+so the positive phase would report every accepted schema as rejected; the
+410s are covered by `TestPlanningRoutesAnswer410NamingTheNewOwner` and
+`features/planning_moved.feature`, and both exclusions go with the routes in
+stage E. The
 `/reports/*` routes of `cmd/wes-reports` are specified separately in
 `apis/openapi-reports.yaml` ([ADR-0038](../adr/0038-reports-api-openapi-contract.md))
 and contract-tested in Go, without Schemathesis or a database:

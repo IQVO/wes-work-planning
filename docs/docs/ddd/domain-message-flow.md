@@ -52,36 +52,31 @@ Source: `internal/application/usecases/apply_order_allocated.go`,
 every event on `warehouse.wes.analytics`, and REST enqueue
 (`POST /paths/{pathId}/work-units`), which is an alternative to step 1.
 
-## Scenario 2 — Planning a shift and detecting plan-vs-labor drift
+## Scenario 2 — Observing the labour plan (the planning moved out)
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Planner
     participant WP as wes-work-planning
-    participant FL as facility-layout
     participant WM as workforce-management
     participant K as Kafka
 
-    Planner->>WP: cmd: POST /paths/{pathId}/charge
-    WP->>K: evt: com.warehouse.wes.work-planning.charge.ChargeForecastReceived
-    Planner->>WP: cmd: POST /paths/{pathId}/plan with location codes
-    WP->>FL: qry: GET /distance?from=&to=
-    FL-->>WP: travel distance hint
-    WP->>K: evt: com.warehouse.wes.work-planning.plan.ShiftPlanCommitted
+    Planner->>WP: cmd: POST /paths/{pathId}/charge or /plan
+    WP-->>Planner: 410 charge-forecast-moved or shift-plan-moved
     WM->>K: evt: com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted
     K->>WP: evt: workforce ShiftPlanCommitted
-    Note over WP: ObserveLaborPlan updates LaborPlanObserved and compares heads
-    WP->>K: evt: com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected
+    Note over WP: ObserveLaborPlan upserts LaborPlanObserved and publishes nothing
     Planner->>WP: qry: GET /paths/{pathId}/labor-plan-view
 ```
 
-Source: `internal/application/usecases/receive_charge_forecast.go`,
-`commit_shift_plan.go`, `observe_labor_plan.go`,
-`drift_reconciliation.go`. Omits: the opposite order (Workforce commits
-first, then `CommitShiftPlan` raises the drift event) and the no-drift case,
-which raises nothing. The two `ShiftPlanCommitted` types are different events
-from different contexts ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)).
+Source: `internal/adapters/inbound/http/handlers_plan.go`,
+`internal/application/usecases/observe_labor_plan.go`. The charge forecast,
+the shift plan and the plan-vs-labour drift check moved to warehouse-planning
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)):
+the planner sends `PUT /workload-forecasts/{site_id}/{path_id}` and
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}` there, and it publishes
+`LabourPlanDriftDetected`. The 410 detail names the route to call.
 
 ## Scenario 3 — Publishing remaining path capacity for promising
 

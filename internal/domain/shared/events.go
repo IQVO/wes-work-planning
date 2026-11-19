@@ -16,28 +16,6 @@ type baseEvent struct {
 func (b baseEvent) EventName() string     { return b.name }
 func (b baseEvent) OccurredAt() time.Time { return b.at }
 
-// ChargeForecastReceived is raised when a shift's charge forecast is recorded
-// for a process path.
-type ChargeForecastReceived struct {
-	baseEvent
-	PathId PathId
-}
-
-func NewChargeForecastReceived(pathId PathId, at time.Time) ChargeForecastReceived {
-	return ChargeForecastReceived{baseEvent: baseEvent{name: "ChargeForecastReceived", at: at}, PathId: pathId}
-}
-
-// ShiftPlanCommitted is raised when a shift plan's headcount/rate/hours split
-// is committed for a process path.
-type ShiftPlanCommitted struct {
-	baseEvent
-	PathId PathId
-}
-
-func NewShiftPlanCommitted(pathId PathId, at time.Time) ShiftPlanCommitted {
-	return ShiftPlanCommitted{baseEvent: baseEvent{name: "ShiftPlanCommitted", at: at}, PathId: pathId}
-}
-
 // WorkUnitCreated is raised when a new work unit is enqueued into a path's
 // work pool. Reference and LineNo are the unit's originating reference (the
 // order id for order work) and line number, carried as explicit attributes
@@ -162,35 +140,5 @@ func NewPathCapacityChanged(pathId PathId, cutoffAt time.Time, remainingUnits in
 		CutoffAt:       cutoffAt,
 		RemainingUnits: remainingUnits,
 		Known:          known,
-	}
-}
-
-// PathPlanDriftDetected is raised when this service's own committed PathPlan
-// and the labor plan Workforce Management committed for the same path
-// (LaborPlanObserved) disagree on planned heads (ADR-0019). It surfaces a
-// fact and never a verdict: DriftHeads is signed (ObservedPlannedHeads -
-// WesPlannedHeads) and says nothing about which side is "right". An agreeing
-// pair raises nothing.
-//
-// ObservedAt is Workforce's own commit timestamp, carried from
-// LaborPlanObserved; the event's occurred-at is when this service detected
-// the drift.
-type PathPlanDriftDetected struct {
-	baseEvent
-	PathId               PathId
-	WesPlannedHeads      int
-	ObservedPlannedHeads int
-	DriftHeads           int
-	ObservedAt           time.Time
-}
-
-func NewPathPlanDriftDetected(pathId PathId, wesPlannedHeads, observedPlannedHeads int, observedAt, at time.Time) PathPlanDriftDetected {
-	return PathPlanDriftDetected{
-		baseEvent:            baseEvent{name: "PathPlanDriftDetected", at: at},
-		PathId:               pathId,
-		WesPlannedHeads:      wesPlannedHeads,
-		ObservedPlannedHeads: observedPlannedHeads,
-		DriftHeads:           observedPlannedHeads - wesPlannedHeads,
-		ObservedAt:           observedAt,
 	}
 }

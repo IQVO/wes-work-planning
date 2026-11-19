@@ -221,9 +221,11 @@ func encodeCloudEventKeyed(ctx context.Context, topic, stream, id, key string, e
 // CloudEvents "type" entity segment apis/asyncapi.yaml documents for it
 // (that message's own `tags` entry) — read straight off the spec, never
 // invented. The same type is used on the integration and analytics topics.
+//
+// The charge.ChargeForecastReceived, plan.ShiftPlanCommitted and
+// pathplan.PathPlanDriftDetected types are retired (ADR-0049): nothing in
+// this context raises them any more.
 var eventTypeEntity = map[string]string{
-	"ChargeForecastReceived":   "charge",
-	"ShiftPlanCommitted":       "plan",
 	"WorkUnitCreated":          entityWorkUnit,
 	"WorkReleased":             entityWorkUnit,
 	"WorkUnitCompleted":        entityWorkUnit,
@@ -232,7 +234,6 @@ var eventTypeEntity = map[string]string{
 	"PathThrottled":            entityWorkPool,
 	"LaborReassignmentFlagged": entityWorkPool,
 	"PathCapacityChanged":      entityWorkPool,
-	"PathPlanDriftDetected":    "pathplan",
 }
 
 // entityFor looks up e's CloudEvents type entity segment in
@@ -257,10 +258,6 @@ func subjectFor(e shared.DomainEvent) string {
 		return ev.WorkUnitId
 	case shared.WorkUnitCompleted:
 		return ev.WorkUnitId
-	case shared.ChargeForecastReceived:
-		return ev.PathId.String()
-	case shared.ShiftPlanCommitted:
-		return ev.PathId.String()
 	case shared.BacklogThresholdBreached:
 		return ev.PathId.String()
 	case shared.RateDeviationDetected:
@@ -270,8 +267,6 @@ func subjectFor(e shared.DomainEvent) string {
 	case shared.LaborReassignmentFlagged:
 		return ev.PathId.String()
 	case shared.PathCapacityChanged:
-		return ev.PathId.String()
-	case shared.PathPlanDriftDetected:
 		return ev.PathId.String()
 	default:
 		return ""

@@ -35,7 +35,11 @@ suffixes — for example `wes.work_units.released` is queried as
 |---|---|---|---|---|---|
 | `wes.work_units.released` | Int64 counter | `{work_unit}` | `path.id` | `cmd/wes` and `cmd/mcp`, once per work unit actually released by `ReleaseNextWork` (recorded in the use case after the commit, not in the handler) ([ADR-0013](../adr/0013-standard-metrics-convention.md)) | `internal/adapters/outbound/telemetry/release_metrics.go` |
 | `wes.outbox.lag_seconds` | Float64 observable gauge | `s` | — | `cmd/wes` (the relay is always on). Age of the oldest unpublished `outbox_events` row, 0 when drained; sampled by a query at each collection | `internal/adapters/outbound/postgres/outbox_metrics.go` |
-| `circuit_breaker.state` | Int64 gauge | `{state}` | `dependency` | **Not emitted today.** The gauge (`0` closed, `1` half-open, `2` open, recorded only on a state transition) stays for the next synchronous edge, but no outbound client builds a breaker since the facility-layout travel-distance lookup was retired ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)), so no series exists | `internal/adapters/outbound/telemetry/circuit_breaker_metrics.go`, `internal/resilience/breaker.go` |
+
+No `circuit_breaker.state` gauge is registered: no outbound client builds a
+breaker since the facility-layout travel-distance lookup was retired, so the
+breaker and its gauge were removed
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
 
 ### Library instruments
 
@@ -116,7 +120,7 @@ Messages worth alerting or searching on:
 | `housekeeping sweep failed` / `housekeeping sweep removed rows` | ERROR / INFO | retention sweeper outcome |
 | `retrying` / `succeeded after retry` | WARN / INFO | boot-time dial retry (`op` = `run migrations`, `ping postgres`, `connect to the process-path catalogue topic`, ...) |
 | `kafka consumer did not stop before the shutdown deadline` (and the same for `outbox relay`, `product classification consumer`) | WARN | drain exceeded the 5 s shutdown budget |
-| `circuit breaker metrics not registered; continuing without them`, `outbox lag gauge unavailable` | WARN | an instrument could not be created; the service runs without it |
+| `outbox lag gauge unavailable` | WARN | an instrument could not be created; the service runs without it |
 
 ## Dashboard
 
@@ -135,7 +139,7 @@ warehouse-infra ships a Grafana dashboard for this context,
 - **Logs** (Loki, `app="wes-work-planning"`) — live stream, volume by level,
   errors and warnings.
 
-The outbox lag, circuit-breaker and pgxpool instruments are exported but not
+The outbox lag and pgxpool instruments are exported but not
 on that dashboard.
 
 ## Suggested alerts

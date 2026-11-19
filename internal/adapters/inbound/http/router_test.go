@@ -34,8 +34,6 @@ func newTestRouter() http.Handler {
 }
 
 func newTestHandlers() *inboundhttp.Handlers {
-	charges := memory.NewChargeRepo()
-	plans := memory.NewPlanRepo()
 	pools := memory.NewWorkPoolRepo()
 	workUnits := memory.NewWorkUnitRepo()
 	laborPlanViews := memory.NewLaborPlanViewRepo()
@@ -44,8 +42,6 @@ func newTestHandlers() *inboundhttp.Handlers {
 	clock := memory.FixedClock{At: time.Date(2026, 8, 21, 8, 0, 0, 0, time.UTC)}
 
 	h := &inboundhttp.Handlers{
-		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(charges, publisher, clock),
-		CommitShiftPlan:         usecases.NewCommitShiftPlan(plans, publisher, clock),
 		EnqueueWorkUnit:         usecases.NewEnqueueWorkUnit(workUnits, pools, publisher, clock),
 		ReleaseNextWork:         usecases.NewReleaseNextWork(pools, workUnits, publisher, clock),
 		RecordCompletion:        usecases.NewRecordCompletion(workUnits, pools, publisher, clock),

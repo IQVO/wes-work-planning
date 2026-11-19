@@ -3,7 +3,6 @@ package usecases_test
 import (
 	"context"
 	"errors"
-	"math"
 	"testing"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/pickload"
 	"github.com/claudioed/wes-work-planning/internal/domain/productclassificationview"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
-	"github.com/claudioed/wes-work-planning/internal/domain/traveldistanceview"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
 
@@ -323,120 +321,5 @@ func TestEnqueueWorkUnit_CaseBreakIsStoredWithItsSku(t *testing.T) {
 	brk, ok := stored.CaseBreak()
 	if !ok || brk.LPN != "LPN-0001" || brk.LooseBin != "FWD-01" || brk.PickTaskId != "task-1" || stored.SKU() != "SKU-1" || stored.WorkKind() != workunit.WorkKindBreakCase {
 		t.Fatalf("stored = %+v kind %q sku %q", brk, stored.WorkKind(), stored.SKU())
-	}
-}
-
-func TestReceiveChargeForecast_PackAwareEstimate(t *testing.T) {
-	ctx := context.Background()
-	p := newPackCopies()
-	p.apply(t, usecases.PackLevelDeclared, caseRecord(3))
-	p.apply(t, usecases.PackLevelDeclared, eachRecord(2))
-	cpt := shared.NewCPT(packClock.Add(2 * time.Hour))
-	pathId, _ := shared.NewPathId("pick-a")
-	qty := func(n int) shared.Quantity { q, _ := shared.NewQuantity(n); return q }
-
-	f := newFixture()
-	uc := usecases.NewReceiveChargeForecast(f.charges, f.publisher, f.clock).WithPackLookup(p.store)
-	forecast, err := uc.Execute(ctx, usecases.ReceiveChargeForecastRequest{PathId: pathId, Buckets: []usecases.CPTBucketInput{
-		{CPT: cpt, Quantity: qty(120), SKU: "SKU-1", PickUnit: workunit.PickUnitCase},
-		{CPT: shared.NewCPT(packClock.Add(3 * time.Hour)), Quantity: qty(7), SKU: "SKU-1"},
-		{CPT: shared.NewCPT(packClock.Add(4 * time.Hour)), Quantity: qty(9)},
-	}})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	b := forecast.Buckets()
-	if b[0].Load == nil || b[0].Load.Handles != 10 || b[0].Load.CubeMm3 != 10*24_000_000 || b[0].Load.WeightG != 65_000 || forecast.TotalQuantity().Value() != 136 {
-		t.Fatalf("case bucket = %+v (total %d: quantity stays eaches)", b[0].Load, forecast.TotalQuantity().Value())
-	}
-	if b[1].Load == nil || b[1].Load.Unit != workunit.PickUnitEach || b[1].Load.Handles != 7 || b[1].Load.WeightG != 7*450 {
-		t.Fatalf("each bucket = %+v", b[1].Load)
-	}
-	if b[2].Load != nil || b[2].SKU != "" {
-		t.Fatalf("a plain bucket gained an estimate: %+v", b[2])
-	}
-
-	assertForecastRefusals(t, uc, pathId, cpt, qty)
-	// A refused forecast stores nothing new: the stored one is still the first.
-	stored, err := f.charges.FindByPathId(ctx, pathId)
-	if err != nil || stored.TotalQuantity().Value() != 136 {
-		t.Fatalf("stored = %v, %v", stored, err)
-	}
-}
-
-func assertForecastRefusals(t *testing.T, uc *usecases.ReceiveChargeForecast, pathId shared.PathId, cpt shared.CPT, qty func(int) shared.Quantity) {
-	t.Helper()
-	ctx := context.Background()
-	for name, in := range map[string]usecases.CPTBucketInput{
-		"case quantity that is not whole cases": {CPT: cpt, Quantity: qty(13), SKU: "SKU-1", PickUnit: workunit.PickUnitCase},
-		"case for a SKU with no pack data":      {CPT: cpt, Quantity: qty(12), SKU: "SKU-NEW", PickUnit: workunit.PickUnitCase},
-		"pickUnit without a sku":                {CPT: cpt, Quantity: qty(12), PickUnit: workunit.PickUnitCase},
-	} {
-		if _, err := uc.Execute(ctx, usecases.ReceiveChargeForecastRequest{PathId: pathId, Buckets: []usecases.CPTBucketInput{in}}); err == nil {
-			t.Fatalf("%s: expected a refusal", name)
-		}
-	}
-}
-
-func TestCommitShiftPlan_PackAwareTravelEstimate(t *testing.T) {
-	ctx := context.Background()
-	p := newPackCopies()
-	p.apply(t, usecases.PackLevelDeclared, caseRecord(3))
-	pathId, _ := shared.NewPathId("pick-a")
-	rate, _ := shared.NewRate(50)
-	heads, _ := shared.NewStationCount(2)
-	installed, _ := shared.NewStationCount(3)
-	lookup := &fakeTravelDistanceLookup{view: traveldistanceview.TravelDistanceView{MetresM: 40, Known: true}}
-	f := newFixture()
-	uc := usecases.NewCommitShiftPlan(f.plans, f.publisher, f.clock).WithTravelDistanceLookup(lookup).WithPackLookup(p.store)
-	req := usecases.CommitShiftPlanRequest{PathId: pathId, PlannedHeads: heads, InstalledStations: installed, Rate: rate, Hours: 8,
-		FromLocationCode: "A", ToLocationCode: "B", SKU: "SKU-1", PickUnit: workunit.PickUnitCase}
-
-	sp, err := uc.Execute(ctx, req)
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	plan, _ := sp.PathPlan(pathId)
-	load, ok := plan.HandleLoad()
-	if !ok || load.Handles != 1 || load.Eaches != 12 || load.WeightG != 6500 {
-		t.Fatalf("handle = %+v ok=%v", load, ok)
-	}
-	if kgM, ok := plan.CarryKgM(); !ok || math.Abs(kgM-6.5*40) > 1e-9 {
-		t.Fatalf("carry = %v ok=%v, want %v (one CASE handle over the travel hint)", kgM, ok, 6.5*40)
-	}
-
-	// No travel distance known: the handle is still recorded, the carry is not invented.
-	noDistance := usecases.NewCommitShiftPlan(f.plans, f.publisher, f.clock).WithPackLookup(p.store)
-	sp, err = noDistance.Execute(ctx, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, _ = sp.PathPlan(pathId)
-	if _, ok := plan.HandleLoad(); !ok {
-		t.Fatal("the handle must be recorded without a travel distance")
-	}
-	if _, ok := plan.CarryKgM(); ok {
-		t.Fatal("a carry figure was invented without a travel distance")
-	}
-
-	bad := req
-	bad.SKU = "SKU-NEW"
-	if _, err := uc.Execute(ctx, bad); !errors.Is(err, pickload.ErrNoActiveCaseLevel) {
-		t.Fatalf("CASE handle for a SKU without a CASE level: err = %v", err)
-	}
-	bad = req
-	bad.SKU = ""
-	if _, err := uc.Execute(ctx, bad); !errors.Is(err, workunit.ErrInvalidPickPlan) {
-		t.Fatalf("pickUnit without sku: err = %v", err)
-	}
-	plain := req
-	plain.SKU, plain.PickUnit = "", ""
-	sp, err = uc.Execute(ctx, plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, _ = sp.PathPlan(pathId)
-	if _, ok := plan.HandleLoad(); ok {
-		t.Fatal("a plain plan gained a handle")
 	}
 }

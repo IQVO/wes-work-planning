@@ -6,26 +6,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/claudioed/wes-work-planning/internal/domain/charge"
 	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
-	"github.com/claudioed/wes-work-planning/internal/domain/plan"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/relocation"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
-
-// ChargeRepo persists and retrieves ChargeForecast aggregates, one per path.
-type ChargeRepo interface {
-	Save(ctx context.Context, forecast *charge.ChargeForecast) error
-	FindByPathId(ctx context.Context, pathId shared.PathId) (*charge.ChargeForecast, error)
-}
-
-// PlanRepo persists and retrieves ShiftPlan aggregates, one per path.
-type PlanRepo interface {
-	Save(ctx context.Context, pathId shared.PathId, shiftPlan *plan.ShiftPlan) error
-	FindByPathId(ctx context.Context, pathId shared.PathId) (*plan.ShiftPlan, error)
-}
 
 // WorkPoolRepo persists and retrieves WorkPool aggregates, one per path.
 type WorkPoolRepo interface {

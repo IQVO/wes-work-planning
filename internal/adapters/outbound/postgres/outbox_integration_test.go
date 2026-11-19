@@ -303,47 +303,43 @@ func TestOutboxRelay_SinkFailure_StopsAtFailedRowAndRecoversInOrder(t *testing.T
 	uow := postgres.NewUnitOfWork(pool)
 	pathId := mustPath(t, "pick-d")
 
-	charges := postgres.NewChargeRepo(pool)
-	plans := postgres.NewPlanRepo(pool)
-	qty, _ := shared.NewQuantity(5)
-	if _, err := usecases.NewReceiveChargeForecast(charges, pub, clock).WithUnitOfWork(uow).Execute(ctx, usecases.ReceiveChargeForecastRequest{
-		PathId: pathId, Buckets: []usecases.CPTBucketInput{{CPT: shared.NewCPT(clock.Now().Add(time.Hour)), Quantity: qty}},
+	// Three rows of three use cases: WorkUnitCreated, WorkReleased (the
+	// middle row the sink refuses), WorkUnitCreated.
+	workUnits, pools := postgres.NewWorkUnitRepo(pool), postgres.NewWorkPoolRepo(pool)
+	enqueue := usecases.NewEnqueueWorkUnit(workUnits, pools, pub, clock).WithUnitOfWork(uow)
+	if _, err := enqueue.Execute(ctx, usecases.EnqueueWorkUnitRequest{
+		WorkUnitId: "wu-d1", PathId: pathId, CPT: shared.NewCPT(clock.Now().Add(time.Hour)), Reference: "r-wu-d1",
 	}); err != nil {
-		t.Fatalf("charge: %v", err)
+		t.Fatalf("enqueue wu-d1: %v", err)
 	}
-	heads, _ := shared.NewStationCount(2)
-	installed, _ := shared.NewStationCount(4)
-	rate, _ := shared.NewRate(30)
-	if _, err := usecases.NewCommitShiftPlan(plans, pub, clock).WithUnitOfWork(uow).Execute(ctx, usecases.CommitShiftPlanRequest{
-		PathId: pathId, PlannedHeads: heads, InstalledStations: installed, Rate: rate, Hours: 8,
-	}); err != nil {
-		t.Fatalf("plan: %v", err)
+	if _, err := usecases.NewReleaseNextWork(pools, workUnits, pub, clock).WithUnitOfWork(uow).Execute(ctx, usecases.ReleaseNextWorkRequest{PathId: pathId}); err != nil {
+		t.Fatalf("release: %v", err)
 	}
-	if _, err := usecases.NewEnqueueWorkUnit(postgres.NewWorkUnitRepo(pool), postgres.NewWorkPoolRepo(pool), pub, clock).WithUnitOfWork(uow).Execute(ctx, usecases.EnqueueWorkUnitRequest{
-		WorkUnitId: "wu-d", PathId: pathId, CPT: shared.NewCPT(clock.Now().Add(time.Hour)), Reference: "r",
+	if _, err := enqueue.Execute(ctx, usecases.EnqueueWorkUnitRequest{
+		WorkUnitId: "wu-d2", PathId: pathId, CPT: shared.NewCPT(clock.Now().Add(2 * time.Hour)), Reference: "r-wu-d2",
 	}); err != nil {
-		t.Fatalf("enqueue: %v", err)
+		t.Fatalf("enqueue wu-d2: %v", err)
 	}
 	// Persist a header on the middle row to prove the JSON round trip.
-	if _, err := pool.Exec(ctx, `UPDATE outbox_events SET headers = '[{"key":"traceparent","value":"00-abc-def-01"}]' WHERE event_type = 'com.warehouse.wes.work-planning.plan.ShiftPlanCommitted'`); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE outbox_events SET headers = '[{"key":"traceparent","value":"00-abc-def-01"}]' WHERE event_type = 'com.warehouse.wes.work-planning.workunit.WorkReleased'`); err != nil {
 		t.Fatalf("set headers: %v", err)
 	}
 
-	sink := &recordingSink{failOn: "com.warehouse.wes.work-planning.plan.ShiftPlanCommitted", failErr: errors.New("broker down")}
+	sink := &recordingSink{failOn: "com.warehouse.wes.work-planning.workunit.WorkReleased", failErr: errors.New("broker down")}
 	relay := postgres.NewOutboxRelay(pool, sink, slog.Default())
 	n, err := relay.RelayOnce(ctx)
 	if err == nil {
 		t.Fatal("expected the failing row to surface an error")
 	}
-	if n != 1 || len(sink.sent) != 1 || sink.sent[0].EventType != "com.warehouse.wes.work-planning.charge.ChargeForecastReceived" {
-		t.Fatalf("expected only ChargeForecastReceived published before the failure, got n=%d sent=%v", n, sink.sent)
+	if n != 1 || len(sink.sent) != 1 || sink.sent[0].EventType != "com.warehouse.wes.work-planning.workunit.WorkUnitCreated" {
+		t.Fatalf("expected only the first WorkUnitCreated published before the failure, got n=%d sent=%v", n, sink.sent)
 	}
 	if got := countOutbox(t, pool, "published_at IS NULL"); got != 2 {
-		t.Fatalf("expected ShiftPlanCommitted and WorkUnitCreated still pending (ordering preserved), got %d pending", got)
+		t.Fatalf("expected WorkReleased and the second WorkUnitCreated still pending (ordering preserved), got %d pending", got)
 	}
 	var attempts int
 	var lastErr string
-	if err := pool.QueryRow(ctx, "SELECT attempts, coalesce(last_error,'') FROM outbox_events WHERE event_type = 'com.warehouse.wes.work-planning.plan.ShiftPlanCommitted'").Scan(&attempts, &lastErr); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT attempts, coalesce(last_error,'') FROM outbox_events WHERE event_type = 'com.warehouse.wes.work-planning.workunit.WorkReleased'").Scan(&attempts, &lastErr); err != nil {
 		t.Fatalf("read failed row: %v", err)
 	}
 	if attempts != 1 || !strings.Contains(lastErr, "broker down") {
@@ -359,8 +355,8 @@ func TestOutboxRelay_SinkFailure_StopsAtFailedRowAndRecoversInOrder(t *testing.T
 	if err != nil || n != 2 {
 		t.Fatalf("recovery pass: n=%d err=%v", n, err)
 	}
-	if sink.sent[1].EventType != "com.warehouse.wes.work-planning.plan.ShiftPlanCommitted" || sink.sent[2].EventType != "com.warehouse.wes.work-planning.workunit.WorkUnitCreated" {
-		t.Fatalf("expected ShiftPlanCommitted then WorkUnitCreated after recovery, got %v", sink.sent)
+	if sink.sent[1].EventType != "com.warehouse.wes.work-planning.workunit.WorkReleased" || sink.sent[2].EventType != "com.warehouse.wes.work-planning.workunit.WorkUnitCreated" {
+		t.Fatalf("expected WorkReleased then WorkUnitCreated after recovery, got %v", sink.sent)
 	}
 	if len(sink.sent[1].Headers) != 1 || sink.sent[1].Headers[0].Key != "traceparent" || string(sink.sent[1].Headers[0].Value) != "00-abc-def-01" {
 		t.Fatalf("headers did not round-trip through the outbox: %+v", sink.sent[1].Headers)
@@ -368,7 +364,7 @@ func TestOutboxRelay_SinkFailure_StopsAtFailedRowAndRecoversInOrder(t *testing.T
 	if got := countOutbox(t, pool, "published_at IS NULL"); got != 0 {
 		t.Fatalf("expected outbox drained, %d pending", got)
 	}
-	if err := pool.QueryRow(ctx, "SELECT attempts, coalesce(last_error,'') FROM outbox_events WHERE event_type = 'com.warehouse.wes.work-planning.plan.ShiftPlanCommitted'").Scan(&attempts, &lastErr); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT attempts, coalesce(last_error,'') FROM outbox_events WHERE event_type = 'com.warehouse.wes.work-planning.workunit.WorkReleased'").Scan(&attempts, &lastErr); err != nil {
 		t.Fatalf("re-read row: %v", err)
 	}
 	if attempts != 2 || lastErr != "" {

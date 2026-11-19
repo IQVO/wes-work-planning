@@ -5,15 +5,17 @@
 // top-level internal package (a sibling of internal/bootretry and
 // internal/pgtx), not a domain/application/adapter layer itself, so the
 // hexagonal fitness tests place no restriction on who may import it —
-// only the outbound adapters (traveldistance, telemetry) do today.
+// nothing does since ADR-0049 (telemetry.CircuitBreakerMetrics still
+// implements StateRecorder for the next breaker).
 //
 // One gobreaker.CircuitBreaker instance is constructed PER downstream
-// dependency (never one global breaker) — see
-// internal/adapters/outbound/traveldistance.NewBreakerClient, the call
-// site that builds a breaker using this package's shared tuning (the
-// product-classification breaker was retired with its HTTP client,
-// ADR-0035). A slow or failing dependency's breaker tripping can never
-// affect another dependency's breaker or its own bulkheaded *http.Client.
+// dependency (never one global breaker). No outbound HTTP client builds
+// one today: the product-classification breaker was retired with its HTTP
+// client (ADR-0035) and the facility-layout travel-distance breaker with
+// the commit-time lookup (ADR-0049). The shared tuning stays for the next
+// synchronous edge; deleting it also drops gobreaker from go.mod. A slow or
+// failing dependency's breaker tripping can never affect another
+// dependency's breaker or its own bulkheaded *http.Client.
 package resilience
 
 import (

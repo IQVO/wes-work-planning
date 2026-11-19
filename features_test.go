@@ -52,22 +52,18 @@ type harness struct {
 // serves it from an httptest server, mirroring the wiring in
 // internal/adapters/inbound/http/router_test.go.
 func newServer() (*httptest.Server, *harness) {
-	charges := memory.NewChargeRepo()
-	plans := memory.NewPlanRepo()
 	pools := memory.NewWorkPoolRepo()
 	workUnits := memory.NewWorkUnitRepo()
 	laborPlanViews := memory.NewLaborPlanViewRepo()
 	inventoryViews := memory.NewInventoryViewRepo()
 	processedEvents := memory.NewProcessedEventRepo()
 	// A nil logger keeps the buffered publisher silent during the suite.
-	// The recording wrapper lets ADR-0019 scenarios assert which domain
-	// events a use case raised without reaching into Kafka.
+	// The recording wrapper lets scenarios assert which domain events a use
+	// case raised without reaching into Kafka.
 	publisher := &recordingPublisher{inner: events.NewLogPublisher(nil)}
 	clock := memory.FixedClock{At: fixedNow}
 
 	h := &inboundhttp.Handlers{
-		ReceiveChargeForecast:   usecases.NewReceiveChargeForecast(charges, publisher, clock),
-		CommitShiftPlan:         usecases.NewCommitShiftPlan(plans, publisher, clock).WithLaborPlanViews(laborPlanViews),
 		EnqueueWorkUnit:         usecases.NewEnqueueWorkUnit(workUnits, pools, publisher, clock),
 		ReleaseNextWork:         usecases.NewReleaseNextWork(pools, workUnits, publisher, clock),
 		RecordCompletion:        usecases.NewRecordCompletion(workUnits, pools, publisher, clock),
@@ -83,7 +79,7 @@ func newServer() (*httptest.Server, *harness) {
 
 	return httptest.NewServer(inboundhttp.NewRouter(h, "wes-work-planning", nil)), &harness{
 		pools:            pools,
-		observeLaborPlan: usecases.NewObserveLaborPlan(laborPlanViews, processedEvents).WithDriftReconciliation(plans, publisher, clock),
+		observeLaborPlan: usecases.NewObserveLaborPlan(laborPlanViews, processedEvents),
 		observeInventory: usecases.NewObserveInventoryChange(inventoryViews, processedEvents),
 		published:        publisher,
 		inbound:          extras,

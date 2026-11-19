@@ -11,8 +11,6 @@ import "github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory
 func memoryRepositories() repositories {
 	workUnits := memory.NewWorkUnitRepo()
 	return repositories{
-		charges:        memory.NewChargeRepo(),
-		plans:          memory.NewPlanRepo(),
 		pools:          memory.NewWorkPoolRepo(),
 		workUnits:      workUnits,
 		laborPlanViews: memory.NewLaborPlanViewRepo(),

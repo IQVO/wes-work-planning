@@ -80,7 +80,7 @@ type servingDeps struct {
 // over already-wired adapters.
 func newServing(d servingDeps) *serving {
 	clock := system.Clock{}
-	handlers := newHandlers(d.repos, d.publisher, clock, d.catalogue, d.repos.travelDistanceLookup(d.logger), d.classification.lookup, d.cfg.kafkaBrokers)
+	handlers := newHandlers(d.repos, d.publisher, clock, d.catalogue, d.classification.lookup, d.cfg.kafkaBrokers)
 
 	server := &http.Server{
 		Addr:              d.cfg.httpAddr,
@@ -275,7 +275,7 @@ func (s *serving) startConsumer(ctx context.Context) (*inboundkafka.Consumer, <-
 // the SAME UnitOfWork as its effect, so a failed attempt leaves no mark
 // and is retried, never swallowed (ADR-0028).
 func (s *serving) newInboundConsumer(groupID string) *inboundkafka.Consumer {
-	observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow).WithDriftReconciliation(s.repos.plans, s.publisher, s.clock)
+	observeLabor := usecases.NewObserveLaborPlan(s.repos.laborPlanViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
 	observeInventory := usecases.NewObserveInventoryChange(s.repos.inventoryViews, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
 	applyTaskCompleted := usecases.NewApplyTaskCompleted(s.recordCompletion, s.repos.processedEvts).WithUnitOfWork(s.repos.uow)
 	applyOrderAllocated := usecases.NewApplyOrderAllocated(s.enqueueWorkUnit, s.repos.processedEvts, s.catalogue).WithUnitOfWork(s.repos.uow)

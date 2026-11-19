@@ -62,12 +62,6 @@
       "ref": "develop"
     },
     {
-      "local": "internal/adapters/outbound/traveldistance/testdata/facility-layout.openapi.yaml",
-      "repo": "IQVO/facility-layout",
-      "path": "apis/openapi.yaml",
-      "ref": "develop"
-    },
-    {
       "local": "internal/adapters/inbound/mcp/testdata/wes-work-planning.openapi-reports.yaml",
       "repo": "IQVO/wes-work-planning",
       "path": "apis/openapi-reports.yaml",

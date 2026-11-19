@@ -21,10 +21,6 @@ package architecture
 //     merely mentions the package.
 //   - TestRuntimeBinarySensorCoversEveryCmd proves the walk reaches every
 //     binary directory (api, mcp, projector, reports).
-//
-// Out of scope on purpose: traveldistance.NewPermissiveLookup (the
-// TRAVEL_DISTANCE_MODE REST sync edge to facility-layout, ADR-0017) is not a
-// database or a broker.
 
 import (
 	"fmt"

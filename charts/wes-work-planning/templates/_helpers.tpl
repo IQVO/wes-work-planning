@@ -109,8 +109,7 @@ EVENT_PUBLISHER is kept because warehouse-infra sets it; the only value is kafka
 
 {{/*
 extraEnv must not turn a Kafka consumer or the publisher off. Only the Kafka
-modes are checked: the REST sync-edge *_MODE variables (TRAVEL_DISTANCE_MODE)
-are out of scope and keep working. Call with (dict "env" <list> "where" <name>).
+modes are checked. Call with (dict "env" <list> "where" <name>).
 */}}
 {{- define "wes-work-planning.requireKafkaEnv" -}}
 {{- $where := .where -}}

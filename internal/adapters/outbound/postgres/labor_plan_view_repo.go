@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,21 +29,6 @@ func (r *LaborPlanViewRepo) Save(ctx context.Context, view laborview.LaborPlanOb
 			drift_heads = $6, drift_detected_at = $7
 	`, view.PathId.String(), view.PlannedHeads, view.PlannedRate, view.PlannedHours, view.ObservedAt, view.DriftHeads, view.DriftDetectedAt)
 	return err
-}
-
-// SaveDrift implements ports.LaborPlanViewRepo: it updates only the drift
-// columns, so a commit of our own plan never overwrites the observed plan.
-func (r *LaborPlanViewRepo) SaveDrift(ctx context.Context, pathId shared.PathId, driftHeads int, detectedAt *time.Time) error {
-	tag, err := querierFrom(ctx, r.pool).Exec(ctx, `
-		UPDATE labor_plan_view SET drift_heads = $2, drift_detected_at = $3 WHERE path_id = $1
-	`, pathId.String(), driftHeads, detectedAt)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ports.ErrNotFound
-	}
-	return nil
 }
 
 func (r *LaborPlanViewRepo) FindByPathId(ctx context.Context, pathId shared.PathId) (laborview.LaborPlanObserved, error) {

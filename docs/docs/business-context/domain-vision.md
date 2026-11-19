@@ -8,10 +8,10 @@ description: The vision statement for the Work Planning & Release bounded contex
 
 # Domain vision
 
-> **Turn a shift's charge into a committed plan, then admit work onto the
-> floor continuously in deadline order, correcting the flow from live buffer
-> telemetry — so that every parcel makes its truck without the floor ever
-> being starved or flooded.**
+> **Admit work onto the floor continuously in deadline order, correcting the
+> flow from live buffer telemetry — so that every parcel makes its truck
+> without the floor ever being starved or flooded.** (Turning a shift's charge
+> into a committed plan moved to warehouse-planning, ADR-0049.)
 
 That is the whole job. The platform-level vision it serves, from the reference
 model, is:
@@ -35,10 +35,13 @@ system of record that says what must happen and why.
 Concretely for this service:
 
 - **WMS says**: "900 units for the 18:00 truck, 500 more for the 21:00 truck,
-  all on the pick path." → arrives here as a **charge forecast**.
-- **This service decides**: 6 heads on `pick-a` at 95 units/hour for 8 hours;
-  release `wu-2` next because its CPT is 18:00 and `wu-1`'s is 21:00; the
-  pool is at its WIP limit with backlog remaining, so flag a headcount move.
+  all on the pick path." → arrives as a work unit per order line, each with its
+  CPT. The shift's forecast and its heads per path (6 heads on `pick-a` at 95
+  units/hour for 8 hours) are warehouse-planning's since
+  [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md).
+- **This service decides**: release `wu-2` next because its CPT is 18:00 and
+  `wu-1`'s is 21:00; the pool is at its WIP limit with backlog remaining, so
+  flag a headcount move.
 - **Downstream execution does**: turn the released unit into a claimable task
   and put it in front of an associate or a machine.
 
@@ -69,7 +72,7 @@ stops at the **path boundary**: it says "this path needs more heads", never
 "Maria goes to station 3."
 
 The reference model is explicit about why: if the planning tier acquires
-knowledge of individual workers, real-time location and travel distance, then
+knowledge of individual workers, real-time location and walking routes, then
 a supporting concern (labour orchestration) has leaked into a system that must
 stay stable and auditable, and every shift-pattern change forces a regression
 in the wrong place.

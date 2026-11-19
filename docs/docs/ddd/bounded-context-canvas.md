@@ -58,12 +58,12 @@ flowchart LR
     end
     subgraph BC["wes-work-planning - Core subdomain - WES tier"]
         direction TB
-        purpose["<b>Purpose</b><br/>Turn plans and stock reality into continuously released,<br/>priority-ordered work on each process path and keep every<br/>buffer healthy: plan, release (earliest CPT first,<br/>WIP-limited), observe, correct. It does not pick, own<br/>stock, staff people or own the path catalogue."]:::card
-        roles["<b>Domain roles</b><br/>- Execution (admits work one unit at a time)<br/>- Enforcer (WIP limit, plannedHeads ceiling)<br/>- Analysis (backlog telemetry, rebalance, capacity and drift<br/>signals)"]:::card
-        rules["<b>Business decisions it enforces</b><br/>- Earliest CPT first is the entire priority function<br/>- The WIP limit is enforced only on release-fed pools;<br/>flow-fed pools only alarm<br/>- A flow-fed path reports remaining capacity as Known=false<br/>- Plan-vs-labor drift is reported, never auto-corrected<br/>- Workforce ShiftPlanCommitted is a read model, never fed<br/>into the ShiftPlan aggregate<br/>- Every pathId is validated against the process-path<br/>catalogue"]:::card
+        purpose["<b>Purpose</b><br/>Turn demand and stock reality into continuously released,<br/>priority-ordered work on each process path and keep every<br/>buffer healthy: release (earliest CPT first, WIP-limited),<br/>observe, correct. It does not plan the shift (warehouse-planning,<br/>ADR-0049), pick, own stock, staff people or own the path catalogue."]:::card
+        roles["<b>Domain roles</b><br/>- Execution (admits work one unit at a time)<br/>- Enforcer (WIP limit)<br/>- Analysis (backlog telemetry, rebalance, capacity<br/>signals)"]:::card
+        rules["<b>Business decisions it enforces</b><br/>- Earliest CPT first is the entire priority function<br/>- The WIP limit is enforced only on release-fed pools;<br/>flow-fed pools only alarm<br/>- A flow-fed path reports remaining capacity as Known=false<br/>- Workforce ShiftPlanCommitted is a read model only<br/>- Every pathId is validated against the process-path<br/>catalogue"]:::card
         purpose ~~~ roles ~~~ rules
     end
-    in0 -->|"cmd - REST<br/>ReceiveChargeForecast,<br/>CommitShiftPlan,<br/>EnqueueWorkUnit,<br/>ReleaseNextWork,<br/>ConfigurePool,<br/>RecordCompletion"| BC
+    in0 -->|"cmd - REST<br/>EnqueueWorkUnit,<br/>ReleaseNextWork,<br/>ConfigurePool,<br/>RecordCompletion"| BC
     in0 -.->|"qry - REST<br/>SampleBacklog,<br/>RebalanceDecision,<br/>GetWorkUnitsByReference,<br/>GetWorkUnit, LaborPlanView,<br/>InventoryView"| BC
     in1 -->|"cmd - MCP<br/>release_next_work"| BC
     in2 -.->|"qry - MCP<br/>get_backlog_telemetry,<br/>get_rebalance_recommendation,<br/>get_release_throughput_report"| BC
@@ -107,20 +107,17 @@ flowchart LR
         direction TB
         out0["fulfillment-execution"]:::ctx
         out1["order-management,<br/>network-fulfillment"]:::ctx
-        out2["facility-layout"]:::ctx
         out3["no consumer today"]:::none
         out4["own cmd/wes-projector"]:::self
     end
     BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>WorkReleased"| out0
     BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>PathCapacityChanged"| out1
-    BC -.->|"qry - REST<br/>travel distance, once per<br/>CommitShiftPlan"| out2
-    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>ChargeForecastReceived,<br/>ShiftPlanCommitted,<br/>WorkUnitCreated,<br/>WorkUnitCompleted,<br/>BacklogThresholdBreached,<br/>PathThrottled,<br/>LaborReassignmentFlagged,<br/>PathPlanDriftDetected"| out3
-    BC ==>|"evt - Kafka<br/>warehouse.wes.analytics<br/>all 11 domain events"| out4
+    BC ==>|"evt - Kafka<br/>warehouse.work-planning.events<br/>WorkUnitCreated,<br/>WorkUnitCompleted,<br/>BacklogThresholdBreached,<br/>PathThrottled,<br/>LaborReassignmentFlagged"| out3
+    BC ==>|"evt - Kafka<br/>warehouse.wes.analytics<br/>all 8 domain events"| out4
     linkStyle 0 stroke:#e8590c,stroke-width:2.5px
     linkStyle 1 stroke:#e8590c,stroke-width:2.5px
-    linkStyle 2 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 2 stroke:#e8590c,stroke-width:2.5px
     linkStyle 3 stroke:#e8590c,stroke-width:2.5px
-    linkStyle 4 stroke:#e8590c,stroke-width:2.5px
 ```
 
 Source: the Inbound Communication and Outbound Communication tables of this
@@ -139,15 +136,18 @@ The core of the WES tier: *the conductor*.
 
 ## Purpose
 
-Turn plans and stock reality into **continuously released, priority-ordered
+Turn demand and stock reality into **continuously released, priority-ordered
 work** on each process path, and keep every path's buffer healthy while the
-shift runs. In one loop: plan (charge forecast, committed shift plan) →
-release (earliest CPT first, WIP-limited) → observe (completions, backlog
-telemetry) → correct (throttle upstream or reassign labour).
+shift runs. In one loop: release (earliest CPT first, WIP-limited) → observe
+(completions, backlog telemetry) → correct (throttle upstream or reassign
+labour). Planning the shift (charge forecast, committed labour plan) is
+warehouse-planning's
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
 
-It does **not** pick, pack or ship (fulfillment-execution), own stock
-(inventory-storage), staff people (workforce-management) or own the
-process-path catalogue (process-path-management).
+It does **not** plan the shift (warehouse-planning), pick, pack or ship
+(fulfillment-execution), own stock (inventory-storage), staff people
+(workforce-management) or own the process-path catalogue
+(process-path-management).
 
 ## Strategic Classification
 
@@ -162,15 +162,13 @@ process-path catalogue (process-path-management).
 | Role (ddd-crew archetype) | How it shows up |
 |---|---|
 | **Execution** | Admits work one unit at a time (`ReleaseNextWork`) and tracks it to completion. |
-| **Enforcer** | Enforces the WIP limit on release-fed pools and `plannedHeads ≤ installedStations` on plans. |
-| **Analysis** | Backlog telemetry, rebalance recommendations, remaining-capacity and plan-vs-labor drift signals. |
+| **Enforcer** | Enforces the WIP limit on release-fed pools. |
+| **Analysis** | Backlog telemetry, rebalance recommendations, remaining-capacity signals. |
 
 ## Inbound Communication
 
 | Collaborator | Message | Type | Channel | Relationship |
 |---|---|---|---|---|
-| Planner / supervisor (warehouse-console MFE or any client) | `ReceiveChargeForecast` | Command | REST `POST /paths/{pathId}/charge` | OHS (we host) |
-| Planner / supervisor | `CommitShiftPlan` | Command | REST `POST /paths/{pathId}/plan` | OHS |
 | Any upstream caller | `EnqueueWorkUnit` | Command | REST `POST /paths/{pathId}/work-units` (`Idempotency-Key` required with Postgres) | OHS |
 | Supervisor / agent | `ReleaseNextWork` | Command | REST `POST /paths/{pathId}/work-releases`; MCP tool `release_next_work` | OHS |
 | Operator | `ConfigurePool` | Command | REST `PUT /paths/{pathId}/pool` (no MCP tool; [ADR-0034](../adr/0034-configure-pool-command.md)) | OHS |
@@ -196,9 +194,15 @@ process-path catalogue (process-path-management).
 | fulfillment-execution | `WorkReleased` | Event | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.workunit.WorkReleased` | OHS + Published Language (we supply) |
 | order-management | `PathCapacityChanged` | Event | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` | OHS + PL ([ADR-0018](../adr/0018-path-capacity-changed.md)) |
 | network-fulfillment | `PathCapacityChanged` | Event | same topic and type | OHS + PL; network-fulfillment is Conformist |
-| *(no consumer today)* | `ChargeForecastReceived`, `ShiftPlanCommitted`, `WorkUnitCreated`, `WorkUnitCompleted`, `BacklogThresholdBreached`, `RateDeviationDetected` (reserved, not emitted; decided 2026-10-06), `PathThrottled`, `LaborReassignmentFlagged`, `PathPlanDriftDetected` | Event | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.<entity>.<Event>` | Published for observability |
-| own analytics projector (`cmd/wes-projector`) | all 11 domain events | Event | Kafka `warehouse.wes.analytics`, same CloudEvents types, dataschema `urn:warehouse:wes-work-planning:analytics:<Event>:v1` | Internal data product ([ADR-0011](../adr/0011-analytical-data-product.md)) |
-| facility-layout | travel distance | Query | REST `GET /distance?from=&to=`, once per `CommitShiftPlan` with both codes | Conformist to its OHS ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) |
+| *(no consumer today)* | `WorkUnitCreated`, `WorkUnitCompleted`, `BacklogThresholdBreached`, `RateDeviationDetected` (reserved, not emitted; decided 2026-10-06), `PathThrottled`, `LaborReassignmentFlagged` | Event | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.<entity>.<Event>` | Published for observability |
+| own analytics projector (`cmd/wes-projector`) | all 8 domain events | Event | Kafka `warehouse.wes.analytics`, same CloudEvents types, dataschema `urn:warehouse:wes-work-planning:analytics:<Event>:v1` | Internal data product ([ADR-0011](../adr/0011-analytical-data-product.md)) |
+
+`ChargeForecastReceived`, `plan.ShiftPlanCommitted` and `PathPlanDriftDetected`
+are retired, and the facility-layout travel-distance query is gone
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
+The planner calls warehouse-planning's `PUT /workload-forecasts/{site_id}/{path_id}`
+and `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` instead; the two old
+POSTs here answer `410`.
 
 ## Ubiquitous Language
 
@@ -207,7 +211,7 @@ Top terms:
 
 | Term | Code identifier |
 |---|---|
-| Charge | `charge.ChargeForecast`, `charge.CPTBucket` |
+| Charge | — (warehouse-planning's workload forecast since ADR-0049) |
 | CPT | `shared.CPT` |
 | Process path | `shared.PathId`, `pathcatalog.PathDefinition` |
 | Work pool | `release.WorkPool` |
@@ -216,7 +220,7 @@ Top terms:
 | Release | `usecases.ReleaseNextWork`, `release.ReleasePolicy` |
 | WIP limit / alarm threshold | `wipLimit`, `alarmThreshold` on `WorkPool` |
 | Flow balancing | `usecases.RebalanceDecision` |
-| Drift | `laborview.Drift`, `PathPlanDriftDetected` |
+| Observed labour plan | `laborview.LaborPlanObserved` |
 
 ## Business Decisions
 
@@ -233,28 +237,24 @@ Top terms:
 - A flow-fed path reports remaining capacity as **`Known=false`**, always
   ([ADR-0018](../adr/0018-path-capacity-changed.md),
   [ADR-0020](../adr/0020-flowfed-path-observed-throughput-signal.md)).
-- Plan-vs-labor drift is **reported, never auto-corrected**
-  ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)).
-- Workforce's `ShiftPlanCommitted` is a **read model**, never fed into our
-  `ShiftPlan` aggregate ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)).
+- Workforce's `ShiftPlanCommitted` is a **read model** only: a pure
+  projection into `LaborPlanObserved`
+  ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md); since ADR-0049
+  nothing here compares it with a plan).
 - Every `pathId` is validated against process-path-management's catalogue
   ([ADR-0012](../adr/0012-process-path-catalogue-validation.md)); an
   `OrderAllocated` with one unknown path fails as a whole.
 - `TaskCompleted` for a work unit this context never planned is a logged,
   processed skip; `OrderAllocated` lines already enqueued are skipped.
-- The two REST lookups are **fail-open**: a failure omits an optional hint and
-  never blocks the use case.
-- Only `POST /paths/{pathId}/work-units` requires an `Idempotency-Key`
-  ([ADR-0022](../adr/0022-idempotency-key-middleware.md)); charge and plan
-  are natural-key upserts.
+- Every `POST` requires an `Idempotency-Key`
+  ([ADR-0022](../adr/0022-idempotency-key-middleware.md),
+  [ADR-0047](../adr/0047-fleet-rest-api-guideline.md)).
 
 ## Assumptions
 
 - One work pool per process path, and a path's work fits one aggregate row
   set (entries are never pruned).
 - `promise_date` on `OrderAllocated` is the CPT of every line.
-- Workforce's planned heads and ours are comparable numbers for the same
-  `path_id`.
 - Kafka is at-least-once: every consumer is idempotent on the CloudEvents `id`
   ([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)).
 - REST and MCP are reached inside the cluster (through Kong locally) and are
@@ -268,7 +268,6 @@ Top terms:
 | `wes.outbox.lag_seconds` gauge — age of the oldest unpublished outbox row | `internal/adapters/outbound/postgres/outbox_metrics.go` |
 | Hourly `work_released`, `work_unit_completed`, `backlog_threshold_breached`, `path_throttled` per path | `throughput_rollup`, `GET /reports/throughput` ([Release throughput report](../analytics/release-throughput-report.md)) |
 | Backlog depth vs alarm threshold, WIP vs WIP limit | `GET /paths/{pathId}/telemetry` |
-| Planned heads drift per path | `GET /paths/{pathId}/labor-plan-view` (`driftHeads`) |
 | Dead-lettered messages | `<topic>.dlq` topics |
 
 ## Open Questions
@@ -289,6 +288,5 @@ Top terms:
   legacy, unused; retained, additive migrations only.**
 - `WorkPool` entries are never removed, so a long-lived path's pool grows
   without bound and every save rewrites all entries.
-- `PathPlanDriftDetected` has no consumer yet; who acts on drift?
 - `order-management` gets no reply event for `OrderAllocated`; it cannot learn
   from Kafka whether its lines were enqueued (a deliberate v1 choice, ADR-0031).

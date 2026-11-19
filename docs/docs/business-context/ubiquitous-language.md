@@ -106,9 +106,10 @@ anti-corruption boundary, not a shared type.
 
 ### Trap 3 — read models are not aggregate state
 
-Backlog depth, remaining capacity and plan-vs-labor drift are
+Backlog depth, remaining capacity and the observed labour plan are
 **projections**. They are computed from pool state or built from events;
-none of them is a field maintained on an aggregate. See
+none of them is a field maintained on an aggregate (plan-vs-labour drift is
+warehouse-planning's since ADR-0049). See
 [Read models](../ddd/read-models.md).
 
 ### Trap 4 — `ProductClassificationView` is not `UsableInventoryObserved`

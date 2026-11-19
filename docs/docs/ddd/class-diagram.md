@@ -100,15 +100,6 @@ classDiagram
         -Time at
         +Before(other) bool
     }
-    class Rate {
-        <<ValueObject>>
-        -float64 unitsPerHour
-    }
-    class StationCount {
-        <<ValueObject>>
-        -int value
-        +GreaterThan(other) bool
-    }
     class Quantity {
         <<ValueObject>>
         -int value
@@ -130,7 +121,7 @@ Source: `internal/domain/release/work_pool.go`,
 `internal/domain/release/release_policy.go`, `internal/domain/workunit/work_unit.go`,
 `internal/domain/shared/*.go`. Omits: read-only accessors (`PathId()`,
 `Mode()`, `Entries()`, ...), `RestoreEntry` / `SetVersion` (repository
-rehydration only), and the associations of `Rate`, `StationCount` and
+rehydration only), and the associations of
 `Quantity`. `releasedAt` / `completedAt` are `*time.Time` (nil until the
 transition). The `ChargeForecast` and `ShiftPlan`/`PathPlan` aggregates moved
 to warehouse-planning

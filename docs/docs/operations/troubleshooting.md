@@ -2,7 +2,7 @@
 id: troubleshooting
 title: Troubleshooting
 sidebar_label: Troubleshooting
-description: Symptom, cause, check and fix for the failure modes visible in the wes-work-planning code — boot failures, migrations, readiness, Kafka consumption and DLQs, outbox lag, HTTP problem types, idempotency keys, circuit breaker, MCP and analytics.
+description: Symptom, cause, check and fix for the failure modes visible in the wes-work-planning code — boot failures, migrations, readiness, Kafka consumption and DLQs, outbox lag, HTTP problem types, idempotency keys, MCP and analytics.
 ---
 
 # Troubleshooting

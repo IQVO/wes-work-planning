@@ -12,6 +12,11 @@ import (
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 )
 
+// meterName scopes the instruments this package registers (the Tier 2
+// release counter) — an outbound-adapter-level scope, not the application
+// layer's.
+const meterName = "github.com/claudioed/wes-work-planning/internal/adapters/outbound/telemetry"
+
 // releasedCounterName is the Tier 2 business counter (ADR-0013) for work
 // units admitted into a process path's pool by the release policy.
 const releasedCounterName = "wes.work_units.released"

@@ -2,7 +2,6 @@ package shared
 
 import (
 	"errors"
-	"math"
 	"testing"
 	"time"
 )
@@ -345,129 +344,6 @@ func TestQuantity(t *testing.T) {
 		_, err := q1.Subtract(q2)
 		if !errors.Is(err, ErrInvalidQuantity) {
 			t.Fatalf("got err %v, want %v", err, ErrInvalidQuantity)
-		}
-	})
-}
-
-func TestRate(t *testing.T) {
-	t.Run("NewRate valid", func(t *testing.T) {
-		r, err := NewRate(120.5)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if r.UnitsPerHour() != 120.5 {
-			t.Fatalf("got %v, want 120.5", r.UnitsPerHour())
-		}
-	})
-
-	t.Run("NewRate zero", func(t *testing.T) {
-		_, err := NewRate(0)
-		if !errors.Is(err, ErrInvalidRate) {
-			t.Fatalf("got err %v, want %v", err, ErrInvalidRate)
-		}
-	})
-
-	t.Run("NewRate negative", func(t *testing.T) {
-		_, err := NewRate(-5)
-		if !errors.Is(err, ErrInvalidRate) {
-			t.Fatalf("got err %v, want %v", err, ErrInvalidRate)
-		}
-	})
-}
-
-// TestStationCount_New covers the NewStationCount constructor's validity
-// rules (the comparison behaviours live in TestStationCount_Comparisons).
-func TestStationCount_New(t *testing.T) {
-	t.Run("NewStationCount valid", func(t *testing.T) {
-		s, err := NewStationCount(3)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if s.Value() != 3 {
-			t.Fatalf("got %d, want 3", s.Value())
-		}
-	})
-
-	t.Run("NewStationCount negative", func(t *testing.T) {
-		_, err := NewStationCount(-1)
-		if !errors.Is(err, ErrInvalidStationCount) {
-			t.Fatalf("got err %v, want %v", err, ErrInvalidStationCount)
-		}
-	})
-
-	t.Run("NewStationCount above int32 range", func(t *testing.T) {
-		_, err := NewStationCount(math.MaxInt32 + 1)
-		if !errors.Is(err, ErrInvalidStationCount) {
-			t.Fatalf("got err %v, want %v", err, ErrInvalidStationCount)
-		}
-	})
-
-	// Boundary: exactly MaxInt32 is the largest legal count. Kills the
-	// CONDITIONALS_BOUNDARY mutant `value > MaxInt32` -> `value >= MaxInt32`.
-	t.Run("NewStationCount at int32 max boundary", func(t *testing.T) {
-		s, err := NewStationCount(math.MaxInt32)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if s.Value() != math.MaxInt32 {
-			t.Fatalf("got %d, want %d", s.Value(), math.MaxInt32)
-		}
-	})
-
-	t.Run("NewStationCount zero", func(t *testing.T) {
-		s, err := NewStationCount(0)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if s.Value() != 0 {
-			t.Fatalf("got %d, want 0", s.Value())
-		}
-	})
-}
-
-// TestStationCount_Comparisons covers the LessThan/GreaterThan ordering
-// behaviour (the constructor's validity rules live in TestStationCount_New).
-func TestStationCount_Comparisons(t *testing.T) {
-	t.Run("LessThan true", func(t *testing.T) {
-		s1, _ := NewStationCount(2)
-		s2, _ := NewStationCount(5)
-		if !s1.LessThan(s2) {
-			t.Fatalf("expected %v to be less than %v", s1, s2)
-		}
-	})
-
-	t.Run("LessThan false", func(t *testing.T) {
-		s1, _ := NewStationCount(5)
-		s2, _ := NewStationCount(2)
-		if s1.LessThan(s2) {
-			t.Fatalf("did not expect %v to be less than %v", s1, s2)
-		}
-	})
-
-	t.Run("GreaterThan true", func(t *testing.T) {
-		s1, _ := NewStationCount(5)
-		s2, _ := NewStationCount(2)
-		if !s1.GreaterThan(s2) {
-			t.Fatalf("expected %v to be greater than %v", s1, s2)
-		}
-	})
-
-	t.Run("GreaterThan false", func(t *testing.T) {
-		s1, _ := NewStationCount(2)
-		s2, _ := NewStationCount(5)
-		if s1.GreaterThan(s2) {
-			t.Fatalf("did not expect %v to be greater than %v", s1, s2)
-		}
-	})
-
-	t.Run("GreaterThan equal", func(t *testing.T) {
-		s1, _ := NewStationCount(3)
-		s2, _ := NewStationCount(3)
-		if s1.GreaterThan(s2) {
-			t.Fatalf("did not expect %v to be greater than %v", s1, s2)
-		}
-		if s1.LessThan(s2) {
-			t.Fatalf("did not expect %v to be less than %v", s1, s2)
 		}
 	})
 }

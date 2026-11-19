@@ -31,7 +31,7 @@ flowchart TB
     subgraph domain["Domain layer — pure Go, zero framework imports"]
         RE["release<br/>WorkPool · ReleasePolicy"]
         WU["workunit<br/>WorkUnit"]
-        SH["shared<br/>CPT · Rate · PathId · Quantity · StationCount · events"]
+        SH["shared<br/>CPT · PathId · Quantity · events"]
         LV["laborview / inventoryview /<br/>productclassificationview<br/>read-model values"]
         PC["pathcatalog<br/>process-path catalogue"]
     end
@@ -143,7 +143,7 @@ internal/
   domain/                       pure Go: aggregates, value objects, events, errors
     release/                    WorkPool aggregate + ReleasePolicy domain service
     workunit/                   WorkUnit aggregate
-    shared/                     CPT, Rate, PathId, Quantity, StationCount, DomainEvent
+    shared/                     CPT, PathId, Quantity, DomainEvent
     laborview/                  LaborPlanObserved read-model value
     inventoryview/              UsableInventoryObserved read-model value
     pathcatalog/                process-path catalogue + prefix lookup (ADR-0012)

@@ -30,13 +30,12 @@ Read models are **not** aggregates and are listed separately at the
 | Value object | Constraint | Error on violation |
 |---|---|---|
 | `CPT` | wraps a `time.Time`; ordering is the domain operation (`Before`, `Equals`) | — (always valid) |
-| `Rate` | units/hour, must be **positive** | `ErrInvalidRate` |
 | `PathId` | must be **non-empty** | `ErrInvalidPathId` |
 | `Quantity` | must be **non-negative** | `ErrInvalidQuantity` |
-| `StationCount` | **non-negative** and at most `math.MaxInt32`; comparable (`LessThan`, `GreaterThan`) | `ErrInvalidStationCount` |
 
 These exist so an illegal value cannot be constructed at all: a negative
-quantity never becomes a `Quantity`.
+quantity never becomes a `Quantity`. (`Rate` and `StationCount`, the shift
+plan's value objects, left with it: ADR-0049.)
 
 Every aggregate is **one row (plus child rows) per process path or per work
 unit**, and every aggregate-changing use case saves the aggregate and inserts

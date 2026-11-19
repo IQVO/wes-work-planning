@@ -51,11 +51,8 @@ All type URIs are prefixed
 | `malformed-request-body` | Malformed request body | JSON that does not decode, a missing required field, or a present-but-empty/invalid `cutoffAt` |
 | `reference-required` | Reference query parameter is required | `GET /work-units` without `reference` |
 | `invalid-quantity` | Invalid quantity | negative quantity |
-| `invalid-rate` | Invalid rate | rate ≤ 0. Still mapped, but no route raises it since the shift plan moved to warehouse-planning (ADR-0049) |
-| `invalid-station-count` | Invalid station count | negative station count, or above the int32 range. Still mapped, no route raises it since ADR-0049 |
 | `invalid-path-id` | Invalid path id | empty `pathId` |
 | `unknown-path-id` | Unrecognized process-path id | a `pathId` no declared process-path prefix matches ([ADR-0012](../adr/0012-process-path-catalogue-validation.md)) |
-| `invalid-hours` | Invalid hours | hours ≤ 0. Still mapped, no route raises it since ADR-0049 |
 | `work-unit-id-required` | Work unit id is required | empty id |
 | `work-unit-reference-required` | Work unit reference is required | empty reference |
 | `invalid-line-no` | Invalid line number | `POST /paths/{pathId}/work-units` with a `lineNo` below 1 or above 2147483647 (the 32-bit column limit; [ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)) |

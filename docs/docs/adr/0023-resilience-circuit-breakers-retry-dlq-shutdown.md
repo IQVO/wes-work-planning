@@ -15,6 +15,12 @@ The product-classification breaker and retry described here were retired
 with the HTTP client by
 [ADR-0035](./0035-product-classification-local-copy.md); the
 travel-distance parts stand.
+The circuit breaker (`internal/resilience`, with its `CallTimeout` helper)
+and the `circuit_breaker.state` gauge were removed by
+[ADR-0049](./0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md):
+the travel-distance client was the last outbound client that built a breaker,
+so no client builds one. The Kafka DLQ and the graceful shutdown described
+here stand.
 This is Phase 2 (resilience) of the fleet production-readiness plan,
 ported verbatim from order-management's reference implementation
 (ADR-0025 there, PR #107) as the copy-verbatim pattern for this phase.

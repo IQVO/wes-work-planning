@@ -57,7 +57,7 @@ release-fed by `EnqueueWorkUnit`; no API creates a flow-fed pool.
 | **Installed stations** | The physical station count on a path. The ceiling for planned heads in the labour plan, now warehouse-planning's. | — (retired, ADR-0049) | — |
 | **Planned heads** | The people planned onto a path. Still read here from Workforce Management's plan (`LaborPlanObserved`). | `LaborPlanObserved.PlannedHeads` | no |
 | **Planned throughput** | `rate × plannedHeads × hours` for one path plan. Moved with the plan to warehouse-planning. | — (retired, ADR-0049) | — |
-| **Rate** | A service rate in units per hour. Must be positive. | `shared.Rate` | no |
+| **Rate** | A service rate in units per hour. The `shared.Rate` value object was RETIRED with the shift plan (ADR-0049), its only user. | — (was `shared.Rate`) | no |
 | **Reference** | The external identifier a work unit points back at (e.g. an order id). Required and non-empty. | `WorkUnit.reference`, `ref` on `WorkReleased` | yes — *ref* on the wire |
 | **Labor plan (observed)** | Read-only projection, keyed by `path_id`, of the labour plan Workforce Management last committed. A pure projection since ADR-0049. | `laborview.LaborPlanObserved` | yes — *LaborPlanObserved* |
 | **Drift** | The signed difference `observed planned heads − planned heads` for a path. ADR-0049 moved the check to warehouse-planning: `PathPlanDriftDetected` is retired and `drift_heads` on the labor-plan view is deprecated, only read back until the next observed plan clears it. | `LaborPlanObserved.DriftHeads`, `drift_heads` (deprecated) | no |

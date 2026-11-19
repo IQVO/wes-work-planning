@@ -65,10 +65,7 @@ func statusFor(err error) int {
 		errors.Is(err, workunit.ErrCancelled):
 		return http.StatusConflict
 	case errors.Is(err, shared.ErrInvalidQuantity),
-		errors.Is(err, shared.ErrInvalidRate),
-		errors.Is(err, shared.ErrInvalidStationCount),
 		errors.Is(err, shared.ErrInvalidPathId),
-		errors.Is(err, shared.ErrInvalidHours),
 		errors.Is(err, pathcatalog.ErrUnknownPath),
 		errors.Is(err, workunit.ErrEmptyId),
 		errors.Is(err, workunit.ErrEmptyReference),
@@ -125,11 +122,8 @@ var problemCatalog = []problemCategory{
 	{workunit.ErrNotReleased, "work-unit-not-released", "Work unit not released"},
 	{workunit.ErrCancelled, "work-unit-cancelled", "Work unit cancelled"},
 	{shared.ErrInvalidQuantity, "invalid-quantity", "Invalid quantity"},
-	{shared.ErrInvalidRate, "invalid-rate", "Invalid rate"},
-	{shared.ErrInvalidStationCount, "invalid-station-count", "Invalid station count"},
 	{shared.ErrInvalidPathId, "invalid-path-id", "Invalid path id"},
 	{pathcatalog.ErrUnknownPath, "unknown-path-id", "Unrecognized process-path id"},
-	{shared.ErrInvalidHours, "invalid-hours", "Invalid hours"},
 	{workunit.ErrEmptyId, "work-unit-id-required", "Work unit id is required"},
 	{workunit.ErrEmptyReference, "work-unit-reference-required", "Work unit reference is required"},
 	{workunit.ErrInvalidLineNo, "invalid-line-no", "Invalid line number"},

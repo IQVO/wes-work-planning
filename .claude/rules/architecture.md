@@ -19,8 +19,6 @@ cmd/mcp/                     MCP inbound adapter binary (ADR-0008)
 
 internal/
   domain/                    pure Go: aggregates, value objects, domain events, domain errors
-    charge/                  ChargeForecast aggregate
-    plan/                    ShiftPlan, PathPlan aggregates
     release/                 WorkPool aggregate, release policy (domain service)
     workunit/                WorkUnit aggregate
     shared/                  value objects: CPT, Rate, PathId, Quantity, domain events
@@ -28,7 +26,6 @@ internal/
     inventoryview/           read-only UsableInventoryObserved projection, keyed by SKU
     pathcatalog/             process-path catalogue value type (ADR-0012)
     productclassificationview/  SKU -> ProductClassification view value (ADR-0009; local copy since ADR-0035)
-    traveldistanceview/      TravelDistance read-model value from facility-layout (ADR-0017)
 
   application/
     ports/                   driven-port interfaces (repositories, event publisher, clock, lookups)
@@ -53,7 +50,6 @@ internal/
     outbound/productclassificationcopy/  local copy of product-master's classification (Postgres
                               Store; MemoryStore/PermissiveLookup are test doubles; PRODUCT_CLASSIFICATION_MODE=
                               kafka (default), ADR-0035, ADR-0044) — no live lookup to inventory-storage
-    outbound/traveldistance/ synchronous HTTP client to facility-layout GET /distance (ADR-0017)
     outbound/analyticsstore/ analytics Postgres reader/writer
     outbound/telemetry/      OpenTelemetry wiring / metrics adapters
 

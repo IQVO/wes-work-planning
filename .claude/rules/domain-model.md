@@ -11,7 +11,10 @@ paths:
 
 ## Ubiquitous Language (use these exact names)
 
-- **Charge** — volume that must clear, bucketed by CPT. Not "total due today".
+- **Charge** — moved to warehouse-planning as its *workload forecast* (ADR-0049);
+  `POST /paths/{pathId}/charge` answers 410.
+- **Remaining admission capacity** — ours, live per path and CPT
+  (`PathCapacityChanged`). Not warehouse-planning's *planned capacity* (per window).
 - **CPT (Critical Pull Time)** — last moment a parcel can be manifested and
   still make its truck. A value object on work; priority derives from it.
 - **Process Path** — a named station that owns a QUEUE (not a workflow step):
@@ -21,8 +24,8 @@ paths:
   (priority only).
 - **WorkUnit** — a releasable unit of work (e.g. a pick task). Assigned at
   most once at a time; cannot complete twice.
-- **ShiftPlan / PathPlan** — committed split of headcount across paths: rate
-  × heads × hours per path. Invariant: plannedHeads ≤ installedStations.
+- **ShiftPlan / PathPlan** — moved to warehouse-planning as its *labour plan*
+  (ADR-0049); `POST /paths/{pathId}/plan` answers 410.
 - **Release** — continuous, priority-ordered admission of work into a pool
   (waveless). The release decision is a POLICY object, not a schedule.
 - **Flow balancing** — on telemetry (backlog vs plan): throttle upstream
@@ -47,18 +50,11 @@ paths:
   requiredCapabilities.
 - **Known gap**: classification drift after release is not retroactively
   applied — a WorkUnit stamps classification once, at release time.
-- **Travel-distance hint** — `CommitShiftPlan` accepts an OPTIONAL
-  `fromLocationCode`/`toLocationCode` pair; when both are set it reads the
-  distance once from facility-layout's `GET /distance` (via
-  `ports.TravelDistanceLookup`, `TRAVEL_DISTANCE_MODE=http|permissive`,
-  permissive by default, fail-open; a REST sync edge, outside ADR-0044) and stamps it on the `PathPlan`
-  (`TravelDistanceM`/`TravelDistanceKnown`/estimated flag), surfaced as
-  optional `travelDistanceM`/`travelDistanceEstimated` in the response
-  (ADR-0017). Omitted, never zero-filled, when unknown.
 - **LaborPlanObserved** — a read-only projection of Workforce Management's
-  OWN `ShiftPlanCommitted` event, keyed by `path_id`. Deliberately NOT fed
-  into this service's own `ShiftPlan`/`PathPlan` aggregate — same term
-  ("ShiftPlan"), different bounded context (ADR-0006). Never conflate them.
+  OWN `ShiftPlanCommitted` event, keyed by `path_id`. A pure projection: this
+  service no longer has a `ShiftPlan`/`PathPlan` aggregate (ADR-0049), and
+  the drift fields of `GET /paths/{pathId}/labor-plan-view` are deprecated
+  read-backs (warehouse-planning raises `LabourPlanDriftDetected`).
 - **UsableInventoryObserved** — a read-only projection of inventory-storage's
   `StockReserved`/`ReservationRevoked` events, keyed by SKU (not by path —
   inventory reservations are SKU-scoped).
@@ -73,15 +69,13 @@ paths:
   current WIP never evicts work: releases pause until WIP < limit.
 - **WorkUnit**: at most one active assignment; no double-complete; carries
   CPT.
-- **ShiftPlan**: plannedHeads(path) ≤ installedStations(path); sum of hours
-  valid.
 - Read models (backlog depth, actual rate, plan-vs-actual, LaborPlanObserved,
   UsableInventoryObserved) are PROJECTIONS built from events — NOT state on
   aggregates.
 
 ## Domain events (past tense)
 
-`ChargeForecastReceived`, `ShiftPlanCommitted`, `WorkUnitCreated`,
+`WorkUnitCreated`,
 `WorkReleased`, `WorkUnitCompleted`, `BacklogThresholdBreached`,
 `RateDeviationDetected` (declared in the catalogue and in
 `apis/asyncapi.yaml`, but no use case raises it today — stated honestly in
@@ -91,10 +85,8 @@ paths:
 ADR-0018; reports this path's remaining admission capacity, correlated by
 CPT cutoff timestamp; consumed by order-management's `kafkapathcapacity`
 adapter behind its `PathCapacity` port and by network-fulfillment's
-`pathcapacitycache` adapter), `PathPlanDriftDetected` (raised by
-`CommitShiftPlan` or `ObserveLaborPlan`, whichever commits second, when our
-`PathPlan` and Workforce's `LaborPlanObserved` disagree on planned heads —
-ADR-0019).
+`pathcapacitycache` adapter). `ChargeForecastReceived`, `ShiftPlanCommitted`
+and `PathPlanDriftDetected` are RETIRED (ADR-0049).
 
 `OccurredAt` on every event comes from the injected `Clock` port, never
 `time.Now()` inside the domain — event-timing assertions in tests are exact,
@@ -113,10 +105,8 @@ observability/future subscribers.
 
 ## Use cases (application layer)
 
-1. `ReceiveChargeForecast(path, cptBuckets)` → ChargeForecast
-2. `CommitShiftPlan(path, heads, rate, hours)` → ShiftPlan (validates
-   invariant); optional travel-distance hint (ADR-0017) and drift
-   reconciliation against `LaborPlanObserved` (ADR-0019)
+1. (retired, ADR-0049) `ReceiveChargeForecast` and `CommitShiftPlan` moved to
+   warehouse-planning; their routes answer 410.
 3. `EnqueueWorkUnit(path, cpt, ref, lineNo?)` → WorkUnit added to pool. The
    optional `lineNo` (>= 1, else 400 `invalid-line-no`) is stored on the unit
    (nullable `line_no`, ADR-0036); `ApplyOrderAllocated` passes the line it

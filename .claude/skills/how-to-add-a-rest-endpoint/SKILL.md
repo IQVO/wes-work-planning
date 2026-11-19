@@ -10,21 +10,20 @@ this order — domain first, adapter last — never the reverse; writing the
 HTTP handler before the domain invariant it enforces produces handlers
 that validate nothing and use cases that get bypassed.
 
-This walks the exact path `POST /paths/{pathId}/charge` took
-(`internal/application/usecases/receive_charge_forecast.go` +
-`internal/adapters/inbound/http/handlers.go`'s `postChargeForecast`) as the
+This walks the exact path `POST /paths/{pathId}/work-units` took
+(`internal/application/usecases/enqueue_work_unit.go` +
+`internal/adapters/inbound/http/handlers.go`'s `postWorkUnit`) as the
 concrete worked example — read those two files alongside this guide.
 
 ## 1. Domain first: does an invariant already exist, or do you need one?
 
 Check `internal/domain/<aggregate>/` for the rule this endpoint enforces.
 A REST endpoint should almost never contain business logic itself — it
-decodes a request, calls a use case, encodes the result. `postChargeForecast`
+decodes a request, calls a use case, encodes the result. `postWorkUnit`
 itself contains none: it resolves `pathId`, checks it against the process-path
-catalogue (`h.validatePathId`), decodes the DTO into domain-typed
-`shared.Quantity`/`shared.CPT` buckets, and hands off. The actual invariant
-("a charge forecast's buckets are well-formed") lives in
-`internal/domain/charge.NewChargeForecast`. If the operation needs a new
+catalogue (`h.validatePathId`), decodes the DTO and hands off. The actual
+invariant (a work unit carries a CPT and a non-empty reference) lives in
+`internal/domain/workunit.NewWorkUnit`. If the operation needs a new
 domain rule, add it to the aggregate/value-object in `internal/domain/`, with
 its own table-driven unit test, BEFORE touching the application or adapter
 layers.
@@ -33,7 +32,7 @@ layers.
 
 Add a new file in `internal/application/usecases/` (one file per use
 case, this repo's convention — not one giant `usecases.go`). Shape, mirroring
-`ReceiveChargeForecast`:
+`EnqueueWorkUnit`:
 
 ```go
 package usecases
@@ -67,7 +66,7 @@ func (uc *<Verb><Noun>) Execute(ctx context.Context, req <Verb><Noun>Request) (*
     //    the aggregate's own constructor/method (never inline the
     //    invariant here — that belongs in internal/domain/)
     // 2. persist + publish atomically via atomically(ctx, uc.uow, ...) if
-    //    this raises an event, mirroring ReceiveChargeForecast.Execute
+    //    this raises an event, mirroring EnqueueWorkUnit.Execute
     // 3. return the result
 }
 ```
@@ -80,8 +79,8 @@ there fails CI.
 Write the use case's unit test against the in-memory adapter
 (`internal/adapters/outbound/memory/`) — never a real Postgres/HTTP call
 in a unit test. Cover the success path AND the domain-rule failure path
-(e.g. `ReceiveChargeForecast`'s tests cover an invalid `PathId` and an
-invalid `Quantity` bucket separately).
+(e.g. `EnqueueWorkUnit`'s tests cover an invalid `PathId` and a missing
+CPT separately).
 
 ## 3. Adapter: wire the HTTP handler
 
@@ -89,11 +88,10 @@ In `internal/adapters/inbound/http/`:
 
 1. `dto.go` — add the request/response DTO structs (JSON tags, this repo's
    naming convention: `<verb><noun>RequestDTO`/`<verb><noun>ResponseDTO`,
-   e.g. `receiveChargeForecastRequestDTO`). DTOs live ONLY in the adapter
+   e.g. `enqueueWorkUnitRequestDTO`). DTOs live ONLY in the adapter
    layer — domain types never carry JSON tags.
 2. `router.go` — add the route inside the existing `r.Route("/paths/{pathId}",
-   ...)` block if it's path-scoped (mirroring `/charge`, `/plan`,
-   `/work-units`, `/release`, `/telemetry`, `/rebalance`,
+   ...)` block if it's path-scoped (mirroring `/work-units`, `/release`, `/telemetry`, `/rebalance`,
    `/labor-plan-view`), or as a top-level route otherwise (see
    `/work-units/{id}/completions`, `/inventory-view/{sku}`).
 3. `handlers.go` — add the handler function on `*Handlers`:
@@ -111,18 +109,17 @@ In `internal/adapters/inbound/http/`:
    - encode the domain result back to the response DTO and `writeJSON`
 4. Add the new use case field to the `Handlers` struct and wire it in the
    composition root (`cmd/wes/main.go`), alongside the existing
-   `ReceiveChargeForecast`/`CommitShiftPlan`/etc. fields.
+   `EnqueueWorkUnit`/`ReleaseNextWork`/etc. fields.
 
 Write at least one httptest per endpoint: one success path, one error
 path (validation failure AND/OR the domain-rule failure, whichever this
-endpoint can produce). `router_test.go` and `commit_shift_plan_travel_distance_test.go`
-are the shape to copy.
+endpoint can produce). `router_test.go` is the shape to copy.
 
 ## 4. Contract: update OpenAPI, then regenerate docs
 
 Add the path to `apis/openapi.yaml` (request/response schemas, the RFC 7807
 problem-detail response for each error case — see the existing
-`/paths/{pathId}/charge` entry for the shape).
+`/paths/{pathId}/work-units` entry for the shape).
 
 Regenerate the Docusaurus REST reference:
 

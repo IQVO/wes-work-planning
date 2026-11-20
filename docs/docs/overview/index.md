@@ -4,7 +4,7 @@ title: WES — Work Planning & Release
 sidebar_label: Introduction
 sidebar_position: 0
 slug: /overview/
-description: The core bounded context of the Warehouse Execution System — the conductor that turns a shift's charge into a plan and releases work continuously.
+description: The core bounded context of the Warehouse Execution System — the conductor that releases work continuously and balances the flow.
 ---
 
 # WES — Work Planning & Release
@@ -19,9 +19,10 @@ representative of any real-world company**.
 This is the **core bounded context of the WES (Warehouse Execution System) tier**
 of the `warehouse-systems` platform. Its job in one sentence:
 
-> Turn a shift's **charge** (the volume due by each CPT) into a **plan**
-> (rate × heads per process path), then **release work continuously** in
-> priority order and **flow-balance** the floor from live buffer telemetry.
+> **Release work continuously** in priority order and **flow-balance** the
+> floor from live buffer telemetry. (Turning a shift's **charge** into a
+> **plan** moved to warehouse-planning,
+> [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md).)
 
 It is the **conductor**: downstream of WMS planning and inventory truth,
 upstream of WCS equipment control and of task execution. It never owns
@@ -59,20 +60,26 @@ it decides *when* work enters the floor and *in what order*.
 - **Inbound adapters**: REST (chi), Kafka consumer, MCP (Streamable HTTP)
 - **Outbound adapters**: Postgres (pgx/v5, transactional outbox), the Kafka event publishers
   (outbox relay), in-memory repositories as unit-test doubles only, process-path catalogue (file or Kafka),
-  product-master classification local copy (Kafka-fed), facility-layout
-  travel-distance lookup
-- **Aggregates**: `ChargeForecast`, `ShiftPlan`/`PathPlan`, `WorkPool`, `WorkUnit`
-- **Read models (projections, not aggregates)**: `LaborPlanObserved` (with
-  the ADR-0019 drift outcome), `UsableInventoryObserved`, backlog telemetry,
-  rebalance recommendation, and the analytics `throughput_rollup`
+  product-master classification local copy (Kafka-fed)
+- **Aggregates**: `WorkPool`, `WorkUnit` (`ChargeForecast` and
+  `ShiftPlan`/`PathPlan` moved to warehouse-planning,
+  [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md))
+- **Read models (projections, not aggregates)**: `LaborPlanObserved` (a pure
+  projection of workforce-management's plan), `UsableInventoryObserved`,
+  backlog telemetry, rebalance recommendation, and the analytics
+  `throughput_rollup`
 - **Integration**: publishes `WorkReleased` (consumed by
   fulfillment-execution) and `PathCapacityChanged` (consumed by
-  order-management and network-fulfillment), plus nine further domain events
-  (including `PathPlanDriftDetected`) with no consumer today; consumes
-  `ShiftPlanCommitted`, `StockReserved`,
-  `ReservationRevoked`, `TaskCompleted`, `OrderAllocated`,
-  `OrderPartiallyAllocated`, and — with `PATH_CATALOGUE_SOURCE=kafka` —
-  process-path-management's catalogue events
+  order-management and network-fulfillment), plus six further domain events
+  with no consumer today (three more are retired, ADR-0049); consumes
+  `ShiftPlanCommitted`, `StockReserved`, `ReservationRevoked`, `TaskCompleted`,
+  `OrderAllocated`, `OrderPartiallyAllocated`, `WorkDemandReleased`,
+  `SlotPlanApproved`, `ReplenishmentRequested`, `ReplenishmentCancelled`,
+  `ProductClassified`, `ProductPackLevelDeclared`, `ProductPackLevelRetired`,
+  `ProductPackLevelMeasured`, and — with `PATH_CATALOGUE_SOURCE=kafka` —
+  process-path-management's catalogue events. Work enters the `WorkPool` from
+  four sources: allocated orders (one work unit per order line), released
+  transfer demands, approved slot plans and replenishment requests
 
 :::note[Disclaimer]
 This project is a domain-driven design study. It is not associated with, endorsed by or affiliated with any company, and it uses no company's code, data, logos or trademarks. All names, figures and examples are illustrative or synthetic.

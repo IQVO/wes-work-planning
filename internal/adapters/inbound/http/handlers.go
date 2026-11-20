@@ -22,17 +22,15 @@ const statusKey = "status"
 
 // Handlers holds every use case the inbound HTTP adapter depends on.
 type Handlers struct {
-	ReceiveChargeForecast *usecases.ReceiveChargeForecast
-	CommitShiftPlan       *usecases.CommitShiftPlan
-	EnqueueWorkUnit       *usecases.EnqueueWorkUnit
-	ReleaseNextWork       *usecases.ReleaseNextWork
-	RecordCompletion      *usecases.RecordCompletion
-	SampleBacklog         *usecases.SampleBacklog
-	RebalanceDecision     *usecases.RebalanceDecision
+	EnqueueWorkUnit   *usecases.EnqueueWorkUnit
+	ReleaseNextWork   *usecases.ReleaseNextWork
+	RecordCompletion  *usecases.RecordCompletion
+	SampleBacklog     *usecases.SampleBacklog
+	RebalanceDecision *usecases.RebalanceDecision
 
 	// Catalogue validates every caller-supplied path_id against the
 	// fleet's declared process-path catalogue before it is allowed to
-	// seed a new WorkPool/ChargeForecast/ShiftPlan — see
+	// seed a new WorkPool — see
 	// fulfillment-execution's ADR-0017. A nil Catalogue (only ever the
 	// case in older tests not yet updated) skips validation rather than
 	// panicking, so this is additive, not a required wiring change for
@@ -82,8 +80,8 @@ func pathIdParam(r *http.Request) (shared.PathId, error) {
 
 // validatePathId checks pathId against h.Catalogue when one is wired in.
 // Call this from every handler that seeds a NEW aggregate keyed by a
-// caller-supplied path_id (ChargeForecast, ShiftPlan, WorkPool via
-// EnqueueWorkUnit) — read-only lookups do not need it, since a
+// caller-supplied path_id (a WorkPool, via EnqueueWorkUnit or
+// ConfigurePool) — read-only lookups do not need it, since a
 // nonexistent path already surfaces as ports.ErrNotFound on its own.
 func (h *Handlers) validatePathId(pathId shared.PathId) error {
 	if h.Catalogue == nil {

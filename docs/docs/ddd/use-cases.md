@@ -22,8 +22,6 @@ flowchart LR
         KAFKA["Kafka consumers (cmd/wes)"]
     end
     subgraph commands["Commands"]
-        RCF["ReceiveChargeForecast"]
-        CSP["CommitShiftPlan"]
         EWU["EnqueueWorkUnit"]
         RNW["ReleaseNextWork"]
         RC["RecordCompletion"]
@@ -39,9 +37,10 @@ flowchart LR
         AWD["ApplyWorkDemandReleased"]
         ASP["ApplySlotPlanApproved"]
         OPC["ObserveProductClassification"]
+        OPL["ObservePackLevel"]
+        ARR["ApplyReplenishmentRequested"]
+        ARC["ApplyReplenishmentCancelled"]
     end
-    REST --> RCF
-    REST --> CSP
     REST --> EWU
     REST --> RNW
     REST --> RC
@@ -58,6 +57,9 @@ flowchart LR
     KAFKA --> AWD
     KAFKA --> ASP
     KAFKA --> OPC
+    KAFKA --> OPL
+    KAFKA --> ARR
+    KAFKA --> ARC
     ATC --> RC
     AOA --> EWU
     AWD --> EWU
@@ -68,36 +70,12 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 
 ## Commands
 
-### ReceiveChargeForecast
-
-- **Trigger**: `POST /paths/{pathId}/charge` → `201`.
-- **Inputs**: `pathId`; `buckets[]` of `{cpt, quantity}`.
-- **Invariants**: `pathId` is declared in the process-path catalogue
-  (`400 unknown-path-id`); every bucket has both fields
-  (`400 malformed-request-body`); at least one bucket
-  (`charge-forecast-requires-buckets`); quantity is not negative
-  (`invalid-quantity`).
-- **State**: one `ChargeForecast` per path, replaced on every call (upsert on
-  `path_id`).
-- **Events**: `ChargeForecastReceived`.
-
-### CommitShiftPlan
-
-- **Trigger**: `POST /paths/{pathId}/plan` → `201`.
-- **Inputs**: `plannedHeads`, `installedStations` (required), `rateUnitsPerHour`,
-  `hours`, optional `fromLocationCode` + `toLocationCode`.
-- **Invariants**: catalogue; `plannedHeads <= installedStations`
-  (`heads-exceed-installed-stations`); counts within 0..2147483647; rate and
-  hours positive; planned throughput finite.
-- **Enrichment**: when both location codes are given and
-  `TRAVEL_DISTANCE_MODE=http`, one facility-layout lookup stamps
-  `travelDistanceM`/`travelDistanceEstimated`; any failure is fail-open
-  ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)).
-- **Reconciliation**: if Workforce's `LaborPlanObserved` exists for the path,
-  the head counts are compared and the outcome stored on the view
-  ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)).
-- **Events**: `ShiftPlanCommitted`; `PathPlanDriftDetected` when the heads
-  disagree.
+`ReceiveChargeForecast` and `CommitShiftPlan` are gone: the charge forecast
+and the shift plan moved to warehouse-planning
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
+`POST /paths/{pathId}/charge` and `/plan` answer `410` (`charge-forecast-moved`,
+`shift-plan-moved`) naming `PUT /workload-forecasts/{site_id}/{path_id}` and
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}` there.
 
 ### EnqueueWorkUnit
 
@@ -195,12 +173,12 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 |---|---|---|---|
 | `GetWorkUnit` | `GET /work-units/{id}` | one work unit (`id`, `pathId`, `cpt`, `reference`, `state`, `giftWrap`, `sku`, `lineNo`, `releasedAt`, `completedAt`, `cancelledAt`; RELOCATE units add `relocation` = `planId`, `moveSeq`, `kind`, `siteId`, `fromSlot`, `toSlot`, `blockedBy`) | `404` |
 | `GetWorkUnitsByReference` | `GET /work-units?reference=` | every work unit with that reference, keyset-paged (`{items,nextCursor}`; `items` empty when none) | `400 reference-required` when the parameter is missing |
-| `LaborPlanView` | `GET /paths/{pathId}/labor-plan-view` | the `LaborPlanObserved` projection, with the ADR-0019 drift outcome | `404` until a `ShiftPlanCommitted` for the path arrives |
+| `LaborPlanView` | `GET /paths/{pathId}/labor-plan-view` | the `LaborPlanObserved` projection; its drift fields are deprecated read-backs (ADR-0049) | `404` until a `ShiftPlanCommitted` for the path arrives |
 | `InventoryView` | `GET /inventory-view/{sku}` | the `UsableInventoryObserved` projection | `404` until an inventory event for the SKU arrives |
 
 ## Inbound-event use cases
 
-All seven claim the CloudEvents `id` in `processed_events` inside the **same**
+All ten claim the CloudEvents `id` in `processed_events` inside the **same**
 atomic scope as their effect (`onceAtomically`,
 [ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)): a
 redelivery is a no-op, and a failure rolls the mark back so the retry
@@ -209,13 +187,16 @@ re-applies the event. The consumer that calls them is described on
 
 | Use case | Event (topic) | Effect | Invariants / failure | Events raised |
 |---|---|---|---|---|
-| `ObserveLaborPlan` | `ShiftPlanCommitted` (`warehouse.workforce.events`) | upserts `LaborPlanObserved` for `path_id`; compares with our committed `PathPlan` if one exists | the adapter rejects a `path_id` outside the catalogue (retried, then DLQ) | `PathPlanDriftDetected` when heads disagree |
+| `ObserveLaborPlan` | `ShiftPlanCommitted` (`warehouse.workforce.events`) | upserts `LaborPlanObserved` for `path_id` as reported; a pure projection since ADR-0049 | the adapter rejects a `path_id` outside the catalogue (retried, then DLQ) | none |
 | `ObserveInventoryChange` | `StockReserved` / `ReservationRevoked` (`warehouse.inventory.events`) | applies `-quantity` / `+quantity` to `UsableInventoryObserved` for the SKU | — | none |
 | `ApplyTaskCompleted` | `TaskCompleted` (`warehouse.fulfillment.events`) | runs `RecordCompletion` for `work_unit_id` | an unknown work unit is a logged skip (still marked processed); any other error is retried, then DLQ | `WorkUnitCompleted` (via `RecordCompletion`) |
 | `ApplyOrderAllocated` | `OrderAllocated` / `OrderPartiallyAllocated` (`warehouse.order-management.events`) | one `EnqueueWorkUnit` per line: id `{order_id}-line-{line_no}`, CPT = `promise_date`, reference = `order_id`, plus `sku`, `gift_wrap`, `line_no` ([ADR-0031](../adr/0031-order-allocated-choreography.md), [ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)) | every line's `path_id` checked against the catalogue before anything is enqueued; an out-of-range `line_no` is stored as unknown; a line already in the pool is skipped | `WorkUnitCreated` per new line |
 | `ApplyWorkDemandReleased` | `WorkDemandReleased` (`warehouse.network-inventory-planning.events`) | one `EnqueueWorkUnit` with id = reference = `demand_id`, CPT = `cpt`, and the transfer fields ([ADR-0033](../adr/0033-transfer-work-demand-choreography.md)) | `work_kind` must be `TRANSFER_PICK`, `TRANSFER_DISPATCH` or `TRANSFER_ARRIVAL`; `path_id` in the catalogue; an existing `demand_id` is a no-op | `WorkUnitCreated` |
 | `ApplySlotPlanApproved` | `SlotPlanApproved` (`warehouse.slotting-optimization.events`) | one RELOCATE unit per move: id `{plan_id}-move-{seq}` (seq = 0-based position in `moves`), reference = `plan_id`, CPT = `approved_at` + `RELOCATION_CPT_HORIZON`, path `RELOCATE`. A move into a slot another move of the plan vacates gets `blocked_by` and stays out of the pool until that unit completes (swap cycles broken at the lowest seq). A newer plan for the site cancels the other plans' **Pending** units (state `Cancelled`, pool entry withdrawn); released work runs to completion ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) | move `kind` must be `Relocate`, `Assign` or `Vacate` with the slots that kind needs; `RELOCATE` must be in the catalogue and, when it declares an intake, admit `SLOT_RELOCATION` (process-path-management ADR 0034); all retried, then DLQ. An older plan than the site's latest, or the same plan again, is a no-op | `WorkUnitCreated` per planned unit |
 | `ObserveProductClassification` | `ProductClassified` (`warehouse.product-master.events`) | version-guarded upsert into `product_classification_copy` ([ADR-0035](../adr/0035-product-classification-local-copy.md)) | an older or equal version is a stale no-op (id still recorded) | none |
+| `ObservePackLevel` | `ProductPackLevelDeclared` / `ProductPackLevelRetired` / `ProductPackLevelMeasured` (`warehouse.product-master.events`) | Declared: version-guarded upsert into `product_pack_level_copy`; Retired: sets `effective_to`; Measured: stores the measured dimensions ([ADR-0045](../adr/0045-pack-aware-work-units.md)) | an older or equal `version`, or a Retired / Measured for an unknown GTIN, is a stale no-op (id still recorded); a redelivered CloudEvents `id` is a no-op | none |
+| `ApplyReplenishmentRequested` | `ReplenishmentRequested` (`warehouse.pick-face-replenishment.events`) | one REPLENISH unit per request: id `replenish-{request_id}`, reference = `request_id`, path `REPLENISH`, CPT = `requested_at` + `REPLENISHMENT_CPT_HORIZON` (8h, `NORMAL`) or `REPLENISHMENT_URGENT_CPT_HORIZON` (1h, `URGENT`; capped at the normal horizon), carrying the move (SKU, `source_bin` as from-bin, `forward_bin` as to-bin, quantity, priority) ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) | `request_id`, `sku` and both bins required, the bins differ, `quantity` at least 1, `priority` exactly `NORMAL` or `URGENT`, `site_id` and `requested_at` present, `REPLENISH` in the catalogue (no intake is evaluated); a request id whose unit already exists is a no-op, never a second unit | `WorkUnitCreated` |
+| `ApplyReplenishmentCancelled` | `ReplenishmentCancelled` (`warehouse.pick-face-replenishment.events`) | cancels the request's unit only while it is **Pending** (state `Cancelled`, pool entry withdrawn); a released, completed or already cancelled unit runs on, and a request this context never planned is a no-op ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) | a blank `request_id` is refused (dead-lettered, never retried) | none |
 
 ## Events no use case raises
 

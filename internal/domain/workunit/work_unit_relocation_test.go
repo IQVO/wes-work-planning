@@ -117,7 +117,10 @@ func TestWorkUnit_RelocationValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRelocationMove: %v", err)
 	}
-	unit.SetRelocation(m)
+	unit, err = NewWorkUnit("plan-1-move-0", unit.PathId(), unit.CPT(), unit.Reference(), WithRelocation(m))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 	got, ok := unit.Relocation()
 	if !ok || got != m {
 		t.Fatalf("Relocation = (%+v, %v), want %+v", got, ok, m)
@@ -129,7 +132,10 @@ func TestWorkUnit_BlockedByAndUnblock(t *testing.T) {
 	if unit.BlockedBy() != "" || unit.IsBlocked() {
 		t.Fatal("a fresh unit must not be blocked")
 	}
-	unit.SetBlockedBy("plan-1-move-3")
+	unit, err := NewWorkUnit("plan-1-move-0", unit.PathId(), unit.CPT(), unit.Reference(), WithBlockedBy("plan-1-move-3"))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 	if unit.BlockedBy() != "plan-1-move-3" || !unit.IsBlocked() {
 		t.Fatalf("BlockedBy = %q", unit.BlockedBy())
 	}
@@ -154,8 +160,11 @@ func TestWorkUnit_CancelPending(t *testing.T) {
 	if err := unit.Release(at); !errors.Is(err, ErrCancelled) {
 		t.Fatalf("Release of a cancelled unit = %v, want ErrCancelled", err)
 	}
-	if err := unit.Complete(at); !errors.Is(err, ErrNotReleased) {
-		t.Fatalf("Complete of a cancelled unit = %v, want ErrNotReleased", err)
+	if err := unit.Complete(at); !errors.Is(err, ErrCancelled) || errors.Is(err, ErrNotReleased) {
+		t.Fatalf("Complete of a cancelled unit = %v, want ErrCancelled (ADR-0040: Cancelled is terminal)", err)
+	}
+	if unit.State() != Cancelled {
+		t.Fatalf("a refused Complete changed the state to %v", unit.State())
 	}
 	if err := unit.Cancel(at); !errors.Is(err, ErrCancelled) {
 		t.Fatalf("second Cancel = %v, want ErrCancelled", err)

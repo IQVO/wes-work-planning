@@ -8,7 +8,7 @@ description: Every domain event this context publishes and every integration eve
 
 # Domain events
 
-Eleven past-tense domain events are declared in
+Eight past-tense domain events are declared in
 `internal/domain/shared/events.go`. All implement one interface:
 
 ```go
@@ -23,7 +23,7 @@ inside the domain, so every event assertion in the test suite is exact.
 
 ## Published
 
-All eleven go to **`warehouse.work-planning.events`** (and a copy of each to
+All eight go to **`warehouse.work-planning.events`** (and a copy of each to
 `warehouse.wes.analytics` for this service's own analytics projector) as
 CloudEvents 1.0 structured-mode JSON. The Kafka **partition key** is the
 CloudEvents `subject`: the **work unit id** for `workunit` events, the
@@ -34,8 +34,6 @@ CloudEvents `subject`: the **work unit id** for `workunit` events, the
 
 | Full CloudEvents type | Key / subject | `data` fields | Raised by | Known consumers |
 |---|---|---|---|---|
-| `com.warehouse.wes.work-planning.charge.ChargeForecastReceived` | path id | `path_id` | `ReceiveChargeForecast` | — |
-| `com.warehouse.wes.work-planning.plan.ShiftPlanCommitted` | path id | `path_id` | `CommitShiftPlan` | — |
 | `com.warehouse.wes.work-planning.workunit.WorkUnitCreated` | work unit id | `path_id`, `work_unit_id`, optional `reference` and `line_no` ([ADR-0041](../adr/0041-work-unit-created-origin.md)) | `EnqueueWorkUnit` (REST, `ApplyOrderAllocated`, `ApplyWorkDemandReleased`) and `ApplySlotPlanApproved` | order-management's release-confirmation consumer, opt-in (`RELEASE_CONFIRMATION_MODE=kafka`, off by default); it matches `reference` and `line_no` |
 | **`com.warehouse.wes.work-planning.workunit.WorkReleased`** | work unit id | `path_id`, `work_unit_id`, `cpt`, `ref`, optional `required_capabilities`, `fragile`, `gift_wrap`, `line_no` ([ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)), transfer fields ([ADR-0033](../adr/0033-transfer-work-demand-choreography.md)), `relocation` on RELOCATE units ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)), `replenishment` on REPLENISH units ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) | `ReleaseNextWork` (REST or MCP) | **fulfillment-execution** — `internal/adapters/inbound/kafka/consumer.go` turns it into a `Task` |
 | `com.warehouse.wes.work-planning.workunit.WorkUnitCompleted` | work unit id | `path_id`, `work_unit_id` | `RecordCompletion` (REST or `ApplyTaskCompleted`) | — |
@@ -44,7 +42,14 @@ CloudEvents `subject`: the **work unit id** for `workunit` events, the
 | `com.warehouse.wes.work-planning.workpool.PathThrottled` | path id | `path_id` | `RebalanceDecision`, flow-fed pool over threshold | — |
 | `com.warehouse.wes.work-planning.workpool.LaborReassignmentFlagged` | path id | `path_id` | `RebalanceDecision`, release-fed pool at WIP limit with backlog | — |
 | **`com.warehouse.wes.work-planning.workpool.PathCapacityChanged`** | path id | `path_id`, `cutoff_at`, `remaining_units`, `known` | `SampleBacklog`, only when `cutoffAt` is supplied ([ADR-0018](../adr/0018-path-capacity-changed.md)) | **order-management** — `internal/adapters/outbound/kafkapathcapacity/consumer.go`; **network-fulfillment** — `internal/adapters/outbound/pathcapacitycache/consumer.go` |
-| `com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected` | path id | `path_id`, `wes_planned_heads`, `observed_planned_heads`, `drift_heads`, `observed_at` | `CommitShiftPlan` or `ObserveLaborPlan`, whichever commits second ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)) | — |
+
+`com.warehouse.wes.work-planning.charge.ChargeForecastReceived`,
+`com.warehouse.wes.work-planning.plan.ShiftPlanCommitted` and
+`com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected` are retired:
+no longer published, still acknowledged by the analytics projector for the
+topic's history
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
+warehouse-planning publishes the labour plan and `LabourPlanDriftDetected` now.
 
 Every event also reaches `cmd/wes-projector` via `warehouse.wes.analytics`
 (consumer group `wes-analytics`); five of them move the
@@ -80,7 +85,7 @@ total (exponential backoff) and then dead-lettered. Each handler marks the Cloud
 
 | Topic | Full CloudEvents type | Producer | Handled by |
 |---|---|---|---|
-| `warehouse.workforce.events` | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | workforce-management | `ObserveLaborPlan` → `LaborPlanObserved` + drift |
+| `warehouse.workforce.events` | `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | workforce-management | `ObserveLaborPlan` → `LaborPlanObserved` (pure projection) |
 | `warehouse.inventory.events` | `com.warehouse.wms.inventory-storage.reservation.StockReserved` | inventory-storage | `ObserveInventoryChange`, delta −quantity |
 | `warehouse.inventory.events` | `com.warehouse.wms.inventory-storage.reservation.ReservationRevoked` | inventory-storage | `ObserveInventoryChange`, delta +quantity |
 | `warehouse.fulfillment.events` | `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | fulfillment-execution | `ApplyTaskCompleted` → `RecordCompletion` |
@@ -88,6 +93,10 @@ total (exponential backoff) and then dead-lettered. Each handler marks the Cloud
 | `warehouse.order-management.events` | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | order-management | same |
 | `warehouse.slotting-optimization.events` | `com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved` | slotting-optimization | `ApplySlotPlanApproved` → one RELOCATE unit per move, sequenced, superseding the site's older plan ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) |
 | `warehouse.pick-face-replenishment.events` | `com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested` / `ReplenishmentCancelled` | pick-face-replenishment | `ApplyReplenishmentRequested` → ONE REPLENISH unit per request id; `ApplyReplenishmentCancelled` → cancels a still-Pending unit; only with `REPLENISHMENT_MODE=kafka` ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) |
+| `warehouse.product-master.events` | `com.warehouse.wms.product-master.product.ProductClassified` | product-master | `ObserveProductClassification` → version-guarded upsert into `product_classification_copy` ([ADR-0035](../adr/0035-product-classification-local-copy.md)); own group `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` |
+| `warehouse.product-master.events` | `com.warehouse.wms.product-master.product.ProductPackLevelDeclared` | product-master | `ObservePackLevel` → version-guarded upsert into `product_pack_level_copy`, keyed by GTIN ([ADR-0045](../adr/0045-pack-aware-work-units.md)); own group `PACK_VIEW_CONSUMER_GROUP` |
+| `warehouse.product-master.events` | `com.warehouse.wms.product-master.product.ProductPackLevelRetired` | product-master | `ObservePackLevel` → end-dates the level (`effective_to`); no-op for an unknown GTIN or an older `version` |
+| `warehouse.product-master.events` | `com.warehouse.wms.product-master.product.ProductPackLevelMeasured` | product-master | `ObservePackLevel` → stores the measured dimensions; no-op for an unknown GTIN or an older `version` |
 | `warehouse.process-path-management.events` | `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` / `ProcessPathUpdated` / `ProcessPathDeactivated` | process-path-management | `kafkacatalog.Consumer` (process-unique group, replays from earliest), only with `PATH_CATALOGUE_SOURCE=kafka` |
 
 ## Event flow through a shift
@@ -102,13 +111,9 @@ sequenceDiagram
     participant FE as fulfillment-execution
 
     WM-->>WES: ShiftPlanCommitted from workforce
-    Note over WES: projected to LaborPlanObserved, compared with our PathPlan
+    Note over WES: projected to LaborPlanObserved
     INV-->>WES: StockReserved or ReservationRevoked
     Note over WES: projected to UsableInventoryObserved by SKU
-    Note over WES: POST /paths/pick-a/charge
-    WES->>WES: ChargeForecastReceived
-    Note over WES: POST /paths/pick-a/plan
-    WES->>WES: ShiftPlanCommitted ours, maybe PathPlanDriftDetected
     OM-->>WES: OrderAllocated
     WES->>WES: WorkUnitCreated per line
     Note over WES: POST /paths/pick-a/work-releases
@@ -123,8 +128,11 @@ sequenceDiagram
 ```
 
 Source: the use cases in `internal/application/usecases/`. Omits: MCP entry
-points and analytics fan-out. The two `ShiftPlanCommitted` events are
-**different events from different contexts** that share a name
+points and analytics fan-out. The shift's forecast and labour plan are sent
+to warehouse-planning, not here
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
+Workforce's `ShiftPlanCommitted` is a **different event from a different
+context** from the retired `plan.ShiftPlanCommitted` that shared its name
 ([ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)).
 
 ## Why events carry so little
@@ -135,8 +143,8 @@ consumers from treating the stream as data replication.
 
 The exceptions are deliberate. `WorkReleased` is enriched **in the adapter**
 with `cpt`, `ref`, `gift_wrap`, `line_no` and classification hints so fulfillment-execution
-can build a `Task` without calling back. `PathCapacityChanged` and
-`PathPlanDriftDetected` are *reports*, so they carry the figures they report.
+can build a `Task` without calling back. `PathCapacityChanged` is a
+*report*, so it carries the figures it reports.
 
 ## Wire format
 

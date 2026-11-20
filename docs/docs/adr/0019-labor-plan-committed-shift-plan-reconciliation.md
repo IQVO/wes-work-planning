@@ -10,6 +10,8 @@ description: ADR 0019 (Accepted) — closes ADR-0006's explicitly deferred recon
 
 ## Status
 
+> Superseded by [ADR-0049](./0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md).
+
 **Accepted** (2026-09-26) — **Implemented** (2026-10-04, ADR-conformance audit). See [Implementation notes](#implementation-notes) for the exact shape that shipped.
 
 ## Context

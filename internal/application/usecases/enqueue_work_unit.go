@@ -29,6 +29,7 @@ type EnqueueWorkUnit struct {
 	uow       ports.UnitOfWork
 	packs     ports.ProductClassificationLookup
 	catalogue ports.PathCatalogue
+	pickFaces ports.ForwardPickFaceLookup
 }
 
 func NewEnqueueWorkUnit(workUnits ports.WorkUnitRepo, pools ports.WorkPoolRepo, publisher ports.EventPublisher, clock ports.Clock) *EnqueueWorkUnit {
@@ -39,6 +40,14 @@ func NewEnqueueWorkUnit(workUnits ports.WorkUnitRepo, pools ports.WorkPoolRepo, 
 // (ADR-0014). Optional: nil keeps the calls running back to back.
 func (uc *EnqueueWorkUnit) WithUnitOfWork(u ports.UnitOfWork) *EnqueueWorkUnit {
 	uc.uow = u
+	return uc
+}
+
+// WithPickFaces wires the local slot-plan copy's forward-pick faces
+// (ADR-0048). Optional: without it, a pick plan whose caller stated no
+// FromBin is enqueued as-is (omit-when-unknown, fail-open).
+func (uc *EnqueueWorkUnit) WithPickFaces(f ports.ForwardPickFaceLookup) *EnqueueWorkUnit {
+	uc.pickFaces = f
 	return uc
 }
 
@@ -86,16 +95,22 @@ type EnqueueWorkUnitRequest struct {
 	// another service; it is exactly what the caller supplied. False by
 	// default — not every caller requests gift wrap.
 	GiftWrap bool
-	// TransferRef, WorkKind, SiteId and Quantity are the optional
-	// transfer metadata of a network-inventory-planning work demand
-	// (ADR-0033), threaded through to the WorkUnit so the outbound
-	// WorkReleased publisher can stamp them onto the published event at
-	// release time. Zero values mean "not transfer work" — the fields are
-	// additive, exactly like SKU/GiftWrap, never new invariants.
+	// TransferRef, WorkKind and Quantity are the optional transfer
+	// metadata of a network-inventory-planning work demand (ADR-0033),
+	// threaded through to the WorkUnit so the outbound WorkReleased
+	// publisher can stamp them onto the published event at release time.
+	// Zero values mean "not transfer work" — the fields are additive,
+	// exactly like SKU/GiftWrap, never new invariants.
 	TransferRef string
 	WorkKind    workunit.WorkKind
-	SiteId      string
-	Quantity    int
+	// SiteId is the optional site of the work (ADR-0048): a transfer
+	// demand's anchor site (ADR-0033), an order line's fulfillment site,
+	// a slot plan's site (ADR-0040) or a replenishment request's site
+	// (ADR-0042). Threaded through to the WorkUnit so the outbound
+	// WorkReleased publisher can stamp it at release time; "" means none
+	// known — additive, never a new invariant.
+	SiteId   string
+	Quantity int
 	// LineNo is optional: the 1-based order line this work unit is for
 	// (ADR-0036). 0 means "unknown"; a negative value or one above
 	// workunit.MaxLineNo (2147483647) is rejected with
@@ -131,21 +146,29 @@ func (uc *EnqueueWorkUnit) Execute(ctx context.Context, req EnqueueWorkUnitReque
 // else is written -- the retry then starts clean even without a
 // transactional UnitOfWork.
 func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitRequest) (*workunit.WorkUnit, error) {
-	unit, err := workunit.NewWorkUnit(req.WorkUnitId, req.PathId, req.CPT, req.Reference)
+	packOpts, err := uc.packAwareOptions(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	if err := workunit.ValidateLineNo(req.LineNo); err != nil {
-		return nil, err
+	// The unit is complete and valid at construction: every optional
+	// attribute is a functional option, validated on the way in.
+	opts := []workunit.Option{
+		workunit.WithLineNo(req.LineNo),
+		workunit.WithSKU(req.SKU),
+		workunit.WithGiftWrap(req.GiftWrap),
 	}
-	unit.SetLineNo(req.LineNo)
-	unit.SetSKU(req.SKU)
-	unit.SetGiftWrap(req.GiftWrap)
-	unit.SetTransferRef(req.TransferRef)
-	unit.SetWorkKind(req.WorkKind)
-	unit.SetSiteId(req.SiteId)
-	unit.SetQuantity(req.Quantity)
-	if err := uc.applyPackAware(ctx, unit, req); err != nil {
+	// The optional site (ADR-0048) applies to EVERY work kind whose
+	// request carries one — order units (from OrderAllocated's additive
+	// site_id) exactly like transfer legs, RELOCATE and REPLENISH.
+	if req.SiteId != "" {
+		opts = append(opts, workunit.WithSiteId(req.SiteId))
+	}
+	if req.WorkKind != "" {
+		opts = append(opts, workunit.WithTransferLeg(req.TransferRef, req.WorkKind, req.SiteId, req.Quantity))
+	}
+	opts = append(opts, packOpts...)
+	unit, err := workunit.NewWorkUnit(req.WorkUnitId, req.PathId, req.CPT, req.Reference, opts...)
+	if err != nil {
 		return nil, err
 	}
 
@@ -175,44 +198,65 @@ func (uc *EnqueueWorkUnit) enqueueOnce(ctx context.Context, req EnqueueWorkUnitR
 	return unit, nil
 }
 
-// applyPackAware validates and records the pack-aware parts of req on unit
-// (ADR-0045): a pick plan makes it CASE_PICK / EACH_PICK, a case break makes
-// it BREAK_CASE. A request with neither is untouched, except that a BREAK_CASE
-// path with no case break is refused (it could never be executed).
-func (uc *EnqueueWorkUnit) applyPackAware(ctx context.Context, unit *workunit.WorkUnit, req EnqueueWorkUnitRequest) error {
+// deriveForwardPickFace fills a pick plan's FromBin with the SKU's
+// forward-pick face from the local slot-plan copy (ADR-0048) at ENQUEUE
+// time — the unit is immutable after construction (PR #261), so the face
+// is resolved before NewWorkUnit. It never overrides a caller-stated bin
+// and treats every miss, unwired port or lookup error as "no face"
+// (omit-when-unknown, fail-open): the enqueue proceeds exactly as it
+// would have without it.
+func (uc *EnqueueWorkUnit) deriveForwardPickFace(ctx context.Context, siteId string, plan workunit.PickPlan) workunit.PickPlan {
+	if plan.FromBin != "" || plan.SKU == "" || uc.pickFaces == nil {
+		return plan
+	}
+	face, err := uc.pickFaces.ForwardPickFaceBySKU(ctx, siteId, plan.SKU)
+	if err != nil || face == "" {
+		return plan
+	}
+	plan.FromBin = face
+	return plan
+}
+
+// packAwareOptions validates the pack-aware parts of req (ADR-0045) and
+// returns them as construction options: a pick plan makes the unit
+// CASE_PICK / EACH_PICK, a case break makes it BREAK_CASE. A request with
+// neither carries no pack option, except that a BREAK_CASE path with no
+// case break is refused (it could never be executed).
+func (uc *EnqueueWorkUnit) packAwareOptions(ctx context.Context, req EnqueueWorkUnitRequest) ([]workunit.Option, error) {
 	if req.Pick != nil && req.CaseBreak != nil {
-		return fmt.Errorf("%w: a work unit is either a pick or a case break", workunit.ErrInvalidPickPlan)
+		return nil, fmt.Errorf("%w: a work unit is either a pick or a case break", workunit.ErrInvalidPickPlan)
 	}
 	canonical, err := uc.canonicalPathId(req.PathId)
 	if err != nil {
 		// A plain request keeps its pre-ADR-0045 behaviour (the callers
 		// validate the path themselves); only pack-aware work needs it.
 		if req.Pick == nil && req.CaseBreak == nil {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
 	onBreakCase := strings.EqualFold(canonical, breakCaseCanonicalPathId)
 	switch {
 	case req.CaseBreak != nil:
 		if uc.catalogue != nil && !onBreakCase {
-			return fmt.Errorf("%w: a case break is released on the %s path, not %q", workunit.ErrInvalidCaseBreak, breakCaseCanonicalPathId, req.PathId.String())
+			return nil, fmt.Errorf("%w: a case break is released on the %s path, not %q", workunit.ErrInvalidCaseBreak, breakCaseCanonicalPathId, req.PathId.String())
 		}
-		unit.SetCaseBreak(*req.CaseBreak)
+		return []workunit.Option{workunit.WithCaseBreak(*req.CaseBreak)}, nil
 	case req.Pick != nil:
 		if uc.catalogue != nil && !strings.EqualFold(canonical, pickCanonicalPathId) {
-			return fmt.Errorf("%w: a pick plan is released on the %s path, not %q", workunit.ErrInvalidPickPlan, pickCanonicalPathId, req.PathId.String())
+			return nil, fmt.Errorf("%w: a pick plan is released on the %s path, not %q", workunit.ErrInvalidPickPlan, pickCanonicalPathId, req.PathId.String())
 		}
 		if req.Pick.Unit == workunit.PickUnitCase {
 			if err := uc.verifyCasePick(ctx, *req.Pick); err != nil {
-				return err
+				return nil, err
 			}
 		}
-		unit.SetPick(*req.Pick)
+		plan := uc.deriveForwardPickFace(ctx, req.SiteId, *req.Pick)
+		return []workunit.Option{workunit.WithPick(plan)}, nil
 	case onBreakCase:
-		return fmt.Errorf("%w: work on the %s path carries a case break", workunit.ErrInvalidCaseBreak, breakCaseCanonicalPathId)
+		return nil, fmt.Errorf("%w: work on the %s path carries a case break", workunit.ErrInvalidCaseBreak, breakCaseCanonicalPathId)
 	}
-	return nil
+	return nil, nil
 }
 
 // canonicalPathId resolves the catalogue's canonical id of pathId; "" when no

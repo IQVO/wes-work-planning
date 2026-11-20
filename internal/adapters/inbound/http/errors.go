@@ -7,10 +7,8 @@ import (
 
 	"github.com/claudioed/wes-work-planning/internal/adapters/inbound/http/page"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
-	"github.com/claudioed/wes-work-planning/internal/domain/charge"
 	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
 	"github.com/claudioed/wes-work-planning/internal/domain/pickload"
-	"github.com/claudioed/wes-work-planning/internal/domain/plan"
 	"github.com/claudioed/wes-work-planning/internal/domain/release"
 	"github.com/claudioed/wes-work-planning/internal/domain/shared"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
@@ -67,16 +65,8 @@ func statusFor(err error) int {
 		errors.Is(err, workunit.ErrCancelled):
 		return http.StatusConflict
 	case errors.Is(err, shared.ErrInvalidQuantity),
-		errors.Is(err, shared.ErrInvalidRate),
-		errors.Is(err, shared.ErrInvalidStationCount),
 		errors.Is(err, shared.ErrInvalidPathId),
-		errors.Is(err, shared.ErrInvalidHours),
 		errors.Is(err, pathcatalog.ErrUnknownPath),
-		errors.Is(err, charge.ErrNoBuckets),
-		errors.Is(err, charge.ErrUnknownCPT),
-		errors.Is(err, plan.ErrHeadsExceedStations),
-		errors.Is(err, plan.ErrNoPathPlans),
-		errors.Is(err, plan.ErrThroughputNotFinite),
 		errors.Is(err, workunit.ErrEmptyId),
 		errors.Is(err, workunit.ErrEmptyReference),
 		errors.Is(err, workunit.ErrInvalidLineNo),
@@ -132,16 +122,8 @@ var problemCatalog = []problemCategory{
 	{workunit.ErrNotReleased, "work-unit-not-released", "Work unit not released"},
 	{workunit.ErrCancelled, "work-unit-cancelled", "Work unit cancelled"},
 	{shared.ErrInvalidQuantity, "invalid-quantity", "Invalid quantity"},
-	{shared.ErrInvalidRate, "invalid-rate", "Invalid rate"},
-	{shared.ErrInvalidStationCount, "invalid-station-count", "Invalid station count"},
 	{shared.ErrInvalidPathId, "invalid-path-id", "Invalid path id"},
 	{pathcatalog.ErrUnknownPath, "unknown-path-id", "Unrecognized process-path id"},
-	{shared.ErrInvalidHours, "invalid-hours", "Invalid hours"},
-	{charge.ErrNoBuckets, "charge-forecast-requires-buckets", "Charge forecast requires at least one CPT bucket"},
-	{charge.ErrUnknownCPT, "unknown-cpt", "No bucket exists for the given CPT"},
-	{plan.ErrHeadsExceedStations, "heads-exceed-installed-stations", "Planned heads exceed installed stations"},
-	{plan.ErrNoPathPlans, "shift-plan-requires-path-plans", "Shift plan requires at least one path plan"},
-	{plan.ErrThroughputNotFinite, "planned-throughput-not-finite", "Planned throughput is not finite"},
 	{workunit.ErrEmptyId, "work-unit-id-required", "Work unit id is required"},
 	{workunit.ErrEmptyReference, "work-unit-reference-required", "Work unit reference is required"},
 	{workunit.ErrInvalidLineNo, "invalid-line-no", "Invalid line number"},

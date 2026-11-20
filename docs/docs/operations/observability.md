@@ -2,12 +2,12 @@
 id: observability
 title: Observability
 sidebar_label: Observability
-description: Every OpenTelemetry metric instrument, span and log field the four binaries emit, how they are exported, the warehouse-infra dashboard that reads them, and suggested alerts.
+description: Every OpenTelemetry metric instrument, span and log field the five binaries emit, how they are exported, the warehouse-infra dashboard that reads them, and suggested alerts.
 ---
 
 # Observability
 
-All four binaries call the same `telemetry.Setup`
+All five binaries call the same `telemetry.Setup`
 (`internal/adapters/outbound/telemetry/telemetry.go`): traces and metrics are
 **pushed over OTLP/gRPC** (insecure) to `OTEL_EXPORTER_OTLP_ENDPOINT`
 (default `localhost:4317`); there is **no `/metrics` scrape endpoint** in
@@ -35,7 +35,11 @@ suffixes — for example `wes.work_units.released` is queried as
 |---|---|---|---|---|---|
 | `wes.work_units.released` | Int64 counter | `{work_unit}` | `path.id` | `cmd/wes` and `cmd/mcp`, once per work unit actually released by `ReleaseNextWork` (recorded in the use case after the commit, not in the handler) ([ADR-0013](../adr/0013-standard-metrics-convention.md)) | `internal/adapters/outbound/telemetry/release_metrics.go` |
 | `wes.outbox.lag_seconds` | Float64 observable gauge | `s` | — | `cmd/wes` (the relay is always on). Age of the oldest unpublished `outbox_events` row, 0 when drained; sampled by a query at each collection | `internal/adapters/outbound/postgres/outbox_metrics.go` |
-| `circuit_breaker.state` | Int64 gauge | `{state}` | `dependency` (`facility-layout`) | `cmd/wes` with `TRAVEL_DISTANCE_MODE=http`. `0` closed, `1` half-open, `2` open. Recorded **only on a state transition**, so no series exists until the breaker first changes state | `internal/adapters/outbound/telemetry/circuit_breaker_metrics.go`, `internal/adapters/outbound/traveldistance/breaker.go` |
+
+No `circuit_breaker.state` gauge is registered: no outbound client builds a
+breaker since the facility-layout travel-distance lookup was retired, so the
+breaker and its gauge were removed
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
 
 ### Library instruments
 
@@ -57,7 +61,7 @@ never the raw path, so cardinality is bounded by the route table.
 |---|---|---|---|
 | chi route pattern, e.g. `/paths/{pathId}/work-releases`, `/reports/throughput`, `/mcp` | server | otelchi middleware on the `cmd/wes`, `cmd/wes-reports` and `cmd/mcp` routers | HTTP semconv |
 | `kafka.publish warehouse.work-planning.events`, `kafka.publish warehouse.wes.analytics` | producer | `Publisher.Publish` / `AnalyticsPublisher.Publish` — **direct** publishing only (no `DATABASE_URL`) | `messaging.system=kafka`, `messaging.operation.name=publish`, `messaging.destination.name`, `messaging.batch.message_count`, `messaging.event_types` |
-| `kafka.consume <topic>` | consumer | integration consumer (5 topics), `ProductClassified` consumer, analytics projector | `messaging.kafka.offset`, partition, `messaging.message.id` (CloudEvents `id`), `cloudevents.event_type`, `cloudevents.event_source`; `product.sku` on the classification consumer |
+| `kafka.consume <topic>` | consumer | integration consumer (5 topics), `ProductClassified` consumer, pack-level consumer, analytics projector | `messaging.kafka.offset`, partition, `messaging.message.id` (CloudEvents `id`), `cloudevents.event_type`, `cloudevents.event_source`; `product.sku` on the classification consumer |
 | `mcp.tool <name>` | internal | every MCP tool call | `mcp.tool.name` |
 | `query …`, `prepare …`, `batch query …`, connect/acquire | client | otelpgx tracer on every pool | normalized SQL, never parameter values |
 
@@ -105,6 +109,9 @@ Messages worth alerting or searching on:
 | `kafka consumer stopped` | ERROR | the integration consumer's loop exited (a DLQ publish or commit failed) — nothing is consumed until restart |
 | `TaskCompleted for a work unit this context never planned; skipping` | INFO | expected for PACK tasks fulfillment-execution created itself |
 | `applying ProductClassified failed; retrying the same message` | ERROR | the classification consumer is stuck retrying one message |
+| `applying a pack level event failed; retrying the same message` | ERROR | the pack-level consumer is stuck retrying one message |
+| `pack level event is poison, sending to dead-letter topic` | ERROR | a `ProductPackLevel*` payload was invalid; fields `topic`, `partition`, `offset`, `dlq_topic`, `error` |
+| `skipping a message that is not a valid CloudEvent on the product-master topic` | WARN | the pack-level consumer committed past a non-CloudEvent |
 | `skipping invalid CloudEvent on product-master topic` / `... on analytics topic` / `... on process-path catalogue topic` | WARN | poison message skipped |
 | `analytics message handling failed` | ERROR | the projector failed to apply an already-committed event (it is not retried) |
 | `outbox relay pass failed` | ERROR | relay could not claim or send; rows stay unpublished |
@@ -113,7 +120,7 @@ Messages worth alerting or searching on:
 | `housekeeping sweep failed` / `housekeeping sweep removed rows` | ERROR / INFO | retention sweeper outcome |
 | `retrying` / `succeeded after retry` | WARN / INFO | boot-time dial retry (`op` = `run migrations`, `ping postgres`, `connect to the process-path catalogue topic`, ...) |
 | `kafka consumer did not stop before the shutdown deadline` (and the same for `outbox relay`, `product classification consumer`) | WARN | drain exceeded the 5 s shutdown budget |
-| `circuit breaker metrics not registered; continuing without them`, `outbox lag gauge unavailable` | WARN | an instrument could not be created; the service runs without it |
+| `outbox lag gauge unavailable` | WARN | an instrument could not be created; the service runs without it |
 
 ## Dashboard
 
@@ -132,7 +139,7 @@ warehouse-infra ships a Grafana dashboard for this context,
 - **Logs** (Loki, `app="wes-work-planning"`) — live stream, volume by level,
   errors and warnings.
 
-The outbox lag, circuit-breaker and pgxpool instruments are exported but not
+The outbox lag and pgxpool instruments are exported but not
 on that dashboard.
 
 ## Suggested alerts
@@ -144,7 +151,6 @@ provisioned in this repository.
 |---|---|---|
 | Outbox stuck | `wes_outbox_lag_seconds > 60` for 5 m | relay down, Kafka unreachable, or one row failing repeatedly (check `outbox_events.last_error`) |
 | Outbox row dead | any log line `outbox relay: row reached the attempt cap and is no longer claimed` | an event was excluded after `OUTBOX_MAX_ATTEMPTS` failed sends and will not be delivered until re-armed ([Runbook](./runbook.md#re-arm-an-outbox-row-that-hit-the-attempt-cap)) |
-| Facility-layout breaker open | `circuit_breaker_state{dependency="facility-layout"} == 2` for 5 m | travel-distance hints are being skipped (fail-open) |
 | REST 5xx ratio | 5xx share of `http_server_request_duration_seconds_count` for `service_name="wes-work-planning"` > 1 % for 10 m | Postgres/pool problems surface as `internal-error` |
 | Release stalled | `rate(wes_work_units_released_total[15m]) == 0` while backlog exists (`GET /paths/{pathId}/telemetry` `backlogDepth > 0`) | WIP limit reached, pool wedged, or no release caller |
 | DLQ traffic | any log line `sending to dead-letter topic`, or the `<topic>.dlq` end offset growing | poison or unprocessable upstream events |

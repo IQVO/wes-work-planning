@@ -42,6 +42,11 @@ func (uc *ReleaseNextWork) WithMetrics(m ports.ReleaseMetrics) *ReleaseNextWork 
 	return uc
 }
 
+// derivePickFace was removed with ADR-0048's move to enqueue-time
+// derivation: WorkUnit is immutable after construction (PR #261), so the
+// forward-pick face is resolved in EnqueueWorkUnit.packAwareOptions
+// BEFORE NewWorkUnit. See enqueue_work_unit.go.
+
 // WithUnitOfWork brackets both Saves + Publish in one atomic scope
 // (ADR-0014). Optional: nil keeps the calls running back to back.
 func (uc *ReleaseNextWork) WithUnitOfWork(u ports.UnitOfWork) *ReleaseNextWork {
@@ -89,6 +94,9 @@ func (uc *ReleaseNextWork) releaseOnce(ctx context.Context, req ReleaseNextWorkR
 	if err := unit.Release(now); err != nil {
 		return nil, err
 	}
+	// Forward-pick-face derivation moved to enqueue time (ADR-0048 +
+	// PR #261): the unit is immutable after construction, so the face
+	// was resolved before NewWorkUnit in EnqueueWorkUnit.
 	// The WorkUnit Save precedes Publish INSIDE the scope on purpose: the
 	// integration publisher enriches WorkReleased by reading the work unit
 	// back, and under the outbox that read must see this transaction's row.
@@ -134,3 +142,10 @@ func (uc *ReleaseNextWork) nextReleasableUnit(ctx context.Context, pool *release
 		}
 	}
 }
+
+// derivePickFace was removed (ADR-0048 + PR #261): WorkUnit is immutable
+// after construction, so the forward-pick face is resolved at ENQUEUE time
+// in EnqueueWorkUnit.packAwareOptions, before NewWorkUnit. The historical
+// contract (never override a caller-stated bin; every miss, unwired port or
+// lookup error is "no face" — omit-when-unknown, the release proceeds
+// exactly as without it) now lives in that derivation block.

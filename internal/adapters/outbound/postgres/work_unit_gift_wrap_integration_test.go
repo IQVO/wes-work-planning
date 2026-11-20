@@ -21,12 +21,11 @@ import (
 func newGiftWrapUnit(t *testing.T, id, ref string, giftWrap bool) *workunit.WorkUnit {
 	t.Helper()
 	cpt := shared.NewCPT(time.Now().Add(time.Hour).Truncate(time.Microsecond))
-	unit, err := workunit.NewWorkUnit(id, mustPath(t, "pick-gw"), cpt, ref)
+	unit, err := workunit.NewWorkUnit(id, mustPath(t, "pick-gw"), cpt, ref,
+		workunit.WithSKU("sku-gw"), workunit.WithGiftWrap(giftWrap))
 	if err != nil {
 		t.Fatalf("new work unit: %v", err)
 	}
-	unit.SetSKU("sku-gw")
-	unit.SetGiftWrap(giftWrap)
 	return unit
 }
 

@@ -85,7 +85,7 @@ func TestReplenishmentWorkUnitId_IsDeterministicPerRequest(t *testing.T) {
 	}
 }
 
-func TestWorkUnit_SetReplenishmentIsTheSourceOfSKUAndQuantity(t *testing.T) {
+func TestWorkUnit_WithReplenishmentIsTheSourceOfSKUAndQuantity(t *testing.T) {
 	pathId, _ := shared.NewPathId("REPLENISH")
 	unit, err := workunit.NewWorkUnit("replenish-r", pathId, shared.NewCPT(time.Date(2026, 10, 17, 18, 0, 0, 0, time.UTC)), "r")
 	if err != nil {
@@ -98,7 +98,11 @@ func TestWorkUnit_SetReplenishmentIsTheSourceOfSKUAndQuantity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewReplenishmentMove: %v", err)
 	}
-	unit.SetReplenishment(move)
+	unit, err = workunit.NewWorkUnit("replenish-r", pathId, shared.NewCPT(time.Date(2026, 10, 17, 18, 0, 0, 0, time.UTC)), "r",
+		workunit.WithReplenishment(move))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 	got, ok := unit.Replenishment()
 	if !ok || got != move {
 		t.Fatalf("Replenishment() = %+v, %v", got, ok)

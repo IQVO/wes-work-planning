@@ -15,6 +15,7 @@ import (
 	"github.com/cucumber/godog"
 
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
+	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
 	"github.com/claudioed/wes-work-planning/internal/domain/relocation"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
@@ -130,10 +131,12 @@ func registerSlotPlanSteps(sc *godog.ScenarioContext, w *world) {
 
 // isSlotPlanPoison is the deterministic refusals the consumer retries and
 // then dead-letters: a malformed plan, an unknown move kind or move shape,
-// or a RELOCATE path whose intake refuses SLOT_RELOCATION.
+// a RELOCATE path missing from the catalogue, or a RELOCATE path whose
+// intake refuses SLOT_RELOCATION (ADR-0040 §7).
 func isSlotPlanPoison(err error) bool {
 	return errors.Is(err, workunit.ErrUnknownRelocationKind) ||
 		errors.Is(err, workunit.ErrInvalidRelocationMove) ||
 		errors.Is(err, relocation.ErrInvalidPlan) ||
+		errors.Is(err, pathcatalog.ErrUnknownPath) ||
 		errors.Is(err, usecases.ErrPathRefusesSlotRelocation)
 }

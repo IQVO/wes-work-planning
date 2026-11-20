@@ -45,9 +45,16 @@ type OrderAllocatedLine struct {
 }
 
 type ApplyOrderAllocatedRequest struct {
-	EventId     string
-	OccurredAt  time.Time
-	OrderId     string
+	EventId    string
+	OccurredAt time.Time
+	OrderId    string
+	// SiteId is the order's OPTIONAL fulfillment site (ADR-0048), read off
+	// the event's additive top-level site_id. "" — an event that predates
+	// the field, or an order with no site assigned — keeps the exact
+	// pre-ADR-0048 behaviour: the enqueued units carry no site. It is
+	// threaded through to every line's WorkUnit.siteId so the outbound
+	// WorkReleased publisher can stamp it at release time.
+	SiteId      string
 	PromiseDate time.Time
 	Lines       []OrderAllocatedLine
 }
@@ -107,9 +114,14 @@ func (uc *ApplyOrderAllocated) enqueueRequests(req ApplyOrderAllocatedRequest) (
 			PathId:     pathId,
 			CPT:        cpt,
 			Reference:  req.OrderId,
-			SKU:        line.SKU,
-			GiftWrap:   line.GiftWrap,
-			LineNo:     lineNo,
+			// The order's fulfillment site (ADR-0048): order-level today,
+			// so every line of one allocation carries the same site. ""
+			// on an event that predates the field — additive, never a
+			// new invariant (the SetSiteId discipline).
+			SiteId:   req.SiteId,
+			SKU:      line.SKU,
+			GiftWrap: line.GiftWrap,
+			LineNo:   lineNo,
 		})
 	}
 	return out, nil

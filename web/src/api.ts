@@ -1,12 +1,5 @@
 import { WES_API_BASE } from "./config";
-import type {
-  ChargeForecastResponse,
-  ConfigurePoolRequest,
-  PoolConfigResponse,
-  RebalanceRecommendation,
-  WorkUnit,
-  ReceiveChargeForecastRequest,
-} from "./types";
+import type { ConfigurePoolRequest, PoolConfigResponse, RebalanceRecommendation, WorkUnit } from "./types";
 
 /** RFC 7807 problem+json body every error response from wes-work-planning
  *  returns (see Problem in apis/openapi.yaml: `type` =
@@ -47,8 +40,8 @@ export class ApiError extends Error {
 
 /** Normalizes anything thrown by a request into an ApiError. A raw network
  *  failure carries status 0: no HTTP answer arrived, so the request's outcome
- *  is UNKNOWN -- callers keep their Idempotency-Key in that case (see
- *  ChargeForecastScreen). */
+ *  is UNKNOWN -- a caller retrying a keyed POST keeps its Idempotency-Key in
+ *  that case. */
 export function toApiError(err: unknown): ApiError {
   if (err instanceof ApiError) return err;
   const message = err instanceof Error ? err.message : String(err);
@@ -101,42 +94,6 @@ export async function apiPut<TResponse>(path: string, body: unknown): Promise<TR
   return (await res.json()) as TResponse;
 }
 
-/** Per-request options for apiPost. */
-interface PostOptions {
-  /** Sent as the `Idempotency-Key` header. wes-work-planning's ADR-0022
-   *  client rule: every resource-creating POST carries a caller-supplied key,
-   *  minted per logical submission and reused only to retry that same
-   *  request with the same body. */
-  idempotencyKey?: string;
-}
-
-/**
- * POST for the planner's manual charge-forecast intake (POST
- * /paths/{pathId}/charge). Parses an RFC 7807 problem+json body on failure so
- * the form can surface the exact domain-error detail instead of a generic
- * "request failed".
- */
-export async function apiPost<TResponse>(
-  path: string,
-  body: unknown,
-  options: PostOptions = {},
-): Promise<TResponse> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
-  let res: Response;
-  try {
-    res = await fetch(`${WES_API_BASE}${path}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    throw toApiError(err);
-  }
-  if (!res.ok) await parseProblemOrThrow(res);
-  return (await res.json()) as TResponse;
-}
-
 const seg = encodeURIComponent;
 
 /** PUT /paths/{pathId}/pool -> 200 (400 invalid-wip-limit / unknown-feed-mode /
@@ -146,19 +103,6 @@ export function configurePool(
   input: ConfigurePoolRequest,
 ): Promise<PoolConfigResponse> {
   return apiPut<PoolConfigResponse>(`/paths/${seg(pathId)}/pool`, input);
-}
-
-/** POST /paths/{pathId}/charge -> 201 (400 invalid-quantity & malformed body,
- *  409 idempotency-key-reused when the key was used for a different request). The caller owns the key's lifecycle: same key retries the same
- *  submission, a fresh key is a genuinely new forecast. */
-export function receiveChargeForecast(
-  pathId: string,
-  input: ReceiveChargeForecastRequest,
-  idempotencyKey: string,
-): Promise<ChargeForecastResponse> {
-  return apiPost<ChargeForecastResponse>(`/paths/${seg(pathId)}/charge`, input, {
-    idempotencyKey,
-  });
 }
 
 /** POST /paths/{pathId}/rebalance-decisions -> 201 (404 not-found when the

@@ -77,8 +77,9 @@ analytics `schema_version` field is removed; `dataschema` replaces it.
 ### Published types (same `type` on both topics)
 
 ```
-com.warehouse.wes.work-planning.charge.ChargeForecastReceived
-com.warehouse.wes.work-planning.plan.ShiftPlanCommitted
+com.warehouse.wes.work-planning.charge.ChargeForecastReceived    RETIRED (ADR-0049), no longer published
+com.warehouse.wes.work-planning.plan.ShiftPlanCommitted          RETIRED (ADR-0049), no longer published
+com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected   RETIRED (ADR-0049), no longer published
 com.warehouse.wes.work-planning.workunit.WorkUnitCreated
 com.warehouse.wes.work-planning.workunit.WorkReleased            -> fulfillment-execution
 com.warehouse.wes.work-planning.workunit.WorkUnitCompleted
@@ -88,6 +89,10 @@ com.warehouse.wes.work-planning.workpool.PathThrottled
 com.warehouse.wes.work-planning.workpool.LaborReassignmentFlagged
 com.warehouse.wes.work-planning.workpool.PathCapacityChanged     -> order-management
 ```
+
+The three retired types stay listed, one row each, so the catalogue keeps
+naming every type the topics' history holds; the analytics projector still
+acknowledges them without projecting.
 
 A breaking payload change requires a new `dataschema` version **and** a new
 type with a `.v2` suffix, published as a new event; an existing type is never

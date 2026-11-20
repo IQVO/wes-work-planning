@@ -86,33 +86,44 @@ func TestWorkUnit_ReleasedAtAndCompletedAt_Lifecycle(t *testing.T) {
 	}
 }
 
-func TestWorkUnit_SKU_DefaultsEmptyAndIsSettable(t *testing.T) {
+func TestWorkUnit_SKU_DefaultsEmptyAndIsSetAtConstruction(t *testing.T) {
 	w := mustWorkUnit(t)
 
 	if got := w.SKU(); got != "" {
 		t.Fatalf("got SKU %q, want empty by default", got)
 	}
 
-	w.SetSKU("sku-482910")
+	pathId, _ := shared.NewPathId("pick-a")
+	w, err := NewWorkUnit("wu-1", pathId, shared.NewCPT(time.Now()), "order-line-1", WithSKU("sku-482910"))
+	if err != nil {
+		t.Fatalf("unexpected error building fixture: %v", err)
+	}
 	if got := w.SKU(); got != "sku-482910" {
 		t.Fatalf("got SKU %q, want sku-482910", got)
 	}
 }
 
-func TestWorkUnit_GiftWrap_DefaultsFalseAndIsSettable(t *testing.T) {
+func TestWorkUnit_GiftWrap_DefaultsFalseAndIsSetAtConstruction(t *testing.T) {
 	w := mustWorkUnit(t)
 
 	if got := w.GiftWrap(); got != false {
 		t.Fatalf("got GiftWrap %v, want false by default", got)
 	}
 
-	w.SetGiftWrap(true)
+	pathId, _ := shared.NewPathId("pick-a")
+	w, err := NewWorkUnit("wu-1", pathId, shared.NewCPT(time.Now()), "order-line-1", WithGiftWrap(true))
+	if err != nil {
+		t.Fatalf("unexpected error building fixture: %v", err)
+	}
 	if got := w.GiftWrap(); got != true {
 		t.Fatalf("got GiftWrap %v, want true", got)
 	}
 
-	w.SetGiftWrap(false)
+	w, err = NewWorkUnit("wu-1", pathId, shared.NewCPT(time.Now()), "order-line-1", WithGiftWrap(false))
+	if err != nil {
+		t.Fatalf("unexpected error building fixture: %v", err)
+	}
 	if got := w.GiftWrap(); got != false {
-		t.Fatalf("got GiftWrap %v, want false after unsetting", got)
+		t.Fatalf("got GiftWrap %v, want false", got)
 	}
 }

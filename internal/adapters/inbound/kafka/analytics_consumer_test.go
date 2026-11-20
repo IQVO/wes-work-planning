@@ -69,6 +69,10 @@ var analyticsEntity = map[string]string{
 	"BacklogThresholdBreached": "workpool",
 	"PathThrottled":            "workpool",
 	"RateDeviationDetected":    "workpool",
+	// Retired by ADR-0049, still on the topic's history.
+	"ChargeForecastReceived": "charge",
+	"ShiftPlanCommitted":     "plan",
+	"PathPlanDriftDetected":  "pathplan",
 }
 
 // analyticsEnvelopeBytes builds the exact wire bytes the AnalyticsPublisher
@@ -186,5 +190,43 @@ func TestAnalyticsConsumer_RejectsLegacyFlatEnvelope(t *testing.T) {
 	}
 	if len(proj.calls) != 0 || len(processed.seen) != 0 {
 		t.Fatalf("legacy message must not be projected or marked: calls=%d seen=%v", len(proj.calls), processed.seen)
+	}
+}
+
+// TestAnalyticsConsumer_AcknowledgesRetiredHistoricalTypes: ADR-0049 retired
+// charge.ChargeForecastReceived, plan.ShiftPlanCommitted and
+// pathplan.PathPlanDriftDetected, but the analytics topic still holds them. A
+// fresh consumer group replaying that history must acknowledge each one (nil
+// error, so the offset commits) without projecting it or marking it
+// processed, exactly as before the retirement.
+func TestAnalyticsConsumer_AcknowledgesRetiredHistoricalTypes(t *testing.T) {
+	at := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name, wantType string
+		data           map[string]any
+	}{
+		{"ChargeForecastReceived", "com.warehouse.wes.work-planning.charge.ChargeForecastReceived", map[string]any{"path_id": "pick-zone-a"}},
+		{"ShiftPlanCommitted", "com.warehouse.wes.work-planning.plan.ShiftPlanCommitted", map[string]any{"path_id": "pick-zone-a"}},
+		{"PathPlanDriftDetected", "com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected", map[string]any{
+			"path_id": "pick-zone-a", "wes_planned_heads": 6, "observed_planned_heads": 8, "drift_heads": 2, "observed_at": "2026-11-01T07:30:00Z",
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			proj := &fakeProjection{}
+			processed := newFakeProcessed()
+			consumer := &inboundkafka.AnalyticsConsumer{Projection: proj, Processed: processed, Logger: slog.New(slog.DiscardHandler)}
+
+			raw := analyticsEnvelopeBytes(t, "hist-"+c.name, c.name, at, c.data)
+			evt, err := cloudevents.Decode(raw)
+			if err != nil || evt.Type() != c.wantType {
+				t.Fatalf("fixture is not the historical %s: type %q, err %v", c.wantType, evt.Type(), err)
+			}
+			if err := consumer.HandleMessage(context.Background(), raw); err != nil {
+				t.Fatalf("historical %s must be acknowledged, got %v", c.name, err)
+			}
+			if len(proj.calls) != 0 || len(processed.seen) != 0 {
+				t.Fatalf("historical %s touched the read model: calls=%v seen=%v", c.name, proj.calls, processed.seen)
+			}
+		})
 	}
 }

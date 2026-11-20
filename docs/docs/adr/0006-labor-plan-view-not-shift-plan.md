@@ -10,6 +10,8 @@ description: Why an inbound event named ShiftPlanCommitted is deliberately not f
 
 ## Status
 
+> Amended by [ADR-0049](./0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md) (2026-11-18): the `ShiftPlan` half moves to warehouse-planning; the `LaborPlanObserved` projection described here stays.
+
 **Accepted.**
 
 ## Context

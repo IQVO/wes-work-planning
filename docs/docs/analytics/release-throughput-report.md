@@ -66,10 +66,12 @@ separate from the integration topic — CloudEvents 1.0, see
 | `com.warehouse.wes.work-planning.workpool.RateDeviationDetected` | `rateDeviationDetected` (reserved: never published today) |
 
 Every event carries its own `path_id` (the report's key dimension) directly, so
-no repo-lookup enrichment is needed. `WorkUnitCreated`, `ChargeForecastReceived`,
-`ShiftPlanCommitted`, `LaborReassignmentFlagged`, `PathCapacityChanged` and
-`PathPlanDriftDetected` are published to the topic but do not currently move
-this report; the projector acknowledges them without projecting.
+no repo-lookup enrichment is needed. `WorkUnitCreated`,
+`LaborReassignmentFlagged` and `PathCapacityChanged` are published to the topic
+but do not currently move this report; the projector acknowledges them without
+projecting. It acknowledges the same way the historical `ChargeForecastReceived`,
+`ShiftPlanCommitted` and `PathPlanDriftDetected` still in the topic; they are
+retired and no longer published (ADR-0049).
 
 Every message is a CloudEvents 1.0 structured-mode event: `specversion` `1.0`,
 `id` (UUID), `source` `/warehouse/wes-work-planning`, `type` (above),

@@ -110,8 +110,6 @@ EOF
 
 # One stable consumer group per Kafka consumer is mandatory (a boot error
 # without it); the contract run uses its own so it never joins a live group.
-# TRAVEL_DISTANCE_MODE stays at its permissive default: it is the REST sync
-# edge to facility-layout, not a database or a broker.
 KAFKA_CONSUMER_GROUP="${KAFKA_CONSUMER_GROUP:-wes-work-planning-contract}" \
   PRODUCT_CLASSIFICATION_CONSUMER_GROUP="${PRODUCT_CLASSIFICATION_CONSUMER_GROUP:-wes-work-planning-contract-product-classification}" \
   REPLENISHMENT_CONSUMER_GROUP="${REPLENISHMENT_CONSUMER_GROUP:-wes-work-planning-contract-replenishment}" \
@@ -132,16 +130,13 @@ for _ in $(seq 1 300); do
 done
 curl -sf "${BASE_URL}/readyz" >/dev/null # fail loudly if it never became ready
 
-# commitShiftPlan is excluded: its `plannedHeads <= installedStations`
-# aggregate invariant is a cross-field constraint OpenAPI 3.0.3 cannot
-# express, so Schemathesis's positive phase generates schema-valid bodies
-# the endpoint correctly rejects with 400. The invariant IS tested — by
-# the BDD scenario "Committing a shift plan that exceeds installed
-# stations is rejected" (features/shift_plan.feature), the domain table
-# test TestNewPathPlan, and the httptest
-# TestPostShiftPlan_HeadsExceedStationsReturns400. This exclusion only
-# stops Schemathesis generating the unexpressible-but-invalid
-# combinations.
+# receiveChargeForecast and commitShiftPlan are excluded: since ADR-0049
+# (stage C) both answer 410 charge-forecast-moved / shift-plan-moved for
+# every body, so Schemathesis's positive phase would report each accepted
+# schema as "rejected". The 410s are tested by
+# TestPlanningRoutesAnswer410NamingTheNewOwner and
+# features/planning_moved.feature. STAGE E: both operations leave
+# apis/openapi.yaml; remove these two exclusions in the same change.
 #
 # Idempotency-Key (ADR-0022, enforced in every deployment now): the hooks
 # file gives every request that carries the header a fresh UUID, like a real
@@ -158,5 +153,6 @@ st run apis/openapi.yaml \
   --max-examples "${MAX_EXAMPLES}" \
   --workers 4 \
   --generation-allow-x00 false \
+  --exclude-operation-id receiveChargeForecast \
   --exclude-operation-id commitShiftPlan \
   "$@"

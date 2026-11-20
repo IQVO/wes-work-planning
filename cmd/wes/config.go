@@ -15,8 +15,8 @@ import (
 )
 
 // appConfig is the process-level configuration read from the environment
-// once at boot. Component-specific knobs (housekeeping, circuit breakers,
-// catalogue source, ...) are still read by the builder that owns them, so
+// once at boot. Component-specific knobs (housekeeping, catalogue source,
+// ...) are still read by the builder that owns them, so
 // every env var keeps exactly the semantics it had before the split.
 type appConfig struct {
 	httpAddr    string

@@ -156,10 +156,11 @@ for component in api mcp a2a analytics-projector analytics-reports frontend; do
   grep -q "app.kubernetes.io/component: $component" <<<"$infra_all" || fail "infra values: component $component not rendered"
 done
 
-# The REST sync-edge *_MODE variables are out of scope and keep working.
-[[ "$(env_value "$infra_api" TRAVEL_DISTANCE_MODE)" == "http" ]] || fail "infra values: TRAVEL_DISTANCE_MODE=http must still render"
-travel="$(render --set 'extraEnv[0].name=TRAVEL_DISTANCE_MODE' --set 'extraEnv[0].value=permissive' --show-only templates/deployment.yaml)"
-[[ "$(env_value "$travel" TRAVEL_DISTANCE_MODE)" == "permissive" ]] || fail "TRAVEL_DISTANCE_MODE=permissive (REST sync edge, out of scope) must keep working"
+# The facility-layout travel-distance edge is retired (ADR-0049): the infra
+# values no longer carry its variables.
+for retired in TRAVEL_DISTANCE_MODE FACILITY_LAYOUT_BASE_URL; do
+  [[ -z "$(env_value "$infra_api" "$retired")" ]] || fail "infra values: $retired is retired (ADR-0049) and must not render"
+done
 
 # The chart's own readinessProbe is /readyz (a real dependency check).
 grep -A3 'readinessProbe:' <<<"$api_deployment" | grep -A2 'httpGet:' | grep -q 'path: /readyz' || fail "readinessProbe must hit /readyz"

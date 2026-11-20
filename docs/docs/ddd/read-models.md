@@ -20,14 +20,12 @@ are and why the rule holds.
 |---|---|---|---|
 | **Backlog telemetry** | `path_id` | computed from `WorkPool.entries` on read | `GET /paths/{pathId}/telemetry` |
 | **Rebalance recommendation** | `path_id` | computed from the same pool snapshot when decided | `POST /paths/{pathId}/rebalance-decisions` |
-| **`LaborPlanObserved`** | `path_id` | `ShiftPlanCommitted` events from `workforce-management`, plus the drift outcome of comparing it with our `PathPlan` ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)) | `GET /paths/{pathId}/labor-plan-view` (`driftHeads`, `driftDetectedAt`) |
+| **`LaborPlanObserved`** | `path_id` | `ShiftPlanCommitted` events from `workforce-management`, as reported (a pure projection since [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)) | `GET /paths/{pathId}/labor-plan-view` (`driftHeads`, `driftDetectedAt` deprecated read-backs) |
 | **`UsableInventoryObserved`** | **`sku`** | `StockReserved` / `ReservationRevoked` events from `inventory-storage` | `GET /inventory-view/{sku}` |
 | **Product classification copy** | **`sku`** | `ProductClassified` events from `product-master`, applied only when `version` is newer ([ADR-0035](../adr/0035-product-classification-local-copy.md)) | not exposed; read once per `WorkReleased` as `ProductClassificationView` |
 
-One further read-only view is **not persisted at all**: the
-`TravelDistanceView` read from facility-layout once
-per `CommitShiftPlan`. The analytics `throughput_rollup` is a further,
-out-of-process projection owned by `cmd/wes-projector`
+The analytics `throughput_rollup` is a further, out-of-process projection
+owned by `cmd/wes-projector`
 ([Release throughput report](../analytics/release-throughput-report.md)).
 
 The two groups are different in kind:
@@ -89,8 +87,8 @@ type LaborPlanObserved struct {
     PlannedRate     float64
     PlannedHours    float64
     ObservedAt      time.Time
-    DriftHeads      *int       // ADR-0019: observed minus ours, nil until compared
-    DriftDetectedAt *time.Time // set only when DriftHeads != 0
+    DriftHeads      *int       // deprecated (ADR-0049): read back only, no longer computed
+    DriftDetectedAt *time.Time // deprecated (ADR-0049): set only when DriftHeads != 0
 }
 ```
 
@@ -98,11 +96,10 @@ No constructor, no validation, exported fields. That shape is the point: this
 type protects nothing, because the facts in it are owned by another bounded
 context. Giving it invariants would mean this service could reject a fact that
 Workforce has already committed — which is not a decision this context is
-entitled to make. The drift columns record a *comparison* with our plan;
-they never change either plan.
-
-Contrast with `PathPlan`, which has a private field set and a validating
-constructor, because `plannedHeads ≤ installedStations` *is* our rule.
+entitled to make. Since ADR-0049 nothing here compares it with a plan: the
+two drift fields only carry a drift recorded before that, until the path's
+next observed plan clears them. The plan and its drift check are
+warehouse-planning's.
 
 ## Projection staleness is explicit
 
@@ -113,5 +110,4 @@ against the source: it is exactly "the last thing that context told us,
 and when".
 
 If nothing has been observed yet, the endpoints return **404**, not a
-zero-valued body — the same distinction `ChargeForecast.QuantityForCPT` makes
-between "zero" and "unknown".
+zero-valued body: "zero" and "unknown" are different facts.

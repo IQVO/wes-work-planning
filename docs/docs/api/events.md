@@ -88,28 +88,22 @@ the past-tense domain event name used in the code. For this service the
 subdomain is `wes` and the bounded context is `work-planning`:
 
 ```
-com.warehouse.wes.work-planning.charge.ChargeForecastReceived
-com.warehouse.wes.work-planning.plan.ShiftPlanCommitted
 com.warehouse.wes.work-planning.workunit.WorkReleased
 com.warehouse.wes.work-planning.workpool.PathThrottled
-com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected
 ```
 
-The `<entity>` segment names the aggregate that raised the event: `charge`
-(ChargeForecast), `plan` (ShiftPlan/PathPlan), `workpool` (WorkPool and the
-flow-balancing decisions taken against it), `workunit` (WorkUnit), and
-`pathplan` for the ADR-0019 plan-vs-labor reconciliation outcome. The mapping
-lives in `eventTypeEntity` in `internal/adapters/outbound/kafka/publisher.go`.
+The `<entity>` segment names the aggregate that raised the event: `workpool`
+(WorkPool and the flow-balancing decisions taken against it) and `workunit`
+(WorkUnit). The mapping lives in `eventTypeEntity` in
+`internal/adapters/outbound/kafka/publisher.go`.
 
 ## Events published
 
-Topic `warehouse.work-planning.events`. Eleven event types are catalogued; the
+Topic `warehouse.work-planning.events`. Eight event types are published; the
 `data` shape of each is below.
 
 | Event (`type` suffix after `com.warehouse.wes.work-planning.`) | `data` fields | Raised when |
 |---|---|---|
-| `charge.ChargeForecastReceived` | `path_id` | a charge forecast is recorded for a path |
-| `plan.ShiftPlanCommitted` | `path_id` | **this** context commits its own rate × heads × hours plan |
 | `workunit.WorkUnitCreated` | `path_id`, `work_unit_id` (+ optional `reference`, `line_no`, [ADR-0041](../adr/0041-work-unit-created-origin.md)) | a work unit is enqueued into a pool |
 | **`workunit.WorkReleased`** | `path_id`, `work_unit_id`, `cpt`, `ref` (+ optional `required_capabilities`, `fragile`, `gift_wrap`, `line_no`) | the release policy admits the earliest-CPT unit |
 | `workunit.WorkUnitCompleted` | `path_id`, `work_unit_id` | a released unit completes |
@@ -118,7 +112,13 @@ Topic `warehouse.work-planning.events`. Eleven event types are catalogued; the
 | `workpool.PathThrottled` | `path_id` | flow balancing decides to throttle upstream release |
 | `workpool.LaborReassignmentFlagged` | `path_id` | flow balancing recommends moving headcount |
 | `workpool.PathCapacityChanged` | `path_id`, `cutoff_at`, `remaining_units`, `known` | `SampleBacklog` is called with a `cutoffAt` query parameter (ADR-0018) |
-| `pathplan.PathPlanDriftDetected` | `path_id`, `wes_planned_heads`, `observed_planned_heads`, `drift_heads`, `observed_at` | our committed `PathPlan` and Workforce's `LaborPlanObserved` disagree on planned heads, whichever side commits second (ADR-0019) |
+
+Three types are retired and no longer published
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)):
+`charge.ChargeForecastReceived`, `plan.ShiftPlanCommitted` and
+`pathplan.PathPlanDriftDetected`. The forecast, the labour plan and its drift
+are warehouse-planning's now (`LabourPlanDriftDetected` replaces the drift
+event). The analytics projector still acknowledges the historical messages.
 
 **`WorkReleased` and `PathCapacityChanged` are the only ones any other
 service consumes today** — `fulfillment-execution` turns `WorkReleased` into a
@@ -174,12 +174,14 @@ CloudEvents attributes; the payload from `DataAs`.
 
 | `type` | `data` | Effect here |
 |---|---|---|
-| `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `building_id`, `shift_id`, `path_id`, `planned_heads`, `planned_rate`, `planned_hours` | `path_id` validated against the process-path catalogue; upserts the `LaborPlanObserved` projection for `path_id`; if we have a committed `PathPlan` for that path, records the drift and raises `PathPlanDriftDetected` when the heads disagree (ADR-0019) |
+| `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | `building_id`, `shift_id`, `path_id`, `planned_heads`, `planned_rate`, `planned_hours` | `path_id` validated against the process-path catalogue; upserts the `LaborPlanObserved` projection for `path_id`. A pure projection: nothing is compared and nothing is published (the drift check moved to warehouse-planning, ADR-0049) |
 
 Workforce publishes **one message per path line**, which is why the projection
-keys cleanly on `path_id`. This is *not* fed into this context's own
-`ShiftPlan` aggregate — see
-[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md).
+keys cleanly on `path_id`. This context holds no shift plan of its own (the
+plan is warehouse-planning's since
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md));
+the projection stays as
+[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md) set it up.
 
 ### `warehouse.inventory.events` — from `inventory-storage`
 
@@ -206,6 +208,36 @@ the atomic processed-event mark around exactly the same code path that
 |---|---|---|
 | `com.warehouse.wes.order-management.order.OrderAllocated` | `order_id`, `promise_date`, `lines[]` (`line_no`, `sku`, `path_id`, `gift_wrap`) | `ApplyOrderAllocated`: every line's `path_id` is validated against the catalogue first, then one `EnqueueWorkUnit` per line with id `{order_id}-line-{line_no}` and CPT = `promise_date`; an already-enqueued line is a benign no-op ([ADR-0031](../adr/0031-order-allocated-choreography.md)) |
 | `com.warehouse.wes.order-management.order.OrderPartiallyAllocated` | same shape | same effect |
+
+### `warehouse.network-inventory-planning.events` — from `network-inventory-planning`
+
+| `type` | `data` | Effect here |
+|---|---|---|
+| `com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased` | `demand_id`, `work_kind` (`TRANSFER_PICK`, `TRANSFER_DISPATCH`, `TRANSFER_ARRIVAL`), `transfer_ref`, `path_id`, `site_id`, `cpt`, `sku`, `quantity` | `ApplyWorkDemandReleased`: `path_id` is validated against the catalogue and `work_kind` against the transfer legs, then one `EnqueueWorkUnit` with id = `demand_id`; a different event carrying an already-enqueued `demand_id` is a benign no-op ([ADR-0033](../adr/0033-transfer-work-demand-choreography.md)) |
+
+### `warehouse.slotting-optimization.events` — from `slotting-optimization`
+
+| `type` | `data` | Effect here |
+|---|---|---|
+| `com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved` | `plan_id`, `site_id`, `approved_at`, `supersedes_plan_id`?, `moves[]` (`sku`, `kind`, `from_slot`?, `to_slot`?) | `ApplySlotPlanApproved`: one `RELOCATE` work unit per move on path `RELOCATE` (id `<plan_id>-move-<move_seq>`); the site's older plans' unreleased moves are cancelled, and a move into a slot another move of the plan vacates waits for it ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)). Other types on the topic (`SlotPlanGenerated`, `SlotPlanRejected`) are ignored |
+
+### `warehouse.pick-face-replenishment.events` — from `pick-face-replenishment`
+
+| `type` | `data` | Effect here |
+|---|---|---|
+| `com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested` | `request_id`, `site_id`, `sku`, `forward_bin`, `source_bin`, `quantity`, `priority` (`NORMAL`, `URGENT`), `requested_at` | `ApplyReplenishmentRequested`: one `REPLENISH` work unit per request on path `REPLENISH` (id `replenish-<request_id>`), CPT = `requested_at` plus the priority's horizon; a second event for the same request is a no-op ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) |
+| `com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentCancelled` | `request_id`, `reason` | `ApplyReplenishmentCancelled`: cancels the unit and withdraws its pool entry while it is still Pending; released or completed work runs to completion. `ReplenishmentCompleted` is ignored |
+
+### `warehouse.product-master.events` — pack levels (ADR-0045)
+
+`com.warehouse.wms.product-master.product.ProductPackLevelDeclared`,
+`...ProductPackLevelRetired` and `...ProductPackLevelMeasured` are applied by
+`ObservePackLevel` to a version-guarded local copy of the SKU's pack levels,
+keyed by GTIN, under its own consumer group `PACK_VIEW_CONSUMER_GROUP`
+([ADR-0045](../adr/0045-pack-aware-work-units.md)). They create no work: the
+copy backs the `CASE_PICK` check at enqueue time and the pack facts of the
+charge and travel estimates. Payloads are on the
+[Integration events](../ecosystem/integration-events.md) page.
 
 ### `warehouse.process-path-management.events` — from `process-path-management`
 

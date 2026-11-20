@@ -60,24 +60,22 @@ buying a vendor WES:
 
 | Measure | Count | Where |
 |---|---|---|
-| Aggregate roots | 4 | `ChargeForecast`, `ShiftPlan`, `WorkPool`, `WorkUnit` |
-| Enforced invariants | 21 on aggregates + 4 on value objects | [Aggregate design canvas](./aggregate-design-canvas.md) (C1–C3, P1–P4, W1–W8, U1–U6; `Rate`, `PathId`, `Quantity`, `StationCount`) |
-| Domain events | 11 | `internal/domain/shared/events.go` |
+| Aggregate roots | 2 | `WorkPool`, `WorkUnit` (`ChargeForecast` and `ShiftPlan` moved to warehouse-planning, ADR-0049) |
+| Enforced invariants | 14 on aggregates + 2 on value objects | [Aggregate design canvas](./aggregate-design-canvas.md) (W1–W8, U1–U6; `PathId`, `Quantity`) |
+| Domain events | 8 | `internal/domain/shared/events.go` |
 | Inbound integration events handled | 11 types on 7 topics | `internal/adapters/kafka/cloudevents/cloudevents.go` (consumed-type constants), `internal/adapters/inbound/kafka/consumer.go`, `internal/adapters/inbound/kafka/product_classification_consumer.go`, `internal/adapters/outbound/kafkacatalog` |
 | ADRs | 35 | [ADR index](../adr/index.md) |
 | Concurrency concerns modelled | optimistic `version` on `WorkPool`, atomic processed-event mark, idempotency keys | ADR-0029, ADR-0028, ADR-0022 |
 
 Most of the complexity sits in `WorkPool` (priority, feed modes, WIP,
-reconciliation, concurrency). `ChargeForecast` and `ShiftPlan` are
-comparatively simple.
+reconciliation, concurrency).
 
 ## Evolution (Wardley stage)
 
 | Component | Stage | Why |
 |---|---|---|
 | Release policy, WIP backpressure, flow balancing | **Custom-built** | Written and tuned here; the differentiator. Expected to keep changing (customer tiering, cold chain, aisle batching), which is why `ReleasePolicy` is a separate object. |
-| Plan-vs-labor drift reconciliation (ADR-0019) | **Genesis → Custom** | Newest capability; the signal exists, nothing consumes it yet. |
-| Process-path catalogue, travel distances, product classification | **Product** | Consumed from siblings (process-path-management and facility-layout, Generic; product-master, Supporting, through a local copy of its `ProductClassified` events — [ADR-0035](../adr/0035-product-classification-local-copy.md)), never re-modelled here. |
+| Process-path catalogue, product classification | **Product** | Consumed from siblings (process-path-management, Generic; product-master, Supporting, through a local copy of its `ProductClassified` events — [ADR-0035](../adr/0035-product-classification-local-copy.md)), never re-modelled here. |
 | Postgres, Kafka, CloudEvents, OpenTelemetry, transactional outbox | **Commodity** | Standard infrastructure behind ports. |
 
 ## What would move it

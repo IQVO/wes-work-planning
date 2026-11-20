@@ -112,17 +112,17 @@ func releasedReplenishUnit(t *testing.T, requestId, sku, from, to string, quanti
 	if err != nil {
 		t.Fatalf("NewPathId: %v", err)
 	}
-	unit, err := workunit.NewWorkUnit(workunit.ReplenishmentWorkUnitId(requestId), pathId, shared.NewCPT(cpt), requestId)
-	if err != nil {
-		t.Fatalf("NewWorkUnit: %v", err)
-	}
 	move, err := workunit.NewReplenishmentMove(requestId, sku, from, to, quantity, priority)
 	if err != nil {
 		t.Fatalf("NewReplenishmentMove: %v", err)
 	}
-	unit.SetWorkKind(workunit.WorkKindReplenish)
-	unit.SetSiteId("WH1")
-	unit.SetReplenishment(move)
+	unit, err := workunit.NewWorkUnit(workunit.ReplenishmentWorkUnitId(requestId), pathId, shared.NewCPT(cpt), requestId,
+		workunit.WithWorkKind(workunit.WorkKindReplenish),
+		workunit.WithSiteId("WH1"),
+		workunit.WithReplenishment(move))
+	if err != nil {
+		t.Fatalf("NewWorkUnit: %v", err)
+	}
 	if err := unit.Release(replReleasedAt); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
@@ -185,13 +185,27 @@ func decodeAsFEWorkReleased(t *testing.T, value []byte) feWorkReleased {
 	return env.Data
 }
 
+// assertReplenishReleaseClean checks the non-replenishment blocks never leak
+// onto a REPLENISH release, and that the release carries its site (ADR-0048).
+func assertReplenishReleaseClean(t *testing.T, d feWorkReleased) {
+	t.Helper()
+	if d.Relocation != nil || d.TransferRef != "" || d.WorkKind != "" || d.SKU != "" || d.Quantity != 0 {
+		t.Fatalf("a non-replenishment block leaked onto a REPLENISH release: %+v", d)
+	}
+	// ADR-0048: site_id is published for EVERY work kind that carries
+	// one — a REPLENISH release names its site instead of omitting it.
+	if d.SiteId != "WH1" {
+		t.Fatalf("REPLENISH release must carry its site (ADR-0048): %+v", d)
+	}
+}
+
 // The payload decodes through fulfillment-execution's decoder UNCHANGED:
 // every member lands in its field, the move validates, the REPLENISH-path
 // pairing rule passes, and none of the transfer or relocation blocks leak.
 func TestPublisher_WorkReleased_ReplenishmentDecodesAsFulfillmentExecutionMove(t *testing.T) {
 	for _, priority := range []string{"NORMAL", "URGENT"} {
 		t.Run(priority, func(t *testing.T) {
-			workUnits := releasedReplenishUnit(t, "req-9", "SKU-1", "WH1-RSV-AMB-B02-03-02-C", "WH1-FWD-AMB-A01-01-01-A", 24, priority, replReleasedAt.Add(8*time.Hour))
+			workUnits := releasedReplenishUnit(t, "req-9", "SKU-1", "WH1-RSV-AMB-B02-03-02-C", "WH1-FWD-A01-01-01-A", 24, priority, replReleasedAt.Add(8*time.Hour))
 			d := decodeAsFEWorkReleased(t, encodeReplenishRelease(t, workUnits, "replenish-req-9"))
 			if err := feCheckPairing(d); err != nil {
 				t.Fatalf("pairing rule: %v", err)
@@ -200,16 +214,14 @@ func TestPublisher_WorkReleased_ReplenishmentDecodesAsFulfillmentExecutionMove(t
 			if err != nil {
 				t.Fatalf("fulfillment-execution would reject the move: %v", err)
 			}
-			want := feReplenishmentMove{RequestId: "req-9", SKU: "SKU-1", FromBin: "WH1-RSV-AMB-B02-03-02-C", ToBin: "WH1-FWD-AMB-A01-01-01-A", Priority: priority, Quantity: 24}
+			want := feReplenishmentMove{RequestId: "req-9", SKU: "SKU-1", FromBin: "WH1-RSV-AMB-B02-03-02-C", ToBin: "WH1-FWD-A01-01-01-A", Priority: priority, Quantity: 24}
 			if move != want {
 				t.Fatalf("move = %+v, want %+v", move, want)
 			}
 			if d.PathId != "REPLENISH" || d.WorkUnitId != "replenish-req-9" || d.Ref != "req-9" || !d.CPT.Equal(replReleasedAt.Add(8*time.Hour)) {
 				t.Fatalf("envelope = %+v", d)
 			}
-			if d.Relocation != nil || d.TransferRef != "" || d.WorkKind != "" || d.SiteId != "" || d.SKU != "" || d.Quantity != 0 {
-				t.Fatalf("a non-replenishment block leaked onto a REPLENISH release: %+v", d)
-			}
+			assertReplenishReleaseClean(t, d)
 		})
 	}
 }

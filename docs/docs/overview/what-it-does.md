@@ -3,75 +3,44 @@ id: what-it-does
 title: What this service does
 sidebar_label: What it does
 sidebar_position: 1
-description: The seven control-loop use cases of the Work Planning & Release bounded context, and the loop they form.
+description: The five control-loop use cases of the Work Planning & Release bounded context, and the loop they form.
 ---
 
 # What this service does
 
-The bounded context is built around **seven control-loop use cases**. They
-form a single closed control loop: plan → release → observe → correct.
-Alongside them sit read-only queries (`GetWorkUnitsByReference`,
-`GetWorkUnit`, `LaborPlanView`, `InventoryView`) and the four inbound-event
+The bounded context is built around **five control-loop use cases**. They
+form a single closed control loop: release → observe → correct. The shift's
+plan (its charge forecast and its labour plan) is warehouse-planning's since
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md):
+`POST /paths/{pathId}/charge` and `/plan` answer `410` naming
+`PUT /workload-forecasts/{site_id}/{path_id}` and
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}` there.
+Alongside them sit `ConfigurePool`, read-only queries (`GetWorkUnitsByReference`,
+`GetWorkUnit`, `LaborPlanView`, `InventoryView`) and the ten inbound-event
 use cases that apply other contexts' events (`ObserveLaborPlan`,
-`ObserveInventoryChange`, `ApplyTaskCompleted`, `ApplyOrderAllocated`), each
+`ObserveInventoryChange`, `ApplyTaskCompleted`, `ObserveProductClassification`,
+`ObservePackLevel`, and the five that plan or cancel work from upstream facts:
+`ApplyOrderAllocated`, `ApplyWorkDemandReleased`, `ApplySlotPlanApproved`,
+`ApplyReplenishmentRequested`, `ApplyReplenishmentCancelled`), each
 idempotent via one atomic processed-event mark
 ([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)).
 
 ```mermaid
 flowchart LR
-    A["1 · ReceiveChargeForecast<br/>volume due by CPT"] --> B["2 · CommitShiftPlan<br/>rate × heads × hours"]
-    B --> C["3 · EnqueueWorkUnit<br/>into the path's WorkPool"]
-    C --> D["4 · ReleaseNextWork<br/>earliest-CPT-first, waveless"]
-    D --> E["5 · RecordCompletion<br/>unit leaves WIP"]
-    E --> F["6 · SampleBacklog<br/>depth / WIP / feed mode"]
-    F --> G["7 · RebalanceDecision<br/>throttle vs reassign"]
+    C["1 · EnqueueWorkUnit<br/>into the path's WorkPool"]
+    C --> D["2 · ReleaseNextWork<br/>earliest-CPT-first, waveless"]
+    D --> E["3 · RecordCompletion<br/>unit leaves WIP"]
+    E --> F["4 · SampleBacklog<br/>depth / WIP / feed mode"]
+    F --> G["5 · RebalanceDecision<br/>throttle vs reassign"]
     G -. throttles admission .-> D
-    G -. flags headcount move .-> B
 ```
 
-## The seven use cases
+`RebalanceDecision`'s "reassign labour" is a flag for people to act on; the
+labour plan itself is warehouse-planning's.
 
-### 1. `ReceiveChargeForecast(path, cptBuckets)`
+## The five use cases
 
-Records the **charge** for a process path: a set of `(CPT, quantity)` pairs.
-Not "total due today" — the bucketing by CPT is the whole point, because
-release priority is derived from CPT and nothing else.
-
-Produces the `ChargeForecast` aggregate. Requires at least one bucket
-(`ErrNoBuckets`).
-
-### 2. `CommitShiftPlan(path, heads, rate, hours)`
-
-Commits this service's own split of headcount across a process path: planned
-heads, service rate (units/hour) and hours. Enforces the aggregate invariant
-`plannedHeads ≤ installedStations` — you cannot plan more people onto a path
-than it has physical stations.
-
-Produces the `ShiftPlan` aggregate (a collection of `PathPlan` values).
-`PathPlan.PlannedThroughput()` = `rate × heads × hours`; a product that
-overflows to infinity is rejected (`ErrThroughputNotFinite`).
-
-Two optional enrichments ride on the same commit:
-
-- **Travel-distance hint** — when the caller supplies both
-  `fromLocationCode` and `toLocationCode`, facility-layout's `GET /distance`
-  is read once and stamped on the `PathPlan` and stored with it
-  (`shift_plans.travel_distance_m` / `travel_distance_estimated`)
-  ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)).
-  Fail-open.
-- **Drift reconciliation** — if Workforce has already committed a labor plan
-  for the path (`LaborPlanObserved`), the planned heads are compared in the
-  same transaction and `PathPlanDriftDetected` is raised when they disagree
-  ([ADR-0019](../adr/0019-labor-plan-committed-shift-plan-reconciliation.md)).
-  `ObserveLaborPlan` runs the same comparison when Workforce commits second.
-
-:::note[Not Workforce Management's ShiftPlan]
-This service's `ShiftPlan` is a *different model* from the `ShiftPlan` in the
-`workforce-management` bounded context, despite the shared word. See
-[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md).
-:::
-
-### 3. `EnqueueWorkUnit(path, cpt, ref)`
+### 1. `EnqueueWorkUnit(path, cpt, ref)`
 
 Creates a `WorkUnit` in state `Pending` carrying its CPT and an external
 reference (e.g. the source order line), and enqueues it in that path's
@@ -88,7 +57,7 @@ Over REST with Postgres the call requires an `Idempotency-Key` header
 reaches the same use case by event choreography
 ([ADR-0031](../adr/0031-order-allocated-choreography.md)).
 
-### 4. `ReleaseNextWork(path)`
+### 2. `ReleaseNextWork(path)`
 
 Applies the `ReleasePolicy` **domain service** to the path's `WorkPool`. The
 pool hands out the pending entry with the **earliest CPT** — at most once —
@@ -102,7 +71,7 @@ no schedule. Admission is a **policy applied continuously on demand**. See
 Emits `WorkReleased`, the event `fulfillment-execution` consumes to create a
 `Task`.
 
-### 5. `RecordCompletion(workUnitId)`
+### 3. `RecordCompletion(workUnitId)`
 
 Transitions a `Released` work unit to `Completed`. The aggregate rejects
 double-completion (`ErrAlreadyCompleted`) and completion of a unit that was
@@ -119,7 +88,7 @@ id for a unit that is already completed is a logged, processed skip
 ([ADR-0043](../adr/0043-taskcompleted-already-completed-skip.md)); over REST
 the same double completion still answers `409`.
 
-### 6. `SampleBacklog(path)`
+### 4. `SampleBacklog(path)`
 
 Returns the live telemetry **read model**: backlog depth (pending entries),
 WIP (released-but-not-complete entries), feed mode, and whether the pool is
@@ -133,7 +102,7 @@ remaining admission capacity and raises `PathCapacityChanged` for that
 This is a **projection computed from pool state**, not a field stored on an
 aggregate — see [Read models](../ddd/read-models.md).
 
-### 7. `RebalanceDecision(path)`
+### 5. `RebalanceDecision(path)`
 
 The flow-balancing recommendation, computed from the same live telemetry:
 

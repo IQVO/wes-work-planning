@@ -25,8 +25,8 @@ in the [ubiquitous language](../business-context/ubiquitous-language.md):
 
 | Tag | Concept |
 |---|---|
-| **Charge Forecast** | The volume that must clear a path, bucketed by CPT |
-| **Shift Plan** | *This* context's committed rate × heads × hours split |
+| **Charge Forecast** | Moved: the route answers `410`, the forecast is warehouse-planning's `PUT /workload-forecasts/{site_id}/{path_id}` ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)) |
+| **Shift Plan** | Moved: the route answers `410`, the plan is warehouse-planning's `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` (ADR-0049) |
 | **Work Units** | Enqueue a releasable unit; read one by id or look units up by reference; record its completion |
 | **Release** | Continuous, priority-ordered admission (waveless) |
 | **Telemetry** | Live buffer read model — backlog depth, WIP, feed mode |
@@ -35,10 +35,10 @@ in the [ubiquitous language](../business-context/ubiquitous-language.md):
 | **Inventory View** | Read-only projection of Inventory's usable quantity, by SKU |
 | **Health** | Operational health check |
 
-Note that **Shift Plan** and **Labor Plan View** are separate tags on purpose.
-They look similar and are not: one is our aggregate, the other is a projection
-of someone else's. See
-[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md).
+**Shift Plan** and **Labor Plan View** were separate tags on purpose: one was
+our aggregate, the other is a projection of someone else's (see
+[ADR-0006](../adr/0006-labor-plan-view-not-shift-plan.md)). Only the
+projection is left here; the plan itself moved to warehouse-planning.
 
 ## Server
 

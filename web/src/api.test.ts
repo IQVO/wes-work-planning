@@ -5,7 +5,6 @@ import {
   decideRebalance,
   fetchWorkUnitsByReference,
   newIdempotencyKey,
-  receiveChargeForecast,
   toApiError,
 } from "./api";
 import { WES_API_BASE } from "./config";
@@ -79,64 +78,7 @@ describe("configurePool (PUT /paths/{pathId}/pool)", () => {
   });
 });
 
-describe("receiveChargeForecast (POST /paths/{pathId}/charge)", () => {
-  it("POSTs the buckets with the caller's Idempotency-Key", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse(201, {
-        pathId: "pick-a",
-        totalQuantity: 6000,
-        buckets: [
-          { cpt: "2026-08-21T12:00:00Z", quantity: 4200 },
-          { cpt: "2026-08-21T18:00:00Z", quantity: 1800 },
-        ],
-        receivedAt: "2026-08-21T08:00:00Z",
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const forecast = await receiveChargeForecast(
-      "pick-a",
-      { buckets: [{ cpt: "2026-08-21T12:00:00Z", quantity: 4200 }, { cpt: "2026-08-21T18:00:00Z", quantity: 1800 }] },
-      "6f1c9a52-8f6e-4a0b-9d44-2c1b0f7a3e55",
-    );
-
-    expect(forecast.totalQuantity).toBe(6000);
-    const call = lastCall();
-    expect(call.url).toBe(`${WES_API_BASE}/paths/pick-a/charge`);
-    expect(call.init.method).toBe("POST");
-    expect(call.init.headers).toEqual({
-      "Content-Type": "application/json",
-      "Idempotency-Key": "6f1c9a52-8f6e-4a0b-9d44-2c1b0f7a3e55",
-    });
-    expect(JSON.parse(call.init.body as string)).toEqual({
-      buckets: [
-        { cpt: "2026-08-21T12:00:00Z", quantity: 4200 },
-        { cpt: "2026-08-21T18:00:00Z", quantity: 1800 },
-      ],
-    });
-  });
-
-  it("surfaces a 400 invalid-quantity problem verbatim", async () => {
-    const problem = {
-      type: "https://errors.wes-work-planning.warehouse-systems.dev/invalid-quantity",
-      title: "Invalid quantity",
-      status: 400,
-      detail: "quantity must be non-negative",
-      instance: "/paths/pick-a/charge",
-    };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(400, problem)));
-
-    const err = await receiveChargeForecast(
-      "pick-a",
-      { buckets: [{ cpt: "2026-08-21T12:00:00Z", quantity: -1 }] },
-      "key",
-    ).catch((e) => e);
-
-    expect(err).toBeInstanceOf(ApiError);
-    expect(err.status).toBe(400);
-    expect(err.message).toBe("quantity must be non-negative");
-  });
-
+describe("error bodies", () => {
   it("falls back to a plain ApiError when the error body is not JSON", async () => {
     vi.stubGlobal(
       "fetch",
@@ -145,7 +87,7 @@ describe("receiveChargeForecast (POST /paths/{pathId}/charge)", () => {
       ),
     );
 
-    const err = await receiveChargeForecast("pick-a", { buckets: [] }, "key").catch((e) => e);
+    const err = await configurePool("pick-a", { mode: "ReleaseFed", wipLimit: 5 }).catch((e) => e);
 
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(502);
@@ -158,7 +100,7 @@ describe("network failures and key minting", () => {
   it("normalizes a thrown fetch into a status-0 ApiError (outcome unknown)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
 
-    const err = toApiError(await receiveChargeForecast("pick-a", { buckets: [] }, "key").catch((e) => e));
+    const err = toApiError(await configurePool("pick-a", { mode: "ReleaseFed", wipLimit: 5 }).catch((e) => e));
 
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(0);

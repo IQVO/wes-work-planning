@@ -176,14 +176,6 @@ func (p *AnalyticsPublisher) marshalAnalyticsData(ctx context.Context, e shared.
 		return ev.PathId.String(), mustMarshal(map[string]any{
 			attrPathID: ev.PathId.String(),
 		}), true
-	case shared.ChargeForecastReceived:
-		return ev.PathId.String(), mustMarshal(map[string]any{
-			attrPathID: ev.PathId.String(),
-		}), true
-	case shared.ShiftPlanCommitted:
-		return ev.PathId.String(), mustMarshal(map[string]any{
-			attrPathID: ev.PathId.String(),
-		}), true
 	case shared.LaborReassignmentFlagged:
 		return ev.PathId.String(), mustMarshal(map[string]any{
 			attrPathID: ev.PathId.String(),
@@ -195,8 +187,6 @@ func (p *AnalyticsPublisher) marshalAnalyticsData(ctx context.Context, e shared.
 			"remaining_units": ev.RemainingUnits,
 			"known":           ev.Known,
 		}), true
-	case shared.PathPlanDriftDetected:
-		return ev.PathId.String(), pathPlanDriftDetectedData(ev), true
 	default:
 		return "", nil, false
 	}

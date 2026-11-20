@@ -90,11 +90,8 @@ func TestAnalyticsPublisher_EmitsCloudEventPerEvent(t *testing.T) {
 		{"backlog breach", shared.NewBacklogThresholdBreached(pathId, at), "com.warehouse.wes.work-planning.workpool.BacklogThresholdBreached", "pick-zone-a", "pick-zone-a", ""},
 		{"path throttled", shared.NewPathThrottled(pathId, at), "com.warehouse.wes.work-planning.workpool.PathThrottled", "pick-zone-a", "pick-zone-a", ""},
 		{"rate deviation", shared.NewRateDeviationDetected(pathId, at), "com.warehouse.wes.work-planning.workpool.RateDeviationDetected", "pick-zone-a", "pick-zone-a", ""},
-		{"charge forecast", shared.NewChargeForecastReceived(pathId, at), "com.warehouse.wes.work-planning.charge.ChargeForecastReceived", "pick-zone-a", "pick-zone-a", ""},
-		{"shift plan", shared.NewShiftPlanCommitted(pathId, at), "com.warehouse.wes.work-planning.plan.ShiftPlanCommitted", "pick-zone-a", "pick-zone-a", ""},
 		{"labor reassign", shared.NewLaborReassignmentFlagged(pathId, at), "com.warehouse.wes.work-planning.workpool.LaborReassignmentFlagged", "pick-zone-a", "pick-zone-a", ""},
 		{"path capacity changed", shared.NewPathCapacityChanged(pathId, at.Add(time.Hour), 4, true, at), "com.warehouse.wes.work-planning.workpool.PathCapacityChanged", "pick-zone-a", "pick-zone-a", ""},
-		{"path plan drift", shared.NewPathPlanDriftDetected(pathId, 6, 8, at.Add(-time.Hour), at), "com.warehouse.wes.work-planning.pathplan.PathPlanDriftDetected", "pick-zone-a", "pick-zone-a", ""},
 	}
 
 	for _, tt := range tests {

@@ -36,9 +36,13 @@ type taskCompletedData struct {
 
 // orderAllocatedData is order-management's OrderAllocated /
 // OrderPartiallyAllocated payload — both event types share this identical
-// shape, since both mean "these lines are ready to enqueue".
+// shape, since both mean "these lines are ready to enqueue". SiteId is the
+// additive, OPTIONAL top-level fulfillment site of the order (ADR-0048):
+// absent or empty on payloads that predate it, which decodes as "" and
+// behaves exactly as before — the site is an enrichment, never a gate.
 type orderAllocatedData struct {
 	OrderId     string          `json:"order_id"`
+	SiteId      string          `json:"site_id,omitempty"`
 	PromiseDate time.Time       `json:"promise_date"`
 	Lines       []orderLineData `json:"lines"`
 }

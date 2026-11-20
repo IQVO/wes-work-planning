@@ -3,7 +3,7 @@ id: hexagonal-layering
 title: Architecture — hexagonal layering and runtime view
 sidebar_label: Architecture
 sidebar_position: 2
-description: How the ports-and-adapters layering is organised and enforced, and how it is compiled into four binaries with their ports and data stores.
+description: How the ports-and-adapters layering is organised and enforced, and how it is compiled into five binaries with their ports and data stores.
 ---
 
 # Architecture — hexagonal layering and runtime view
@@ -24,17 +24,15 @@ flowchart TB
     end
 
     subgraph app["Application layer"]
-        UC["application/usecases<br/>8 command use cases,<br/>4 queries + 6 inbound-event use cases"]
+        UC["application/usecases<br/>6 command use cases,<br/>4 queries + 10 inbound-event use cases"]
         PORTS["application/ports<br/>driven-port interfaces"]
     end
 
     subgraph domain["Domain layer — pure Go, zero framework imports"]
-        CH["charge<br/>ChargeForecast"]
-        PL["plan<br/>ShiftPlan · PathPlan"]
         RE["release<br/>WorkPool · ReleasePolicy"]
         WU["workunit<br/>WorkUnit"]
-        SH["shared<br/>CPT · Rate · PathId · Quantity · StationCount · events"]
-        LV["laborview / inventoryview /<br/>productclassificationview / traveldistanceview<br/>read-model values"]
+        SH["shared<br/>CPT · PathId · Quantity · events"]
+        LV["laborview / inventoryview /<br/>productclassificationview<br/>read-model values"]
         PC["pathcatalog<br/>process-path catalogue"]
     end
 
@@ -44,7 +42,7 @@ flowchart TB
         EV["adapters/outbound/events<br/>log publisher (test double only)"]
         KOUT["adapters/outbound/kafka<br/>Kafka publishers"]
         CAT["adapters/outbound/filecatalog · kafkacatalog<br/>process-path catalogue"]
-        LOOK["adapters/outbound/productclassificationcopy · traveldistance<br/>local classification copy · sibling REST lookup"]
+        LOOK["adapters/outbound/productclassificationcopy<br/>local classification copy"]
     end
 
     HTTP --> UC
@@ -67,13 +65,14 @@ the package tree under `internal/`.
 
 ## Runtime view: binaries, ports and data stores
 
-The layers above are compiled into **four binaries** (all in one image, see
+The layers above are compiled into **five binaries** (all in one image, see
 `Dockerfile`), each its own composition root under `cmd/`:
 
 | Binary | Role | Listens on | Inbound adapters | Outbound adapters / stores |
 |---|---|---|---|---|
-| `cmd/wes` | the OLTP service: every REST endpoint, all Kafka consumers, the outbox relay and the housekeeper | `HTTP_ADDR` `:8080` — REST, `/healthz`, `/readyz` | `inbound/http`, `inbound/kafka` (integration consumer on 5 topics, `ProductClassified` consumer), `outbound/kafkacatalog` (catalogue replay) | OLTP Postgres (or memory), Kafka publishers + relay, facility-layout REST, file catalogue |
+| `cmd/wes` | the OLTP service: every REST endpoint, all Kafka consumers, the outbox relay and the housekeeper | `HTTP_ADDR` `:8080` — REST, `/healthz`, `/readyz` | `inbound/http`, `inbound/kafka` (integration consumer on 5 topics, `ProductClassified` consumer, pack-level consumer), `outbound/kafkacatalog` (catalogue replay) | OLTP Postgres (or memory), Kafka publishers + relay, file catalogue |
 | `cmd/mcp` | MCP server over the same use cases ([ADR-0008](../adr/0008-mcp-inbound-adapter.md)) | `MCP_ADDR` `:8090` — MCP at `/` and `/mcp`, `/healthz` | `inbound/mcp` | the same OLTP Postgres (read/write, no migrations), Kafka publishers or outbox rows, reports REST client |
+| `cmd/a2a` | A2A agent over the same use cases ([ADR-0046](../adr/0046-a2a-inbound-adapter.md)) | `A2A_ADDR` `:8093` — Agent Card at `/.well-known/agent-card.json`, JSON-RPC at `/` and `/a2a`, `/healthz` | `inbound/a2a` | the same OLTP Postgres (no migrations), Kafka publishers or outbox rows |
 | `cmd/wes-projector` | analytics **writer** ([ADR-0011](../adr/0011-analytical-data-product.md)) | `ADMIN_ADDR` `:8091` — `/healthz` only | analytics consumer on `warehouse.wes.analytics` | analytical Postgres (owns and migrates it) |
 | `cmd/wes-reports` | analytics **reader** | `HTTP_ADDR` `:8092` — `/reports/throughput`, `/reports/throughput/freshness`, `/healthz` | `inbound/http` reports router | analytical Postgres, read-only pool |
 
@@ -90,7 +89,6 @@ flowchart LR
         ana[("Analytical Postgres")]
     end
     kafka[["Kafka (one fleet broker)"]]
-    fl["facility-layout"]
     console --> wes
     agent --> mcp
     agent --> wes
@@ -103,21 +101,24 @@ flowchart LR
     proj --> ana
     rep --> ana
     mcp -->|"REPORTS_BASE_URL"| rep
-    wes -->|"GET /distance"| fl
 ```
 
 Source: `cmd/wes/serving.go`, `cmd/wes/publisher.go`, `cmd/mcp/main.go`,
 `cmd/wes-projector/main.go`, `cmd/wes-reports/main.go`,
-`charts/wes-work-planning/values.yaml`.
+`charts/wes-work-planning/values.yaml`. Since
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)
+`cmd/wes` makes no outbound REST call (the facility-layout travel-distance
+lookup is gone).
 
 **Data stores.**
 
 - **OLTP Postgres** (`DATABASE_URL`, migrated by `cmd/wes` from `migrations/`):
-  `charge_forecasts`, `shift_plans`, `work_pools` (+ `version`),
+  `work_pools` (+ `version`),
   `work_pool_entries`, `work_units`, `processed_events`, `labor_plan_view`,
   `usable_inventory_view`, `outbox_events`, `idempotency_keys`,
   `product_classification_copy` (and an unused `events` table from
-  `0001_init`). `DATABASE_URL` is mandatory for both `cmd/wes` and `cmd/mcp`
+  `0001_init`, plus `charge_forecasts` and `shift_plans`, kept but no longer
+  written since ADR-0049). `DATABASE_URL` is mandatory for both `cmd/wes` and `cmd/mcp`
   ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)); they
   share this one database.
 - **Analytical Postgres** (`ANALYTICS_DATABASE_URL`, a separate database
@@ -140,23 +141,20 @@ cmd/wes-reports/                analytics read-only reports API (ADR-0011)
 cmd/mcp/                        MCP server (ADR-0008)
 internal/
   domain/                       pure Go: aggregates, value objects, events, errors
-    charge/                     ChargeForecast aggregate
-    plan/                       ShiftPlan + PathPlan aggregates
     release/                    WorkPool aggregate + ReleasePolicy domain service
     workunit/                   WorkUnit aggregate
-    shared/                     CPT, Rate, PathId, Quantity, StationCount, DomainEvent
+    shared/                     CPT, PathId, Quantity, DomainEvent
     laborview/                  LaborPlanObserved read-model value
     inventoryview/              UsableInventoryObserved read-model value
     pathcatalog/                process-path catalogue + prefix lookup (ADR-0012)
     productclassificationview/  SKU classification read-model value (ADR-0009, ADR-0035)
-    traveldistanceview/         travel-distance read-model value (ADR-0017)
   analytics/report/             analytics report model (ADR-0011)
   application/
     ports/                      driven-port interfaces (repos, publisher, clock)
     usecases/                   one struct per use case
   adapters/
     inbound/http/               chi router, DTOs, domain-error → HTTP mapping
-    inbound/kafka/              integration-event consumer (5 topics), ProductClassified consumer (ADR-0035) + analytics consumer
+    inbound/kafka/              integration-event consumer (5 topics), ProductClassified consumer (ADR-0035), pack-level consumer (ADR-0045) + analytics consumer
     inbound/mcp/                MCP tools, resources, prompts (ADR-0008)
     outbound/postgres/          pgxpool repositories, UnitOfWork, outbox + relay (ADR-0014)
     outbound/memory/            thread-safe in-memory repositories (test doubles only)
@@ -166,7 +164,6 @@ internal/
     outbound/filecatalog/       process-path catalogue from YAML (PATH_CATALOGUE_SOURCE=file)
     outbound/kafkacatalog/      process-path catalogue from Kafka (PATH_CATALOGUE_SOURCE=kafka)
     outbound/productclassificationcopy/  local copy of product-master's classification (ADR-0035)
-    outbound/traveldistance/    facility-layout REST lookup
     outbound/analyticsstore/    analytics Postgres store
     outbound/telemetry/         OpenTelemetry setup
     kafka/cloudevents/          CloudEvents 1.0 envelope helpers (New/Decode), topics, consumed types
@@ -183,8 +180,6 @@ so the domain never learns that Postgres or Kafka exist:
 
 | Port | Purpose |
 |---|---|
-| `ChargeRepo` | persist/retrieve `ChargeForecast`, one per path |
-| `PlanRepo` | persist/retrieve `ShiftPlan`, one per path |
 | `WorkPoolRepo` | persist/retrieve `WorkPool`, one per path |
 | `WorkUnitRepo` | persist/retrieve `WorkUnit` by id and by path |
 | `EventPublisher` | publish domain events (the Kafka outbox encoders in production; a log/multi publisher in unit tests only) |
@@ -198,19 +193,19 @@ so the domain never learns that Postgres or Kafka exist:
 | `PathCatalogue` | look up a `pathId` in the declared process-path catalogue (ADR-0012) |
 | `ProductClassificationLookup` | read a SKU's classification from the local copy of product-master's events (ADR-0009, ADR-0035) |
 | `ProductClassificationCopyRepo` | apply a `ProductClassified` to that copy, version-guarded (ADR-0035) |
-| `TravelDistanceLookup` | read a travel distance from facility-layout (ADR-0017) |
 
 The composition root wires Postgres (`DATABASE_URL`) and Kafka
 (`KAFKA_BROKERS`) unconditionally ([ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md));
-the only choices left in environment variables are file vs Kafka catalogue
-(`PATH_CATALOGUE_SOURCE`) and the permissive vs HTTP travel-distance lookup
-(`TRAVEL_DISTANCE_MODE`, a REST sync edge).
+the only choice left in environment variables is file vs Kafka catalogue
+(`PATH_CATALOGUE_SOURCE`). The `ChargeRepo`, `PlanRepo` and
+`TravelDistanceLookup` ports went with the charge forecast, the shift plan
+and the facility-layout lookup (ADR-0049).
 
 ## Why this shape
 
 The reason is not tidiness — it is that the interesting rules of this domain
-(priority by CPT, at-most-once handout, WIP limits, `plannedHeads ≤
-installedStations`) are *decisions*, and decisions belong somewhere with no
+(priority by CPT, at-most-once handout, WIP limits, no double completion)
+are *decisions*, and decisions belong somewhere with no
 infrastructure in it, so they can be exercised exhaustively and cheaply. The
 domain and application packages carry the bulk of the test suite precisely
 because they have no I/O to mock. See

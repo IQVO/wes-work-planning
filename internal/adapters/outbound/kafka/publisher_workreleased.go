@@ -72,22 +72,31 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 		data["line_no"] = lineNo
 	}
 	// Transfer context (ADR-0033): same strictly-additive discipline —
-	// the four OPTIONAL fields appear only on a transfer-referenced unit
-	// (a transfer work_kind is the discriminator: order work has none, and
+	// the OPTIONAL fields appear only on a transfer-referenced unit (a
+	// transfer work_kind is the discriminator: order work has none, and
 	// RELOCATE work carries its relocation object instead), so the payload
 	// of every order-driven unit stays byte-identical to before this
 	// feature existed. Consumers must treat absent as "not transfer work".
+	// site_id is NO LONGER inside this gate (ADR-0048): it moved below, to
+	// every work kind.
 	if workKind.IsTransfer() {
 		data["work_kind"] = workKind.String()
 		if transferRef != "" {
 			data["transfer_ref"] = transferRef
 		}
-		if siteId != "" {
-			data["site_id"] = siteId
-		}
 		if quantity > 0 {
 			data["quantity"] = quantity
 		}
+	}
+	// Site (ADR-0048): published whenever the released unit carries one —
+	// ALL work kinds. A transfer leg anchors to its network site
+	// (ADR-0033), order work to the order's fulfillment site
+	// (OrderAllocated's additive site_id), RELOCATE to its plan's site and
+	// REPLENISH to its request's site. Omitted — never an empty string —
+	// when the unit has none, which keeps the payload of every pre-0048
+	// unit byte-identical. Consumers must treat absent as "site unknown".
+	if siteId != "" {
+		data["site_id"] = siteId
 	}
 	// Slot-plan move (ADR-0040): ONE optional nested object, present only
 	// on a RELOCATE unit — exactly what fulfillment-execution's RELOCATE
@@ -117,7 +126,10 @@ func (p *Publisher) workReleasedData(ctx context.Context, ev shared.WorkReleased
 
 // pickData is WorkReleased.data.pick for a CASE_PICK / EACH_PICK unit, nil for
 // every other unit: sku, quantity (EACHES whatever the unit), unit (EACH |
-// CASE) and from_bin, omitted when no source bin was planned.
+// CASE), the optional site_id of the unit the pick happens at (ADR-0048,
+// omitted when the unit carries none) and from_bin, omitted when no source
+// bin was planned or derived (the forward-pick-face approximation,
+// ADR-0048).
 func pickData(unit *workunit.WorkUnit) map[string]any {
 	plan, ok := unit.Pick()
 	if !ok {
@@ -127,6 +139,9 @@ func pickData(unit *workunit.WorkUnit) map[string]any {
 		attrSKU:    plan.SKU,
 		"quantity": plan.Quantity,
 		"unit":     plan.Unit.String(),
+	}
+	if siteId := unit.SiteId(); siteId != "" {
+		out["site_id"] = siteId
 	}
 	if plan.FromBin != "" {
 		out["from_bin"] = plan.FromBin

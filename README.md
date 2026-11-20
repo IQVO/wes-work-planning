@@ -2,11 +2,14 @@
 
 [![CI](https://github.com/IQVO/wes-work-planning/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/IQVO/wes-work-planning/actions/workflows/ci.yml?query=branch%3Adevelop) [![coverage gate](https://img.shields.io/badge/coverage%20gate-90%25-brightgreen)](https://github.com/IQVO/wes-work-planning/blob/develop/Makefile) [![Go](https://img.shields.io/badge/go-1.26.10-00ADD8?logo=go&logoColor=white)](https://github.com/IQVO/wes-work-planning/blob/develop/go.mod) [![release](https://img.shields.io/github/v/release/IQVO/wes-work-planning?sort=semver)](https://github.com/IQVO/wes-work-planning/releases) [![docs](https://img.shields.io/badge/docs-iqvo.github.io-blue)](https://iqvo.github.io/wes-work-planning/) [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/IQVO/wes-work-planning/blob/develop/LICENSE)
 
-The core bounded context of a Warehouse Execution System. It turns a shift's
-**charge** (volume due by each CPT) into a **plan** (rate x heads per process
-path), releases work continuously in priority order (waveless), and performs
-flow balancing off live backlog telemetry — Drum-Buffer-Rope with CPT as the
-drum.
+The core bounded context of a Warehouse Execution System. It releases work
+continuously in priority order (waveless) and performs flow balancing off live
+backlog telemetry — Drum-Buffer-Rope with CPT as the drum. The shift's
+**charge** (volume due by each CPT) and its **plan** (rate x heads per process
+path) moved to warehouse-planning
+([ADR-0049](docs/docs/adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)):
+`PUT /workload-forecasts/{site_id}/{path_id}` and
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}` there.
 
 ## Architecture
 
@@ -22,8 +25,6 @@ cmd/mcp/                     MCP server (ADR-0008)
 cmd/a2a/                     A2A agent (ADR-0046)
 internal/
   domain/                    pure Go: aggregates, value objects, domain events
-    charge/                  ChargeForecast aggregate
-    plan/                    ShiftPlan, PathPlan aggregates
     release/                 WorkPool aggregate, ReleasePolicy domain service
     workunit/                WorkUnit aggregate
     shared/                  value objects (CPT, Rate, PathId, Quantity, ...)
@@ -42,7 +43,6 @@ internal/
     outbound/filecatalog/    process-path catalogue from a YAML file (PATH_CATALOGUE_SOURCE=file, ADR-0012)
     outbound/kafkacatalog/   process-path catalogue replayed from process-path-management's topic (PATH_CATALOGUE_SOURCE=kafka)
     outbound/productclassificationcopy/  local copy of product-master's classification (ADR-0035)
-    outbound/traveldistance/ facility-layout travel-distance lookup (ADR-0017)
     outbound/analyticsstore/ analytics Postgres projection + report reader
     outbound/telemetry/      OpenTelemetry setup
 migrations/                  golang-migrate SQL files (OLTP; migrations/analytics/ for the projector)
@@ -116,10 +116,9 @@ own the process exits non-zero, so the pod restarts.
 | `OUTBOX_RETENTION` | `168h` (7d) | How long a **published** `outbox_events` row is kept; unpublished rows are never deleted; `0` disables that sweep |
 | `PRODUCT_CLASSIFICATION_MODE` | `kafka` | Unset or `kafka`: keep a local copy of product-master's `ProductClassified` events (`warehouse.product-master.events`, table `product_classification_copy`) and read a released unit's SKU classification from it ([ADR-0035](docs/docs/adr/0035-product-classification-local-copy.md)). `permissive`, `off`, `http` (the retired live lookup) and any other value fail at boot, naming the variable |
 | `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | **required** | Stable Kafka consumer group of the `ProductClassified` consumer (always on). Every replica shares it |
+| `PACK_VIEW_CONSUMER_GROUP` | **required** | Stable Kafka consumer group of the pack-level consumer (always on): `ProductPackLevelDeclared` / `ProductPackLevelRetired` / `ProductPackLevelMeasured` from `warehouse.product-master.events` into `product_pack_level_copy` ([ADR-0045](docs/docs/adr/0045-pack-aware-work-units.md)). Must differ from `PRODUCT_CLASSIFICATION_CONSUMER_GROUP`. Chart value `config.packViewConsumerGroup` |
 | `REPLENISHMENT_MODE` | `kafka` | Unset or `kafka`: the `ReplenishmentRequested` / `ReplenishmentCancelled` consumer plans REPLENISH work ([ADR-0042](docs/docs/adr/0042-pick-face-replenishment-work.md)). `permissive`, `off` and any other value fail at boot, naming the variable |
 | `REPLENISHMENT_CONSUMER_GROUP` | **required** | Stable Kafka consumer group of the replenishment consumer (always on). Every replica shares it |
-| `TRAVEL_DISTANCE_MODE` | `permissive` | REST sync edge to facility-layout (out of scope of ADR-0044): `permissive` (default, no-op, always omits the travel-distance hint) or `http` — synchronous lookup of the real travel distance between two facility-layout LocationCodes at shift-plan-commit time (ADR-0017) |
-| `FACILITY_LAYOUT_BASE_URL` | (unset) | Base URL for facility-layout's REST API; required when `TRAVEL_DISTANCE_MODE=http` |
 | `PATH_CATALOGUE_SOURCE` | `file` | `file` (default) reads `PATH_CATALOGUE_FILE` once at boot; `kafka` replays process-path-management's `warehouse.process-path-management.events` topic into an in-memory catalogue (a read-only cache rebuilt from the topic, not state), blocks startup until the replay completes, then keeps it current live. The replay uses its own per-process consumer group, independent of `KAFKA_CONSUMER_GROUP` |
 | `PATH_CATALOGUE_FILE` | `/etc/wes-work-planning/process-paths.yaml` | Path to the declared process-path catalogue YAML (see `warehouse-infra`'s `config/process-paths/sortable-fc.yaml`, the same file `fulfillment-execution` reads). Used only when `PATH_CATALOGUE_SOURCE=file`; loaded once at startup, and a missing or invalid file is a fatal boot-time error — see [ADR-0012](docs/docs/adr/0012-process-path-catalogue-validation.md) |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:5183` | Comma-separated browser origins allowed by the REST CORS middleware |
@@ -260,28 +259,21 @@ real page), `title` is a fixed category summary, `status` duplicates the HTTP
 status code, `detail` is the specific error message for this occurrence, and
 `instance` is the request path that produced it.
 
-### `POST /paths/{pathId}/charge` — ReceiveChargeForecast
+### `POST /paths/{pathId}/charge` and `POST /paths/{pathId}/plan` — moved (always `410`)
 
-```sh
-curl -X POST localhost:8080/paths/pick-a/charge \
-  -H 'Content-Type: application/json' \
-  -d '{"buckets":[{"cpt":"2026-08-21T12:00:00Z","quantity":100}]}'
-```
-
-### `POST /paths/{pathId}/plan` — CommitShiftPlan
-
-```sh
-curl -X POST localhost:8080/paths/pick-a/plan \
-  -H 'Content-Type: application/json' \
-  -d '{"plannedHeads":3,"installedStations":5,"rateUnitsPerHour":50,"hours":8}'
-```
-
-Fails with `400` if `plannedHeads > installedStations`.
+The charge forecast and the shift plan moved to warehouse-planning
+([ADR-0049](docs/docs/adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
+Both routes stay for one release, marked `deprecated`, and answer `410 Gone`
+for any body: `charge-forecast-moved` names warehouse-planning's
+`PUT /workload-forecasts/{site_id}/{path_id}`, `shift-plan-moved` names
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}`. Nothing is recorded or
+published.
 
 ### `POST /paths/{pathId}/work-units` — EnqueueWorkUnit
 
-Every `POST` in this API (`/charge`, `/plan`, `/work-units`, `/work-releases`,
-`/completions`) requires an `Idempotency-Key` header (1-128 printable ASCII,
+Every `POST` in this API (`/work-units`, `/work-releases`,
+`/rebalance-decisions`, `/completions`, and the two always-`410` routes)
+requires an `Idempotency-Key` header (1-128 printable ASCII,
 ADR-0022 / ADR-0047). The key is global: a retry with the same key and the
 same request (method + path + body) returns the identical stored answer with
 `Idempotency-Replayed: true` and has its effect once. The same key with a
@@ -352,8 +344,10 @@ curl localhost:8080/paths/pick-a/labor-plan-view
 ```
 
 The latest labor plan Workforce Management reported for this path, projected
-from its `ShiftPlanCommitted` integration event. See **Integration** below —
-this is a separate read model from this service's own `ShiftPlan` aggregate.
+from its `ShiftPlanCommitted` integration event. See **Integration** below.
+This context holds no shift plan of its own any more (ADR-0049). The
+`driftHeads` / `driftDetectedAt` fields are deprecated: they only read back a
+drift recorded before ADR-0049, until the path's next observed plan clears it.
 `404` if nothing has been observed yet.
 
 ### `GET /work-units?reference=` — GetWorkUnitsByReference
@@ -462,11 +456,11 @@ with real HTTP calls (`features_test.go` at the repo root).
 go test ./... -run TestFeatures -v
 ```
 
-Scenarios (`features/*.feature`) cover charge forecasts, committing a
-ShiftPlan against installed-station capacity, CPT-priority Release with
-at-most-once handout, work-pool capacity, RecordCompletion plus the backlog
-telemetry read model, the read-model views, labor-plan reconciliation, and
-flow-balancing rebalance decisions. CI runs them in the `bdd` job.
+Scenarios (`features/*.feature`) cover the two moved planning routes (always
+`410`, ADR-0049), CPT-priority Release with at-most-once handout, work-pool
+capacity, RecordCompletion plus the backlog telemetry read model, the
+read-model views, and flow-balancing rebalance decisions. CI runs them in the
+`bdd` job.
 
 ## Integration
 
@@ -525,14 +519,12 @@ Topic `warehouse.work-planning.events`:
   `kafkapathcapacity` adapter (its `PathCapacity` port, keyed by path and
   cutoff instant) and by network-fulfillment's `pathcapacitycache` adapter —
   see [ADR-0018](./docs/docs/adr/0018-path-capacity-changed.md).
-- **`PathPlanDriftDetected`** — published when this service's committed
-  `PathPlan` and Workforce's `LaborPlanObserved` disagree on planned heads,
-  whichever side commits second. `data`:
-  `{"path_id","wes_planned_heads","observed_planned_heads","drift_heads","observed_at"}`
-  — see [ADR-0019](./docs/docs/adr/0019-labor-plan-committed-shift-plan-reconciliation.md).
 
 The other domain events are published to the same topic with a
 `{"path_id", ...}` payload; no other service consumes them today.
+`ChargeForecastReceived`, `plan.ShiftPlanCommitted` and `PathPlanDriftDetected`
+are retired (ADR-0049); warehouse-planning publishes the labour plan and its
+drift (`LabourPlanDriftDetected`) now.
 
 Events are always written to the transactional outbox and relayed here;
 `KAFKA_BROKERS` is mandatory and `EVENT_PUBLISHER` accepts only `kafka`
@@ -543,9 +535,9 @@ Events are always written to the transactional outbox and relayed here;
 - Topic `warehouse.workforce.events`, event type `ShiftPlanCommitted` —
   `data`: `{"building_id","shift_id","path_id","planned_heads","planned_rate","planned_hours"}`.
   Projected into the `LaborPlanObserved` read model
-  (`GET /paths/{pathId}/labor-plan-view`) — **not** fed into this service's own
-  `ShiftPlan`/`CommitShiftPlan`, which is a different model in a different
-  bounded context that happens to share the term "ShiftPlan".
+  (`GET /paths/{pathId}/labor-plan-view`), a pure projection: this context
+  holds no shift plan of its own since ADR-0049 (the plan is
+  warehouse-planning's).
 - Topic `warehouse.inventory.events`, event types `StockReserved` and
   `ReservationRevoked` — `data` for both: `{"sku","quantity","demand_ref"}`.
   `StockReserved` decrements, `ReservationRevoked` increments, the
@@ -576,6 +568,34 @@ Events are always written to the transactional outbox and relayed here;
   `warehouse.work-planning.events` remain the only observable signal of
   downstream progress, same as for every other `EnqueueWorkUnit` caller.
 
+- Topic `warehouse.network-inventory-planning.events`, event type
+  `WorkDemandReleased` — `data`: `{"demand_id","work_kind","transfer_ref",
+  "path_id","site_id","cpt","sku","quantity"}`, `work_kind` one of
+  `TRANSFER_PICK`, `TRANSFER_DISPATCH`, `TRANSFER_ARRIVAL`. `ApplyWorkDemandReleased`
+  validates `path_id` against the process-path catalogue and `work_kind` against
+  those legs, then calls `EnqueueWorkUnit` once with `work_unit_id = demand_id`;
+  a replay of the same demand is a benign no-op
+  ([ADR-0033](./docs/docs/adr/0033-transfer-work-demand-choreography.md)).
+- Topic `warehouse.slotting-optimization.events`, event type `SlotPlanApproved`
+  (`SlotPlanGenerated` and `SlotPlanRejected` are ignored).
+  `ApplySlotPlanApproved` plans one `RELOCATE` work unit per move on path
+  `RELOCATE` (id `<plan_id>-move-<move_seq>`), cancels the site's older plans'
+  unreleased moves, and holds a move that must wait for another move of the same
+  plan out of the pool until that move completes
+  ([ADR-0040](./docs/docs/adr/0040-slot-plan-relocation-work.md)).
+- Topic `warehouse.pick-face-replenishment.events`, event types
+  `ReplenishmentRequested` and `ReplenishmentCancelled` (`ReplenishmentCompleted`
+  is ignored). `ApplyReplenishmentRequested` plans one `REPLENISH` work unit per
+  request on path `REPLENISH` (id `replenish-<request_id>`);
+  `ApplyReplenishmentCancelled` cancels it while it is still Pending
+  ([ADR-0042](./docs/docs/adr/0042-pick-face-replenishment-work.md)).
+- Topic `warehouse.product-master.events`, event types `ProductClassified` and
+  `ProductPackLevelDeclared` / `ProductPackLevelRetired` /
+  `ProductPackLevelMeasured`. They create no work: `ObserveProductClassification`
+  and `ObservePackLevel` keep local copies that release and the pack-aware
+  estimates read ([ADR-0035](./docs/docs/adr/0035-product-classification-local-copy.md),
+  [ADR-0045](./docs/docs/adr/0045-pack-aware-work-units.md)).
+
 Setting `KAFKA_BROKERS` starts this consumer automatically, independent of
 `EVENT_PUBLISHER`, under the consumer group `KAFKA_CONSUMER_GROUP` (default
 `wes-work-planning`).
@@ -597,11 +617,14 @@ Kafka is at-least-once. Every consumed event's CloudEvents `id` is recorded
 in `processed_events` (Postgres) / an in-memory set in the SAME atomic scope
 as its effect ([ADR-0028](./docs/docs/adr/0028-processed-event-mark-atomic-with-handling.md));
 a redelivered `id` is skipped (and still acked) rather than re-applied, and a
-failed effect rolls the mark back so the retry re-applies it. All four
+failed effect rolls the mark back so the retry re-applies it. All ten
 inbound-event use cases share one helper, `onceAtomically`
 (`internal/application/usecases/apply_integration_event.go`):
 `ObserveLaborPlan`, `ObserveInventoryChange`, `ApplyTaskCompleted` (wraps
-`RecordCompletion`) and `ApplyOrderAllocated` (wraps `EnqueueWorkUnit`).
+`RecordCompletion`), `ObserveProductClassification`, `ObservePackLevel`,
+`ApplyOrderAllocated` and `ApplyWorkDemandReleased` (both wrap `EnqueueWorkUnit`),
+`ApplySlotPlanApproved`, `ApplyReplenishmentRequested` and
+`ApplyReplenishmentCancelled`.
 A handler error is retried in-process (3 attempts) and then dead-lettered to
 `<topic>.dlq`. `RecordCompletion`'s own domain-level double-complete
 rejection is a second, independent safety net, not a substitute for it.
@@ -733,11 +756,10 @@ log line comes out carrying that same `trace_id`.
 
 ## Invariants
 
-Three aggregate invariants are enforced in the domain layer and each has a
-failing-path unit test:
+Two aggregate invariants are enforced in the domain layer and each has a
+failing-path unit test (the `plannedHeads <= installedStations` invariant of
+the former `PathPlan` moved to warehouse-planning's `LabourPlan`, ADR-0049):
 
-- **ShiftPlan/PathPlan**: `plannedHeads <= installedStations`
-  (`internal/domain/plan/path_plan_test.go`).
 - **WorkUnit**: assigned/released at most once, cannot complete twice, and
   cannot complete before release (`internal/domain/workunit/work_unit_test.go`).
 - **WorkPool**: at-most-once handout per entry, and a release-fed pool's WIP
@@ -757,7 +779,7 @@ or synthetic.
 Full documentation site: **<https://iqvo.github.io/wes-work-planning/>**
 
 It covers the business context and ubiquitous language, the DDD model
-(subdomain classification, all eleven domain events, read models) and the
+(subdomain classification, all eight domain events, read models) and the
 full ddd-crew artifact pack (core domain chart, bounded context canvas,
 aggregate design canvas, domain message flow, EventStorming, UML class, ER
 and sequence diagrams — see `docs/docs/ddd/ddd-artifacts.md`), an API

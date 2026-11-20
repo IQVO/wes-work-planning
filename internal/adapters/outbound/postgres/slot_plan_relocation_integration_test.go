@@ -29,19 +29,19 @@ var relocApprovedAt = time.Date(2026, 10, 15, 8, 0, 0, 0, time.UTC)
 
 func relocationUnitFor(t *testing.T, id, site string, seq int, kind, from, to, blockedBy string) *workunit.WorkUnit {
 	t.Helper()
-	unit, err := workunit.NewWorkUnit(id, mustPath(t, "RELOCATE"), shared.NewCPT(relocApprovedAt.Add(24*time.Hour)), "plan-pg")
-	if err != nil {
-		t.Fatalf("new work unit: %v", err)
-	}
 	move, err := workunit.NewRelocationMove("plan-pg", seq, kind, from, to)
 	if err != nil {
 		t.Fatalf("new move: %v", err)
 	}
-	unit.SetWorkKind(workunit.WorkKindRelocate)
-	unit.SetSiteId(site)
-	unit.SetSKU("SKU-PG")
-	unit.SetRelocation(move)
-	unit.SetBlockedBy(blockedBy)
+	unit, err := workunit.NewWorkUnit(id, mustPath(t, "RELOCATE"), shared.NewCPT(relocApprovedAt.Add(24*time.Hour)), "plan-pg",
+		workunit.WithWorkKind(workunit.WorkKindRelocate),
+		workunit.WithSiteId(site),
+		workunit.WithSKU("SKU-PG"),
+		workunit.WithRelocation(move),
+		workunit.WithBlockedBy(blockedBy))
+	if err != nil {
+		t.Fatalf("new work unit: %v", err)
+	}
 	return unit
 }
 

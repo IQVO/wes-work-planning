@@ -4,47 +4,34 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/postgres"
-	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/telemetry"
-	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/traveldistance"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/bootretry"
-	"github.com/claudioed/wes-work-planning/internal/resilience"
 )
 
 // repositories groups the Postgres persistence adapters. pgPool and uow are
 // always set (DATABASE_URL is mandatory, ADR-0044): every use case runs Save +
-// Publish in one transaction with the outbox rows (ADR-0014).
+// Publish in one transaction with the outbox rows (ADR-0014). The charge and
+// plan tables are kept but no longer written (ADR-0049 decision 4).
 type repositories struct {
-	charges        ports.ChargeRepo
-	plans          ports.PlanRepo
 	pools          ports.WorkPoolRepo
 	workUnits      ports.WorkUnitRepo
 	laborPlanViews ports.LaborPlanViewRepo
 	inventoryViews ports.InventoryViewRepo
 	processedEvts  ports.ProcessedEventRepo
 	// relocations and slotPlans back ADR-0040's slot-plan relocation work:
-	// the same work-unit adapter answers the RELOCATE finders.
+	// the same work-unit adapter answers the RELOCATE finders. pickFaces
+	// backs ADR-0048's forward-pick-face lookup the same way.
 	relocations ports.RelocationWorkRepo
 	slotPlans   ports.SlotPlanRepo
+	pickFaces   ports.ForwardPickFaceLookup
 	pgPool      *pgxpool.Pool
 	uow         ports.UnitOfWork
-}
-
-// travelDistanceLookup wires the facility-layout travel-distance ACL
-// behind the shared circuit-breaker gauge (ADR-0023).
-func (r repositories) travelDistanceLookup(logger *slog.Logger) ports.TravelDistanceLookup {
-	breakerMetrics, err := telemetry.NewCircuitBreakerMetrics()
-	if err != nil {
-		logger.Warn("circuit breaker metrics not registered; continuing without them", "error", err)
-	}
-	return buildTravelDistanceLookup(getenv("TRAVEL_DISTANCE_MODE", "permissive"), os.Getenv("FACILITY_LAYOUT_BASE_URL"), breakerMetrics, logger)
 }
 
 // wireRepositories opens the Postgres outbound side; DATABASE_URL is
@@ -121,8 +108,6 @@ func postgresRepositories(databaseURL, migrationsDatabaseURL, migrationsPath str
 	}
 	workUnits := postgres.NewWorkUnitRepo(pool)
 	return repositories{
-		charges:        postgres.NewChargeRepo(pool),
-		plans:          postgres.NewPlanRepo(pool),
 		pools:          postgres.NewWorkPoolRepo(pool),
 		workUnits:      workUnits,
 		laborPlanViews: postgres.NewLaborPlanViewRepo(pool),
@@ -130,23 +115,8 @@ func postgresRepositories(databaseURL, migrationsDatabaseURL, migrationsPath str
 		processedEvts:  postgres.NewProcessedEventRepo(pool),
 		relocations:    workUnits,
 		slotPlans:      postgres.NewSlotPlanRepo(pool),
+		pickFaces:      workUnits,
 		pgPool:         pool,
 		uow:            postgres.NewUnitOfWork(pool),
 	}, nil
-}
-
-// buildTravelDistanceLookup selects the outbound ports.TravelDistanceLookup
-// adapter via TRAVEL_DISTANCE_MODE (http|permissive), defaulting to
-// "permissive" so existing tests, CI and deployments that do not set the
-// env var are unaffected (see ADR-0017, Phase B3).
-// "http" requires FACILITY_LAYOUT_BASE_URL. In "http" mode the client is
-// wrapped with a per-dependency circuit breaker + jittered retry
-// (ADR-0023); recorder may be nil (breaker metrics unavailable), a
-// documented no-op.
-func buildTravelDistanceLookup(mode, facilityLayoutBaseURL string, recorder resilience.StateRecorder, logger *slog.Logger) ports.TravelDistanceLookup {
-	if !strings.EqualFold(mode, "http") {
-		return traveldistance.NewPermissiveLookup()
-	}
-	logger.Info("travel distance lookup configured", "mode", "http", "facility_layout_base_url", facilityLayoutBaseURL)
-	return traveldistance.NewBreakerClient(traveldistance.NewClient(facilityLayoutBaseURL, nil), recorder)
 }

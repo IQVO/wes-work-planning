@@ -27,7 +27,7 @@ plus `confluentinc/confluent-local:7.6.1` as a single-node Kafka that advertises
 
 | Target | Does |
 |---|---|
-| `make build` | `go build ./...` (all four binaries) |
+| `make build` | `go build ./...` (all five binaries) |
 | `make test` | unit + httptest + BDD + MCP evals, `-race` |
 | `make check` | `fmt-check vet build lint test` (what the pre-push hook runs) |
 | `make integration` | testcontainers suites (needs Docker only) |
@@ -94,27 +94,24 @@ running, start the compose Kafka on another port and point `KAFKA_BROKERS` at it
 | `PATH_CATALOGUE_FILE` | `/etc/wes-work-planning/process-paths.yaml` | Catalogue YAML for `PATH_CATALOGUE_SOURCE=file` |
 | `MIGRATIONS_PATH` | `migrations` | OLTP migrations applied on start |
 | `PRODUCT_CLASSIFICATION_MODE` / `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | `kafka` / **required** | The local copy of product-master's `ProductClassified` events is always kept and read for the hazmat/fragile hints; `permissive`, `off`, `http` and any other mode are rejected at boot ([ADR-0035](../adr/0035-product-classification-local-copy.md), [ADR-0044](../adr/0044-postgres-and-kafka-are-the-only-runtime.md)) |
+| `PACK_VIEW_CONSUMER_GROUP` | **required** | Group of the always-on pack-level consumer (`ProductPackLevelDeclared` / `Retired` / `Measured` into `product_pack_level_copy`, [ADR-0045](../adr/0045-pack-aware-work-units.md)); must differ from `PRODUCT_CLASSIFICATION_CONSUMER_GROUP` |
 | `REPLENISHMENT_MODE` / `REPLENISHMENT_CONSUMER_GROUP` | `kafka` / **required** | The pick-face-replenishment consumer is always on; `permissive`, `off` and any other mode are rejected at boot ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) |
-| `TRAVEL_DISTANCE_MODE` / `FACILITY_LAYOUT_BASE_URL` | `permissive` / *(unset)* | REST sync edge to facility-layout (not changed by ADR-0044): `http` enables the travel-distance lookup ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) |
 
-Every variable of all four binaries, with defaults and source files, is on
-[Configuration](../operations/configuration.md).
+Every variable of all five binaries, with defaults and source files, is on
+[Configuration](../operations/configuration.md). (`TRAVEL_DISTANCE_MODE` and
+`FACILITY_LAYOUT_BASE_URL` are gone with the facility-layout lookup,
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md).)
 
 ## A full loop with curl
 
+The shift's charge forecast and labour plan are sent to warehouse-planning
+(`PUT /workload-forecasts/{site_id}/{path_id}`,
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}`), not here: this
+service's `POST /paths/{pathId}/charge` and `/plan` answer `410` (ADR-0049).
+The loop below starts at the work.
+
 ```sh
-# 1 — the charge: 900 units due by 18:00, 500 more by 21:00
-curl -s -X POST localhost:8080/paths/pick-a/charge \
-  -H 'Content-Type: application/json' \
-  -d '{"buckets":[{"cpt":"2026-08-23T18:00:00Z","quantity":900},
-                  {"cpt":"2026-08-23T21:00:00Z","quantity":500}]}'
-
-# 2 — the plan: 6 heads on 8 installed stations, 95 units/h, 8 h
-curl -s -X POST localhost:8080/paths/pick-a/plan \
-  -H 'Content-Type: application/json' \
-  -d '{"plannedHeads":6,"installedStations":8,"rateUnitsPerHour":95,"hours":8}'
-
-# 3 — enqueue two work units with different CPTs
+# 1 — enqueue two work units with different CPTs
 #     (the Idempotency-Key header is required: a fresh UUID per request)
 curl -s -X POST localhost:8080/paths/pick-a/work-units \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
@@ -123,14 +120,14 @@ curl -s -X POST localhost:8080/paths/pick-a/work-units \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
   -d '{"workUnitId":"wu-2","cpt":"2026-08-23T18:00:00Z","reference":"order-78/line-1"}'
 
-# 4 — release: returns wu-2, the earlier CPT, regardless of insert order
+# 2 — release: returns wu-2, the earlier CPT, regardless of insert order
 curl -s -X POST localhost:8080/paths/pick-a/work-releases -H "Idempotency-Key: $(uuidgen)"
 
-# 5 — telemetry, then the rebalance recommendation
+# 3 — telemetry, then the rebalance recommendation
 curl -s localhost:8080/paths/pick-a/telemetry
 curl -s -X POST localhost:8080/paths/pick-a/rebalance-decisions -H "Idempotency-Key: $(uuidgen)"
 
-# 6 — complete it
+# 4 — complete it
 curl -s -X POST localhost:8080/work-units/wu-2/completions -H "Idempotency-Key: $(uuidgen)"
 ```
 

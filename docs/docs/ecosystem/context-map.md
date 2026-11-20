@@ -27,12 +27,13 @@ flowchart LR
     INV["<b>inventory-storage</b><br/>WMS tier, Core"]
     OM["<b>order-management</b><br/>Generic/Supporting"]
     PPM["<b>process-path-management</b><br/>Generic"]
-    FL["<b>facility-layout</b><br/>Generic"]
     WP["<b>wes-work-planning</b><br/>WES tier, Core<br/><i>the conductor</i>"]
     FE["<b>fulfillment-execution</b><br/>Core"]
     NF["<b>network-fulfillment</b><br/>Supporting"]
     PM["<b>product-master</b><br/>WMS tier, Supporting"]
     SO["<b>slotting-optimization</b><br/>WMS tier, Supporting"]
+    NIP["<b>network-inventory-planning</b>"]
+    PFR["<b>pick-face-replenishment</b>"]
     AG["<b>warehouse-ops-agent</b>"]
 
     WM -- "U to D, C/S, OHS+PL to ACL<br/>Kafka ShiftPlanCommitted" --> WP
@@ -41,27 +42,29 @@ flowchart LR
     PPM -- "U to D, OHS+PL to CF<br/>Kafka ProcessPath events or YAML file" --> WP
     PM -- "U to D, PL to local copy<br/>Kafka ProductClassified" --> WP
     SO -- "U to D, C/S, OHS+PL to ACL<br/>Kafka SlotPlanApproved" --> WP
+    NIP -- "U to D, C/S, OHS+PL to ACL<br/>Kafka WorkDemandReleased" --> WP
+    PFR -- "U to D, C/S, OHS+PL to ACL<br/>Kafka ReplenishmentRequested, ReplenishmentCancelled" --> WP
     FE -- "U to D, C/S feedback edge, OHS+PL to ACL<br/>Kafka TaskCompleted" --> WP
     WP -- "U to D, C/S, OHS+PL<br/>Kafka WorkReleased" --> FE
     WP -- "U to D, C/S, OHS+PL<br/>Kafka PathCapacityChanged" --> OM
     WP -- "U to D, OHS+PL to CF<br/>Kafka PathCapacityChanged" --> NF
-    FL -. "U to D, OHS to CF<br/>REST GET /distance" .-> WP
     WP -. "U to D, OHS<br/>REST and MCP" .-> AG
 
     style WP fill:#2e6da4,color:#ffffff,stroke:#1b4368,stroke-width:3px
 ```
 
 Solid edges are Kafka (CloudEvents 1.0); dashed edges are synchronous calls.
-Arrows point **from upstream to downstream** — so the REST lookup points
-*into* this context even though it is the caller, because facility-layout
-owns the facts.
+Arrows point **from upstream to downstream**. The facility-layout
+travel-distance lookup is gone with the shift plan
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)),
+so this context makes no outbound synchronous call.
 
 Source: `internal/adapters/inbound/kafka/consumer.go`,
+`internal/adapters/inbound/kafka/pack_level_consumer.go`,
 `internal/adapters/inbound/kafka/product_classification_consumer.go`,
 `internal/adapters/outbound/kafka/publisher.go`,
 `internal/adapters/outbound/kafkacatalog/consumer.go`,
-`internal/adapters/outbound/productclassificationcopy/`,
-`internal/adapters/outbound/traveldistance/client.go`, and each sibling's
+`internal/adapters/outbound/productclassificationcopy/`, and each sibling's
 consumer file listed below. Omits: the `warehouse-console` shell, which mounts
 this repo's `web/` micro-frontend and calls the same REST API, and this
 service's own analytics topic `warehouse.wes.analytics`.
@@ -72,22 +75,23 @@ service's own analytics topic `warehouse.wes.analytics`.
 |---|---|---|---|---|---|
 | workforce-management | they U, we D | C/S; their OHS+PL, our ACL | Kafka `warehouse.workforce.events`, `com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted` | **Live** | ours: `internal/adapters/inbound/kafka/consumer.go` (`shiftPlanCommittedData`) |
 | inventory-storage (events) | they U, we D | C/S; their OHS+PL, our ACL | Kafka `warehouse.inventory.events`, `com.warehouse.wms.inventory-storage.reservation.StockReserved` / `ReservationRevoked` | **Live** (projection feeds no decision yet) | ours: `consumer.go` (`inventoryEventData`) |
-| product-master | they U, we D | their PL, our local copy | Kafka `warehouse.product-master.events`, `com.warehouse.wms.product-master.product.ProductClassified` (version-guarded copy, read at release) | **Wired**, always on (`PRODUCT_CLASSIFICATION_MODE` defaults to `kafka`; `permissive`/`off` are boot errors, ADR-0044) | `internal/adapters/inbound/kafka/product_classification_consumer.go`, `internal/adapters/outbound/productclassificationcopy/` ([ADR-0035](../adr/0035-product-classification-local-copy.md); replaces the retired inventory-storage REST lookup of [ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md)) |
+| product-master | they U, we D | their PL, our local copy | Kafka `warehouse.product-master.events`, `com.warehouse.wms.product-master.product.ProductClassified` (version-guarded copy, read at release) and `...ProductPackLevelDeclared` / `...ProductPackLevelRetired` / `...ProductPackLevelMeasured` (pack-level copy keyed by GTIN, own group `PACK_VIEW_CONSUMER_GROUP`) | **Wired**, always on (`PRODUCT_CLASSIFICATION_MODE` defaults to `kafka`; `permissive`/`off` are boot errors, ADR-0044; the pack-level consumer needs `PACK_VIEW_CONSUMER_GROUP`) | `internal/adapters/inbound/kafka/product_classification_consumer.go`, `internal/adapters/inbound/kafka/pack_level_consumer.go`, `internal/adapters/outbound/productclassificationcopy/` ([ADR-0035](../adr/0035-product-classification-local-copy.md), [ADR-0045](../adr/0045-pack-aware-work-units.md); replaces the retired inventory-storage REST lookup of [ADR-0009](../adr/0009-product-classification-propagation-to-work-released.md)) |
 | order-management (demand) | they U, we D | C/S; their OHS+PL, our ACL | Kafka `warehouse.order-management.events`, `com.warehouse.wes.order-management.order.OrderAllocated` / `OrderPartiallyAllocated` | **Live** | ours: `consumer.go` (`orderAllocatedData`), `usecases.ApplyOrderAllocated` ([ADR-0031](../adr/0031-order-allocated-choreography.md)) |
 | order-management (capacity) | we U, they D | C/S; our OHS+PL | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.workpool.PathCapacityChanged` | **Live** | theirs: `internal/adapters/outbound/kafkapathcapacity/consumer.go` ([ADR-0018](../adr/0018-path-capacity-changed.md)) |
 | slotting-optimization | they U, we D | C/S; their OHS+PL, our ACL (`slotPlanApprovedData` → `relocation.Plan`) | Kafka `warehouse.slotting-optimization.events`, `com.warehouse.wms.slotting-optimization.slotplan.SlotPlanApproved` | **Wired** (fleet decision E1): each move becomes a RELOCATE work unit released to fulfillment-execution's RELOCATE task | ours: `consumer.go` (`handleSlottingEvent`), `usecases.ApplySlotPlanApproved` ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) |
+| network-inventory-planning | they U, we D | C/S; their OHS+PL, our ACL (`workDemandReleasedData` → `ApplyWorkDemandReleasedRequest`) | Kafka `warehouse.network-inventory-planning.events`, `com.warehouse.wes.network-inventory-planning.workdemand.WorkDemandReleased` | **Wired**: each transfer leg becomes one transfer-referenced work unit, id = `demand_id` | ours: `consumer_handlers.go` (`handleNetworkDemandEvent`), `usecases.ApplyWorkDemandReleased` ([ADR-0033](../adr/0033-transfer-work-demand-choreography.md)); theirs: `apis/asyncapi.yaml` (`sendWorkDemandReleased`) |
 | pick-face-replenishment | they U, we D | C/S; their OHS+PL, our ACL (`replenishmentRequestedData` → `workunit.ReplenishmentMove`) | Kafka `warehouse.pick-face-replenishment.events`, `com.warehouse.wms.pick-face-replenishment.replenishment.ReplenishmentRequested` / `...ReplenishmentCancelled` | **Wired**, always on (`REPLENISHMENT_MODE` defaults to `kafka`; `permissive`/`off` are boot errors, ADR-0044): each request becomes ONE REPLENISH work unit released to fulfillment-execution's REPLENISH task | ours: `replenishment_consumer.go`, `usecases.ApplyReplenishmentRequested` / `ApplyReplenishmentCancelled` ([ADR-0042](../adr/0042-pick-face-replenishment-work.md)) |
 | process-path-management | they U, we D | their OHS+PL, we CF | Kafka `warehouse.process-path-management.events`, `com.warehouse.wes.process-path-management.processpath.*`; or a YAML file | **Live** with `PATH_CATALOGUE_SOURCE=kafka`; file source is the default | `internal/adapters/outbound/kafkacatalog/`, `internal/adapters/outbound/filecatalog/` ([ADR-0012](../adr/0012-process-path-catalogue-validation.md), [ADR-0030](../adr/0030-kafka-sourced-path-catalogue.md)) |
-| facility-layout | they U, we D | their OHS, we CF | REST `GET /distance?from=&to=` at shift-plan commit | **Wired**, default `TRAVEL_DISTANCE_MODE=permissive` never calls out | `internal/adapters/outbound/traveldistance/` ([ADR-0017](../adr/0017-travel-distance-lookup-on-commit-shift-plan.md)) |
 | fulfillment-execution (release) | we U, they D | C/S; our OHS+PL | Kafka `warehouse.work-planning.events`, `com.warehouse.wes.work-planning.workunit.WorkReleased` (RELOCATE units add `relocation`, [ADR-0040](../adr/0040-slot-plan-relocation-work.md)) | **Live** | theirs: `internal/adapters/inbound/kafka/consumer.go`; RELOCATE task: their ADR 0047 |
 | fulfillment-execution (feedback) | they U, we D | C/S, roles reversed; their OHS+PL, our ACL | Kafka `warehouse.fulfillment.events`, `com.warehouse.wes.fulfillment-execution.task.TaskCompleted` | **Live** | ours: `consumer.go` (`taskCompletedData`), `usecases.ApplyTaskCompleted` |
 | network-fulfillment | we U, they D | our OHS+PL, they CF | Kafka `warehouse.work-planning.events`, `PathCapacityChanged` | **Live** (behind their `CAPABILITY_OFFER_ENABLED`) | theirs: `internal/adapters/outbound/pathcapacitycache/consumer.go` |
 | warehouse-ops-agent | we U, they D | our OHS | REST (`WES_WORK_PLANNING_REST_URL`, reports URL) and MCP (`get_backlog_telemetry`, `get_rebalance_recommendation`) | **Live** | theirs: `internal/config/config.go` |
 | labor-performance | — | **Separate Ways** | none | **Deliberately absent**: does not consume `warehouse.work-planning.events` | `git grep` on its `origin/develop` finds no reference |
-| warehouse-planning | — | **Separate Ways** | none at runtime | **Deliberately absent**: referenced only by its architecture fitness tests | its `internal/architecture/*_test.go` |
+| warehouse-planning | — | **Separate Ways** | none at runtime | **Deliberately absent**: owns the charge forecast (workload forecast), the labour plan and their drift since [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md); our two old planning POSTs answer `410` naming its routes, and no message flows between us | ours: `internal/adapters/inbound/http/handlers_plan.go`; theirs: its ADR 0023 |
+| facility-layout | — | **Separate Ways** | none | **Deliberately absent** since ADR-0049, which removed the commit-time travel-distance lookup | — |
 | any sibling | — | **Not SK, not P** | — | **Deliberately absent** | no shared types, schemas or tables; envelope duplicated by agreement ([ADR-0027](../adr/0027-cloudevents-mandatory-event-envelope.md)) |
 
-Nine further event types on `warehouse.work-planning.events` (everything
+Six further event types on `warehouse.work-planning.events` (everything
 except `WorkReleased` and `PathCapacityChanged`) are **published but
 unconsumed** — see [Domain events](../ddd/domain-events.md).
 
@@ -152,13 +156,12 @@ Host Service and its CloudEvents types are *our* Published Language
 `PathCapacityChanged` by path and cutoff. network-fulfillment is a pure
 Conformist: we did nothing for it and do not know it is there.
 
-### facility-layout and process-path-management: Conformist, read-only
+### process-path-management: Conformist, read-only
 
-This context conforms to two Generic contexts without owning or reshaping
-their facts: the travel distance between two location codes, read once at
-commit time, and the process-path catalogue every `pathId` is validated
-against. Travel time, congestion and route choice stay here; geography and
-the catalogue stay there.
+This context conforms to a Generic context without owning or reshaping its
+facts: the process-path catalogue every `pathId` is validated against. The
+catalogue stays there. (facility-layout's travel distance, the other fact it
+once read, was retired with the shift plan, ADR-0049.)
 
 ## Three-tier view
 

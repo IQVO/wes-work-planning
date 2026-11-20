@@ -2,7 +2,7 @@
 id: troubleshooting
 title: Troubleshooting
 sidebar_label: Troubleshooting
-description: Symptom, cause, check and fix for the failure modes visible in the wes-work-planning code — boot failures, migrations, readiness, Kafka consumption and DLQs, outbox lag, HTTP problem types, idempotency keys, circuit breaker, MCP and analytics.
+description: Symptom, cause, check and fix for the failure modes visible in the wes-work-planning code — boot failures, migrations, readiness, Kafka consumption and DLQs, outbox lag, HTTP problem types, idempotency keys, MCP and analytics.
 ---
 
 # Troubleshooting
@@ -54,6 +54,9 @@ problem `type` it produces. Problem types are relative to
 | `SlotPlanApproved older than the site's current plan; recorded, nothing planned` | a plan arrived after a newer one for the same site | INFO only | none |
 | `TaskCompleted for a work unit this context never planned; skipping` | a PACK task fulfillment-execution created itself carries the order id | INFO only | none — expected ([ADR-0028](../adr/0028-processed-event-mark-atomic-with-handling.md)) |
 | Release-fed paths answer `409 wip-limit-reached` for good although fulfillment finishes tasks | completions are not arriving, so WIP slots are never freed (`RecordCompletion` frees them) | is the `warehouse.fulfillment.events` consumer running? lag on that topic? | restore consumption, or complete via `POST /work-units/{id}/completions` |
+| `applying a pack level event failed; retrying the same message` repeating | a transient error the pack-level consumer retries forever (it never skips a decodable `ProductPackLevel*` event) | the `error` field | fix Postgres; the consumer continues by itself |
+| `pack level event is poison, sending to dead-letter topic` | a `ProductPackLevelDeclared`/`Retired`/`Measured` with an invalid GTIN, level, dimension or `version` | the `error` field, the `x-dlq-*` headers on `warehouse.product-master.events.dlq` | fix the producer; the message was committed past |
+| Boot error `PACK_VIEW_CONSUMER_GROUP is required` or `must differ from PRODUCT_CLASSIFICATION_CONSUMER_GROUP` | the pack-level consumer is always on and needs its own stable group | the api Deployment's env (`config.packViewConsumerGroup`) | set a group distinct from the classification group ([ADR-0045](../adr/0045-pack-aware-work-units.md)) |
 | `applying ProductClassified failed; retrying the same message` repeating | a transient error the classification consumer retries forever (it never skips a decodable event) | the `error` field | fix Postgres; the consumer continues by itself |
 | `WorkReleased` never carries `required_capabilities`/`fragile` | the copy has no row for the SKU yet (the `ProductClassified` consumer has not seen it, or the SKU is not hazmat/fragile) | `SELECT * FROM product_classification_copy WHERE sku = '...'` | check the consumer lag on `warehouse.product-master.events`; the MCP server reads the same table |
 
@@ -71,11 +74,11 @@ problem `type` it produces. Problem types are relative to
 
 | Status / `type` | Cause | Fix |
 |---|---|---|
-| `400 unknown-path-id` | `pathId` not in the process-path catalogue. Checked on the routes that can create an aggregate: `POST .../charge`, `.../plan`, `.../work-units`, `PUT .../pool` | use a declared path or add it to the catalogue |
+| `400 unknown-path-id` | `pathId` not in the process-path catalogue. Checked on the routes that can create an aggregate: `POST .../work-units`, `PUT .../pool` | use a declared path or add it to the catalogue |
 | `404 not-found` on `work-releases`, `telemetry`, `rebalance-decisions` | no `WorkPool` exists for that path yet (created by the first enqueue or by `PUT /paths/{pathId}/pool`) | enqueue or configure first |
 | `404 not-found` on `labor-plan-view` / `inventory-view` | no event observed yet for that path/SKU | wait for the upstream event or check consumption |
-| `400 heads-exceed-installed-stations` | `plannedHeads > installedStations` | fix the plan |
-| `400 malformed-request-body` | invalid JSON, a missing required field (`cpt`, `plannedHeads`, `installedStations`, `wipLimit`, bucket `cpt`/`quantity`) or an empty/invalid `cutoffAt` | fix the request |
+| `410 charge-forecast-moved` / `410 shift-plan-moved` | `POST .../charge` or `.../plan`: the charge forecast and the shift plan moved to warehouse-planning ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)); any body gets the 410 | send `PUT /workload-forecasts/{site_id}/{path_id}` or `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` to warehouse-planning, as the problem detail says |
+| `400 malformed-request-body` | invalid JSON, a missing required field (`cpt`, `wipLimit`) or an empty/invalid `cutoffAt` | fix the request |
 | `400 invalid-line-no` | `lineNo` given but outside 1..2147483647 | omit it or send a valid line |
 | `409 wip-limit-reached` | release-fed pool at its WIP limit | complete work, or raise the limit with `PUT /paths/{pathId}/pool` |
 | `409 work-pool-empty` | nothing pending | enqueue work |
@@ -95,10 +98,10 @@ version column and retry.
 
 ## Sibling lookups
 
-| Symptom | Cause | Check | Fix |
-|---|---|---|---|
-| Committed plans lack `travelDistanceM` | `TRAVEL_DISTANCE_MODE` not `http`, no `fromLocationCode`/`toLocationCode` in the request, an unknown or cross-zone pair, or facility-layout failing — all fail-open | `circuit_breaker_state{dependency="facility-layout"}` | fix facility-layout or `FACILITY_LAYOUT_BASE_URL` |
-| `circuit_breaker_state{dependency="facility-layout"} == 2` | 5 consecutive failures, or more than half of at least 10 requests failed in a 30 s window | facility-layout health | the breaker half-opens after 30 s and lets one probe through |
+This service makes no synchronous call to a sibling. The facility-layout
+travel-distance lookup, and with it the `circuit_breaker_state` series, went
+with the shift plan
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
 
 ## MCP and analytics
 

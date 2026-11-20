@@ -17,8 +17,8 @@ const sidebar: SidebarsConfig = {
         {
           type: "doc",
           id: "api/rest/receive-charge-forecast",
-          label: "Receive a charge forecast for a process path",
-          className: "api-method post",
+          label: "Moved — the charge forecast is warehouse-planning's (always 410)",
+          className: "menu__list-item--deprecated api-method post",
         },
       ],
     },
@@ -33,8 +33,8 @@ const sidebar: SidebarsConfig = {
         {
           type: "doc",
           id: "api/rest/commit-shift-plan",
-          label: "Commit this service's shift plan for a process path",
-          className: "api-method post",
+          label: "Moved — the shift plan is warehouse-planning's (always 410)",
+          className: "menu__list-item--deprecated api-method post",
         },
       ],
     },

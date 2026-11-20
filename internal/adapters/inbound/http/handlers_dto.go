@@ -3,33 +3,9 @@ package http
 import (
 	"fmt"
 
-	"github.com/claudioed/wes-work-planning/internal/domain/charge"
 	"github.com/claudioed/wes-work-planning/internal/domain/laborview"
-	"github.com/claudioed/wes-work-planning/internal/domain/plan"
 	"github.com/claudioed/wes-work-planning/internal/domain/workunit"
 )
-
-func toBucketDTOs(buckets []charge.CPTBucket) []cptBucketDTO {
-	out := make([]cptBucketDTO, len(buckets))
-	for i, b := range buckets {
-		cpt := b.CPT.Time()
-		qty := b.Quantity.Value()
-		out[i] = cptBucketDTO{CPT: &cpt, Quantity: &qty}
-		if b.Load != nil {
-			handles := b.Load.Handles
-			out[i].SKU, out[i].PickUnit, out[i].Handles = b.SKU, b.Load.Unit.String(), &handles
-			if b.Load.CubeKnown {
-				cube := b.Load.CubeMm3
-				out[i].CubeMm3 = &cube
-			}
-			if b.Load.WeightKnown {
-				weight := b.Load.WeightG
-				out[i].WeightG = &weight
-			}
-		}
-	}
-	return out
-}
 
 func toWorkUnitResponseDTO(unit *workunit.WorkUnit) workUnitResponseDTO {
 	return workUnitResponseDTO{
@@ -79,14 +55,6 @@ func toCaseBreakDTO(unit *workunit.WorkUnit) *caseBreakDTO {
 	return &caseBreakDTO{LPN: brk.LPN, LooseBin: brk.LooseBin, PickTaskId: brk.PickTaskId}
 }
 
-// pickUnitOf parses an optional wire pick unit: "" is "not stated".
-func pickUnitOf(raw string) (workunit.PickUnit, error) {
-	if raw == "" {
-		return "", nil
-	}
-	return workunit.ParsePickUnit(raw)
-}
-
 // packAwareOf builds the validated pick plan or case break of an enqueue
 // body, nil/nil for a plain one. Quantity, pickUnit and fromBin belong to a
 // pick, caseBreak to a break; the two never mix and both need a sku.
@@ -134,39 +102,6 @@ func toRelocationDTO(unit *workunit.WorkUnit) *relocationDTO {
 		ToSlot:    move.ToSlot,
 		BlockedBy: unit.BlockedBy(),
 	}
-}
-
-func toShiftPlanResponseDTO(p plan.PathPlan) shiftPlanResponseDTO {
-	dto := shiftPlanResponseDTO{
-		PathId:            p.PathId().String(),
-		PlannedHeads:      p.PlannedHeads().Value(),
-		InstalledStations: p.InstalledStations().Value(),
-		RateUnitsPerHour:  p.Rate().UnitsPerHour(),
-		Hours:             p.Hours(),
-		PlannedThroughput: p.PlannedThroughput(),
-	}
-	if p.TravelDistanceKnown() {
-		metresM := p.TravelDistanceM()
-		estimated := p.TravelDistanceEstimated()
-		dto.TravelDistanceM = &metresM
-		dto.TravelDistanceEstimated = &estimated
-	}
-	if load, ok := p.HandleLoad(); ok {
-		handle := &handleLoadDTO{PickUnit: load.Unit.String()}
-		if load.WeightKnown {
-			weight := load.WeightG
-			handle.WeightG = &weight
-		}
-		if load.CubeKnown {
-			cube := load.CubeMm3
-			handle.CubeMm3 = &cube
-		}
-		if kgM, known := p.CarryKgM(); known {
-			handle.CarryKgM = &kgM
-		}
-		dto.Handle = handle
-	}
-	return dto
 }
 
 func toLaborPlanViewDTO(view laborview.LaborPlanObserved) *laborPlanViewDTO {

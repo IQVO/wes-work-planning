@@ -51,16 +51,8 @@ All type URIs are prefixed
 | `malformed-request-body` | Malformed request body | JSON that does not decode, a missing required field, or a present-but-empty/invalid `cutoffAt` |
 | `reference-required` | Reference query parameter is required | `GET /work-units` without `reference` |
 | `invalid-quantity` | Invalid quantity | negative quantity |
-| `invalid-rate` | Invalid rate | rate ≤ 0 |
-| `invalid-station-count` | Invalid station count | negative station count, or above the int32 range |
 | `invalid-path-id` | Invalid path id | empty `pathId` |
 | `unknown-path-id` | Unrecognized process-path id | a `pathId` no declared process-path prefix matches ([ADR-0012](../adr/0012-process-path-catalogue-validation.md)) |
-| `invalid-hours` | Invalid hours | hours ≤ 0 |
-| `charge-forecast-requires-buckets` | Charge forecast requires at least one CPT bucket | empty `buckets` |
-| `unknown-cpt` | No bucket exists for the given CPT | querying a CPT with no bucket |
-| **`heads-exceed-installed-stations`** | **Planned heads exceed installed stations** | **the `PathPlan` invariant** |
-| `shift-plan-requires-path-plans` | Shift plan requires at least one path plan | empty plan |
-| `planned-throughput-not-finite` | Planned throughput is not finite | `rate × heads × hours` overflows `float64` |
 | `work-unit-id-required` | Work unit id is required | empty id |
 | `work-unit-reference-required` | Work unit reference is required | empty reference |
 | `invalid-line-no` | Invalid line number | `POST /paths/{pathId}/work-units` with a `lineNo` below 1 or above 2147483647 (the 32-bit column limit; [ADR-0036](../adr/0036-work-unit-line-no-on-work-released.md)) |
@@ -72,16 +64,27 @@ All type URIs are prefixed
 | `invalid-limit` | Invalid limit | `GET /work-units` with a `limit` outside 1-500, empty or repeated |
 | `invalid-cursor` | Invalid cursor | `GET /work-units` with a `cursor` that does not decode, or a repeated `cursor` |
 | `unknown-query-parameter` | Unknown query parameter | `GET /work-units` with a query parameter it does not declare (e.g. the retired `after`, `offset`, `nextToken`) |
-| `unknown-pick-unit` | Unknown pick unit | `POST /paths/{pathId}/charge` with a bucket `pickUnit` other than `EACH`/`CASE` ([ADR-0045](../adr/0045-pack-aware-work-units.md)) |
-| `invalid-pick-plan` | Invalid pick plan | `POST /paths/{pathId}/charge` with a bucket `pickUnit` but no `sku` |
-| `invalid-pick-quantity` | Invalid pick quantity | `POST /paths/{pathId}/charge` with a `sku` and a bucket `quantity` below 1 |
+| `unknown-pick-unit` | Unknown pick unit | `POST /paths/{pathId}/work-units` with a `pickUnit` other than `EACH`/`CASE` ([ADR-0045](../adr/0045-pack-aware-work-units.md)) |
+| `invalid-pick-plan` | Invalid pick plan | `POST /paths/{pathId}/work-units` with an incomplete or inconsistent pick: `pickUnit` or `fromBin` without a `quantity`, no `sku`, a `quantity` below 1, both a pick and a case break, or a pick on a path other than the pick path |
+| `invalid-case-break` | Invalid case break | `POST /paths/{pathId}/work-units` with an incomplete `caseBreak`, a `caseBreak` combined with `quantity`/`pickUnit`/`fromBin`, or a case break on a path other than the case-break path |
+| `invalid-pick-quantity` | Invalid pick quantity | the pick-load estimate (`pickload.Estimate`) asked for fewer than 1 each; `POST /paths/{pathId}/work-units` rejects such a quantity first, as `invalid-pick-plan` |
+
+### 410 Gone — the decision moved to another context
+
+| `type` suffix | `title` | Raised by |
+|---|---|---|
+| `charge-forecast-moved` | Charge forecast moved to warehouse-planning | `POST /paths/{pathId}/charge`, for any body. The detail names warehouse-planning's `PUT /workload-forecasts/{site_id}/{path_id}` ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)) |
+| `shift-plan-moved` | Shift plan moved to warehouse-planning | `POST /paths/{pathId}/plan`, for any body. The detail names warehouse-planning's `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` |
+
+Both routes are `deprecated` and stay for one release; nothing is recorded or
+published.
 
 ### 422 Unprocessable Entity
 
 | `type` suffix | `title` | Raised by |
 |---|---|---|
-| `no-active-case-level` | The SKU has no active CASE pack level | `POST /paths/{pathId}/charge` with a bucket `pickUnit` `CASE` for a SKU with no active CASE level in the local pack copy ([ADR-0045](../adr/0045-pack-aware-work-units.md)) |
-| `quantity-not-case-multiple` | Quantity is not a whole number of cases | `POST /paths/{pathId}/charge` with a `CASE` bucket whose `quantity` (eaches) is not a multiple of the units per case |
+| `no-active-case-level` | The SKU has no active CASE pack level | `POST /paths/{pathId}/work-units` with a `CASE` pick for a SKU with no active CASE level in the local pack copy ([ADR-0045](../adr/0045-pack-aware-work-units.md)) |
+| `quantity-not-case-multiple` | Quantity is not a whole number of cases | `POST /paths/{pathId}/work-units` with a `CASE` pick whose `quantity` (eaches) is not a multiple of the units per case |
 
 ### 409 Conflict — key reuse
 
@@ -110,7 +113,7 @@ zero" are different facts.
 | **`work-unit-already-released`** | Work unit already released | **at most one active assignment** |
 | **`work-unit-already-completed`** | Work unit already completed | **no double-complete** |
 | `work-unit-not-released` | Work unit not released | must be released before completing |
-| `work-unit-cancelled` | Work unit cancelled | a RELOCATE move cancelled by a newer slot plan for its site is never released ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)) |
+| `work-unit-cancelled` | Work unit cancelled | a RELOCATE move cancelled by a newer slot plan for its site is never released ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)); releasing it or completing it (`POST /work-units/{id}/completions`) is refused with this slug, never `work-unit-not-released` |
 | `concurrent-modification` | The work pool was modified concurrently; retry the request | optimistic-concurrency retry budget (12 attempts) exhausted on a `WorkPool` save ([ADR-0029](../adr/0029-work-pool-optimistic-concurrency.md)) |
 
 `409` is the right code here because these are **state conflicts**, not input

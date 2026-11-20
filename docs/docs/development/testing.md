@@ -8,7 +8,7 @@ description: The test pyramid as it exists in wes-work-planning — unit, httpte
 # Testing
 
 Every layer below is a real suite in this repository; counts were taken on
-`develop` (the BDD wave of PR #165 is already merged there).
+`develop` (the documentation-derived BDD wave, PR #279, is merged there).
 
 ```mermaid
 flowchart TB
@@ -18,7 +18,7 @@ flowchart TB
         MUT["Mutation (gremlins v0.6.0)<br/>efficacy and mutant-coverage thresholds 99 %"]
     end
     subgraph mid["Acceptance — in-process, no I/O"]
-        BDD["BDD (godog)<br/>12 features, 104 scenarios"]
+        BDD["BDD (godog)<br/>17 features, 227 scenarios"]
         EVAL["MCP evals<br/>17 godog scenarios + conformance/governance"]
         ARCH["Architecture fitness tests<br/>12 tests in internal/architecture"]
     end
@@ -87,23 +87,47 @@ pending step fails) against the real use cases wired to in-memory test doubles.
 
 | Feature file | Scenario headings | Executed scenarios |
 |---|---|---|
-| `charge_forecast.feature` | 3 | 3 |
 | `completion_telemetry.feature` | 2 | 2 |
 | `consumed_events.feature` | 15 | 17 |
-| `labor_plan_reconciliation.feature` | 4 | 4 |
+| `consumed_rules.feature` | 10 | 16 |
+| `plan_and_work_unit_rules.feature` | 9 | 24 |
+| `planning_moved.feature` | 3 | 9 |
 | `pool_configuration.feature` | 15 | 17 |
 | `read_model_views.feature` | 8 | 8 |
 | `rebalance.feature` | 2 | 2 |
-| `request_validation_and_probes.feature` | 14 | 28 |
-| `shift_plan.feature` | 2 | 2 |
+| `relocation_rules.feature` | 18 | 26 |
+| `request_validation_and_probes.feature` | 5 | 5 |
+| `slot_plan_relocation.feature` | 5 | 5 |
 | `work_pool_capacity.feature` | 2 | 2 |
+| `work_pool_rules.feature` | 15 | 27 |
 | `work_release.feature` | 2 | 2 |
 | `work_unit_enqueue.feature` | 12 | 17 |
-| **12 files** | **81** | **104** (581 steps) |
+| **15 files** | **123** | **179** (1143 steps) |
+
+`planning_moved.feature` pins the two always-`410` planning routes and the
+pure labour-plan projection
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md));
+the former charge-forecast, shift-plan and labour-plan reconciliation features
+went with the code.
 
 "Executed" counts Scenario Outline example rows; the totals are godog's own
 summary from `go test . -run TestFeatures -count=1 -v`:
-`104 scenarios (104 passed)`, `581 steps (581 passed)`.
+`179 scenarios (179 passed)`, `1143 steps (1143 passed)`. All 123 headings
+(`git grep -c -E "^[[:space:]]*Scenario" -- features`) run. The former
+`@known-bug` scenario in `relocation_rules.feature` (`completeWorkUnit` on a
+cancelled unit: the specification and [ADR-0040](../adr/0040-slot-plan-relocation-work.md)
+say `409 work-unit-cancelled`) now passes because `WorkUnit.Complete` refuses a
+Cancelled unit with `ErrCancelled`. The runner still excludes the tag by
+default (`BDD_TAGS` defaults to `~@known-bug`) so a future known gap can be
+parked there; `BDD_TAGS=@known-bug go test . -run TestFeatures -count=1` now
+selects no scenario.
+
+The `*_rules.feature` files (`consumed_rules`, `plan_and_work_unit_rules`,
+`relocation_rules`, `work_pool_rules`) pin the rules written in the
+documentation: the slot-plan relocation rules of ADR-0040, the Work Pool
+invariants, the inbound-event rows of the use-case table and the REST error
+rows with their documented slugs. Their step definitions are in
+`steps_rules_test.go`.
 
 ## MCP evals
 
@@ -152,14 +176,19 @@ go test -tags=integration ./internal/adapters/outbound/postgres/... -run Outbox 
 service against a **real Postgres (`DATABASE_URL`) and a real Kafka
 (`KAFKA_BROKERS`)** on `127.0.0.1:18086` (`CONTRACT_PORT`), waits for
 `/readyz`, then runs
-`st run apis/openapi.yaml --max-examples 100 --workers 4 --exclude-operation-id commitShiftPlan --generation-allow-x00 false`
+`st run apis/openapi.yaml --max-examples 100 --workers 4 --generation-allow-x00 false --exclude-operation-id receiveChargeForecast --exclude-operation-id commitShiftPlan`
 with the `scripts/contract_hooks.py` hook that gives every request a fresh
 `Idempotency-Key` (`CONTRACT_MAX_EXAMPLES` overrides 100). The CI `contract`
 job provides `postgres:16` and `confluentinc/confluent-local:7.6.1` service
 containers (the Kafka one advertises `PLAINTEXT_HOST://localhost:<port>`);
-locally start disposable ones (the commands are in the script header). `commitShiftPlan` is excluded because
-its `plannedHeads <= installedStations` invariant cannot be expressed in
-OpenAPI 3.0.3; it is covered by BDD and unit tests instead. The
+locally start disposable ones (the commands are in the script header).
+`receiveChargeForecast` and `commitShiftPlan` are excluded because both answer
+`410` for every body since
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md),
+so the positive phase would report every accepted schema as rejected; the
+410s are covered by `TestPlanningRoutesAnswer410NamingTheNewOwner` and
+`features/planning_moved.feature`, and both exclusions go with the routes in
+stage E. The
 `/reports/*` routes of `cmd/wes-reports` are specified separately in
 `apis/openapi-reports.yaml` ([ADR-0038](../adr/0038-reports-api-openapi-contract.md))
 and contract-tested in Go, without Schemathesis or a database:

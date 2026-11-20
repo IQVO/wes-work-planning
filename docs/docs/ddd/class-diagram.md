@@ -24,42 +24,6 @@ Stereotypes: `<<AggregateRoot>>`, `<<Entity>>`, `<<ValueObject>>`,
 classDiagram
     direction LR
 
-    class ChargeForecast {
-        <<AggregateRoot>>
-        -PathId pathId
-        -CPTBucket[] buckets
-        -Time receivedAt
-        +NewChargeForecast(pathId, buckets, receivedAt) ChargeForecast
-        +TotalQuantity() Quantity
-        +QuantityForCPT(cpt) Quantity
-    }
-    class CPTBucket {
-        <<ValueObject>>
-        +CPT CPT
-        +Quantity Quantity
-    }
-
-    class ShiftPlan {
-        <<AggregateRoot>>
-        -PathPlan[] pathPlans
-        +NewShiftPlan(pathPlans) ShiftPlan
-        +PathPlan(pathId) PathPlan
-        +TotalHours() float64
-    }
-    class PathPlan {
-        <<Entity>>
-        -PathId pathId
-        -StationCount plannedHeads
-        -StationCount installedStations
-        -Rate rate
-        -float64 hours
-        -float64 travelDistanceM
-        -bool travelDistanceEstimated
-        +NewPathPlan(pathId, heads, stations, rate, hours) PathPlan
-        +PlannedThroughput() float64
-        +SetTravelDistance(metresM, estimated)
-    }
-
     class WorkPool {
         <<AggregateRoot>>
         -PathId pathId
@@ -136,45 +100,32 @@ classDiagram
         -Time at
         +Before(other) bool
     }
-    class Rate {
-        <<ValueObject>>
-        -float64 unitsPerHour
-    }
-    class StationCount {
-        <<ValueObject>>
-        -int value
-        +GreaterThan(other) bool
-    }
     class Quantity {
         <<ValueObject>>
         -int value
         +Add(other) Quantity
     }
 
-    ChargeForecast "1" *-- "1..*" CPTBucket
-    ShiftPlan "1" *-- "1..*" PathPlan
     WorkPool "1" *-- "0..*" poolEntry
     WorkPool --> FeedMode
     poolEntry --> entryState
     WorkUnit --> State
     ReleasePolicy ..> WorkPool : applies to
     poolEntry ..> WorkUnit : refers by workUnitId
-    PathPlan --> StationCount
-    PathPlan --> Rate
-    CPTBucket --> Quantity
-    CPTBucket --> CPT
+    poolEntry --> CPT
     WorkUnit --> PathId
     WorkPool --> PathId
 ```
 
-Source: `internal/domain/charge/forecast.go`, `internal/domain/plan/shift_plan.go`,
-`internal/domain/plan/path_plan.go`, `internal/domain/release/work_pool.go`,
+Source: `internal/domain/release/work_pool.go`,
 `internal/domain/release/release_policy.go`, `internal/domain/workunit/work_unit.go`,
 `internal/domain/shared/*.go`. Omits: read-only accessors (`PathId()`,
 `Mode()`, `Entries()`, ...), `RestoreEntry` / `SetVersion` (repository
-rehydration only), `travelDistanceKnown`, and the `PathId` /
-`CPT` associations of `ChargeForecast`, `PathPlan` and `poolEntry`.
-`releasedAt` / `completedAt` are `*time.Time` (nil until the transition).
+rehydration only), and the associations of
+`Quantity`. `releasedAt` / `completedAt` are `*time.Time` (nil until the
+transition). The `ChargeForecast` and `ShiftPlan`/`PathPlan` aggregates moved
+to warehouse-planning
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
 
 The association between `WorkPool` and `WorkUnit` is **by identity only**:
 the pool's entries hold a work unit id, never a `WorkUnit`. They are two
@@ -193,14 +144,6 @@ classDiagram
     class baseEvent {
         -string name
         -Time at
-    }
-    class ChargeForecastReceived {
-        <<DomainEvent>>
-        +PathId PathId
-    }
-    class ShiftPlanCommitted {
-        <<DomainEvent>>
-        +PathId PathId
     }
     class WorkUnitCreated {
         <<DomainEvent>>
@@ -243,18 +186,8 @@ classDiagram
         +int RemainingUnits
         +bool Known
     }
-    class PathPlanDriftDetected {
-        <<DomainEvent>>
-        +PathId PathId
-        +int WesPlannedHeads
-        +int ObservedPlannedHeads
-        +int DriftHeads
-        +Time ObservedAt
-    }
 
     DomainEvent <|.. baseEvent
-    baseEvent <|-- ChargeForecastReceived
-    baseEvent <|-- ShiftPlanCommitted
     baseEvent <|-- WorkUnitCreated
     baseEvent <|-- WorkReleased
     baseEvent <|-- WorkUnitCompleted
@@ -263,13 +196,13 @@ classDiagram
     baseEvent <|-- PathThrottled
     baseEvent <|-- LaborReassignmentFlagged
     baseEvent <|-- PathCapacityChanged
-    baseEvent <|-- PathPlanDriftDetected
 ```
 
 Source: `internal/domain/shared/events.go`. Go has no inheritance: each event
 **embeds** `baseEvent`, which is drawn as generalisation. Omits: the `New...`
-constructors. `DriftHeads` is computed by the constructor as
-`ObservedPlannedHeads - WesPlannedHeads`.
+constructors. `ChargeForecastReceived`, `ShiftPlanCommitted` and
+`PathPlanDriftDetected` are retired
+([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
 
 ## 3. Read models and catalogue views
 
@@ -286,13 +219,6 @@ classDiagram
         +int DriftHeads
         +Time DriftDetectedAt
     }
-    class Drift {
-        <<ValueObject>>
-        +int WesPlannedHeads
-        +int ObservedPlannedHeads
-        +int Heads
-        +Detected() bool
-    }
     class UsableInventoryObserved {
         <<ReadModel>>
         +string SKU
@@ -306,14 +232,6 @@ classDiagram
         +string TemperatureClass
         +bool Known
         +HasTag(tag) bool
-    }
-    class TravelDistanceView {
-        <<ReadModel>>
-        +string From
-        +string To
-        +float64 MetresM
-        +bool Estimated
-        +bool Known
     }
     class Catalogue {
         <<ReadModel>>
@@ -329,14 +247,13 @@ classDiagram
         +string DestinationLocationRole
     }
     Catalogue "1" *-- "0..*" PathDefinition
-    Drift ..> LaborPlanObserved : CompareHeads
 ```
 
 Source: `internal/domain/laborview/*.go`, `internal/domain/inventoryview/usable_inventory_observed.go`,
 `internal/domain/productclassificationview/product_classification_view.go`,
-`internal/domain/traveldistanceview/travel_distance_view.go`,
 `internal/domain/pathcatalog/path_definition.go`. `DriftHeads` and
-`DriftDetectedAt` are pointers (nil until a comparison was made). Omits:
+`DriftDetectedAt` are pointers and deprecated: no longer computed since
+ADR-0049, they only read back a drift recorded before it. Omits:
 `pathcatalog.ErrUnknownPath`, returned by `Lookup` on no prefix match.
 
 ## 4. Ports and adapters
@@ -347,16 +264,6 @@ implement them and `cmd/wes/main.go` wires one adapter per port.
 ```mermaid
 classDiagram
     direction LR
-    class ChargeRepo {
-        <<Repository>>
-        +Save(forecast)
-        +FindByPathId(pathId)
-    }
-    class PlanRepo {
-        <<Repository>>
-        +Save(pathId, shiftPlan)
-        +FindByPathId(pathId)
-    }
     class WorkPoolRepo {
         <<Repository>>
         +Save(pool)
@@ -373,7 +280,6 @@ classDiagram
         <<Repository>>
         +Save(view)
         +FindByPathId(pathId)
-        +SaveDrift(pathId, driftHeads, detectedAt)
     }
     class InventoryViewRepo {
         <<Repository>>
@@ -400,10 +306,6 @@ classDiagram
         <<interface>>
         +GetClassification(sku)
     }
-    class TravelDistanceLookup {
-        <<interface>>
-        +GetDistance(from, to)
-    }
     class ReleaseMetrics {
         <<interface>>
         +WorkUnitReleased(pathId)
@@ -418,13 +320,10 @@ classDiagram
     class FileCatalogue["filecatalog"]
     class KafkaCatalogue["kafkacatalog.Consumer"]
     class ClassificationCopy["productclassificationcopy.Store"]
-    class TravelClient["traveldistance.BreakerClient"]
     class OtelReleaseMetrics["telemetry release metrics"]
 
     PostgresRepos ..|> WorkPoolRepo
     PostgresRepos ..|> WorkUnitRepo
-    PostgresRepos ..|> ChargeRepo
-    PostgresRepos ..|> PlanRepo
     PostgresRepos ..|> LaborPlanViewRepo
     PostgresRepos ..|> InventoryViewRepo
     PostgresRepos ..|> ProcessedEventRepo
@@ -437,7 +336,6 @@ classDiagram
     FileCatalogue ..|> PathCatalogue
     KafkaCatalogue ..|> PathCatalogue
     ClassificationCopy ..|> ProductClassificationLookup
-    TravelClient ..|> TravelDistanceLookup
     OtelReleaseMetrics ..|> ReleaseMetrics
 ```
 
@@ -450,10 +348,10 @@ flowchart LR
         AKIN["Analytics consumer<br/>cmd/wes-projector"]
     end
     subgraph app["Application: internal/application/usecases"]
-        UC["7 control-loop use cases<br/>4 queries<br/>4 inbound-event use cases"]
+        UC["5 control-loop use cases<br/>4 queries<br/>4 inbound-event use cases"]
     end
     subgraph domain["Domain: internal/domain"]
-        D["charge, plan, release, workunit<br/>shared, views, pathcatalog"]
+        D["release, workunit<br/>shared, views, pathcatalog"]
     end
     subgraph outbound["Outbound adapters"]
         PG["postgres repos, UnitOfWork,<br/>OutboxPublisher, OutboxRelay, Housekeeper"]
@@ -461,7 +359,6 @@ flowchart LR
         KOUT["kafka Publisher and AnalyticsPublisher"]
         CAT["filecatalog or kafkacatalog"]
         PC["productclassificationcopy<br/>(local copy of product-master)"]
-        TD["traveldistance client"]
         AS["analyticsstore"]
     end
     HTTP --> UC
@@ -474,14 +371,12 @@ flowchart LR
     UC -->|ports| KOUT
     UC -->|ports| CAT
     UC -->|ports| PC
-    UC -->|ports| TD
 ```
 
 Source: `internal/application/ports/*.go`, `internal/adapters/**`,
 `cmd/wes/main.go`, `cmd/mcp/main.go`, `cmd/wes-projector/main.go`,
 `cmd/wes-reports/main.go`. Omits: `Clock` (`system.Clock`), the
-`ProcessedEventReleaser` optional port, the permissive / no-op variant of the
-REST travel-distance lookup, and `cmd/wes-reports` (serves
+`ProcessedEventReleaser` optional port, and `cmd/wes-reports` (serves
 `GET /reports/throughput` from `analyticsstore.PostgresReport`). The MCP
 server calls the use cases in-process through its own composition root,
 not over REST.

@@ -23,6 +23,7 @@ import (
 
 	inboundhttp "github.com/claudioed/wes-work-planning/internal/adapters/inbound/http"
 	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/memory"
+	"github.com/claudioed/wes-work-planning/internal/adapters/outbound/productclassificationcopy"
 	"github.com/claudioed/wes-work-planning/internal/application/ports"
 	"github.com/claudioed/wes-work-planning/internal/application/usecases"
 	"github.com/claudioed/wes-work-planning/internal/domain/pathcatalog"
@@ -44,6 +45,21 @@ type inboundExtras struct {
 	// repositories but another process-path catalogue, so a scenario can
 	// change what the catalogue declares for RELOCATE (ADR-0040 §7).
 	slotPlanWith func(ports.PathCatalogue) *usecases.ApplySlotPlanApproved
+
+	// Documentation-wave wiring (ADR-0035/0042/0045/0048): the local
+	// product classification/pack copy, its two projector use cases, the
+	// replenishment use cases, and rebuilders that swap the router-facing
+	// enqueue use case and catalogue together (the canonical-path checks
+	// of pack-aware work read the catalogue inside the use case).
+	handlers             *inboundhttp.Handlers
+	workUnits            ports.WorkUnitRepo
+	classificationStore  *productclassificationcopy.MemoryStore
+	classification       *usecases.ObserveProductClassification
+	packLevel            *usecases.ObservePackLevel
+	replenishRequested   *usecases.ApplyReplenishmentRequested
+	replenishCancelled   *usecases.ApplyReplenishmentCancelled
+	replenishWith        func(ports.PathCatalogue) *usecases.ApplyReplenishmentRequested
+	enqueueWithCatalogue func(ports.PathCatalogue) *usecases.EnqueueWorkUnit
 }
 
 // wireInboundExtras completes the production-shaped wiring: it declares the
@@ -78,6 +94,23 @@ func wireInboundExtras(
 
 	enqueue := usecases.NewEnqueueWorkUnit(workUnits, pools, publisher, clock)
 	slotPlans := memory.NewSlotPlanRepo()
+
+	// Documentation-wave wiring: ONE shared local copy of product-master's
+	// facts (ADR-0035 classifications, ADR-0045 pack levels) feeds the
+	// projector use cases the consumers call, the release-time
+	// classification hints and the enqueue-time CASE-pick verification.
+	// The router-facing enqueue use case gains the catalogue, the pack
+	// lookup and the forward-pick-face lookup exactly as cmd/wes wires
+	// them; a plain request keeps its pre-ADR-0045 behaviour.
+	classifications := productclassificationcopy.NewMemoryStore()
+	pickFaces, _ := workUnits.(ports.ForwardPickFaceLookup)
+	enqueueWithCatalogue := func(c ports.PathCatalogue) *usecases.EnqueueWorkUnit {
+		return enqueue.WithCatalogue(c).WithPackLookup(classifications).WithPickFaces(pickFaces)
+	}
+	h.EnqueueWorkUnit = enqueueWithCatalogue(catalogue)
+	replenishWith := func(c ports.PathCatalogue) *usecases.ApplyReplenishmentRequested {
+		return usecases.NewApplyReplenishmentRequested(workUnits, pools, processed, c, publisher, clock)
+	}
 	return &inboundExtras{
 		slotPlanWith: func(c ports.PathCatalogue) *usecases.ApplySlotPlanApproved {
 			return usecases.NewApplySlotPlanApproved(workUnits, relocations, pools, slotPlans, processed, c, publisher, clock)
@@ -87,6 +120,16 @@ func wireInboundExtras(
 		workDemand:     usecases.NewApplyWorkDemandReleased(enqueue, processed, catalogue),
 		slotPlan:       usecases.NewApplySlotPlanApproved(workUnits, relocations, pools, slotPlans, processed, catalogue, publisher, clock),
 		readiness:      readiness,
+
+		handlers:             h,
+		workUnits:            workUnits,
+		classificationStore:  classifications,
+		classification:       usecases.NewObserveProductClassification(classifications, processed),
+		packLevel:            usecases.NewObservePackLevel(classifications, processed),
+		replenishRequested:   replenishWith(catalogue),
+		replenishCancelled:   usecases.NewApplyReplenishmentCancelled(workUnits, pools, processed, clock),
+		replenishWith:        replenishWith,
+		enqueueWithCatalogue: enqueueWithCatalogue,
 	}
 }
 

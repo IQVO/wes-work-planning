@@ -146,18 +146,30 @@ func waitForPoolLockWaiter(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		var n int
-		if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM pg_stat_activity
+		var pid int
+		var waitEvent, query string
+		err := pool.QueryRow(context.Background(), `SELECT pid, wait_event, query FROM pg_stat_activity
 			WHERE datname = current_database() AND pid <> pg_backend_pid()
-			  AND wait_event_type = 'Lock' AND query LIKE '%work_pools%'`).Scan(&n); err != nil {
-			t.Fatalf("pg_stat_activity: %v", err)
-		}
-		if n > 0 {
+			  AND wait_event_type = 'Lock' AND query LIKE '%work_pools%' LIMIT 1`).
+			Scan(&pid, &waitEvent, &query)
+		if err == nil {
+			t.Logf("lock waiter: pid=%d wait=%s query=%.80s", pid, waitEvent, query)
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("no request ever blocked on a work_pools lock: the race never happened")
+}
+
+// poolVersion reads the pool row's version for the diagnostics above.
+func poolVersion(t *testing.T, pool *pgxpool.Pool, path string) int64 {
+	t.Helper()
+	var v int64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT version FROM work_pools WHERE path_id = $1`, path).Scan(&v); err != nil {
+		t.Fatalf("read pool version: %v", err)
+	}
+	return v
 }
 
 // waitForConnWaitingOnLock blocks until backend pid is itself waiting on a
@@ -244,6 +256,7 @@ func TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetr
 		t.Fatalf("arm the pool row lock: %v", err)
 	}
 	holder := 0
+	t.Logf("armed; pool version=%d", poolVersion(t, pool, path))
 	type result struct {
 		rec  *httptest.ResponseRecorder
 		done chan struct{}
@@ -271,6 +284,7 @@ loop:
 		// reaches the server, and the request's next attempt slips in.
 		waitForConnWaitingOnLock(t, pool, conns[next].Conn().PgConn().PID())
 		bumpCommit(conns[holder]) // the blocked attempt loses; the queued killer takes over
+		t.Logf("kill %d committed; pool version=%d", i, poolVersion(t, pool, path))
 		if err := <-armed; err != nil {
 			t.Fatalf("the next holder could not take the lock: %v", err)
 		}

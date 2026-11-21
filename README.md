@@ -259,20 +259,19 @@ real page), `title` is a fixed category summary, `status` duplicates the HTTP
 status code, `detail` is the specific error message for this occurrence, and
 `instance` is the request path that produced it.
 
-### `POST /paths/{pathId}/charge` and `POST /paths/{pathId}/plan` — moved (always `410`)
+### `POST /paths/{pathId}/charge` and `POST /paths/{pathId}/plan` — removed
 
 The charge forecast and the shift plan moved to warehouse-planning
 ([ADR-0049](docs/docs/adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
-Both routes stay for one release, marked `deprecated`, and answer `410 Gone`
-for any body: `charge-forecast-moved` names warehouse-planning's
-`PUT /workload-forecasts/{site_id}/{path_id}`, `shift-plan-moved` names
-`PUT /labour-plans/{site_id}/{shift_id}/{path_id}`. Nothing is recorded or
-published.
+The routes answered `410 Gone` for one release (v2.0.3) and are now gone
+(stage E): a POST answers `404`. Send the forecast as warehouse-planning's
+`PUT /workload-forecasts/{site_id}/{path_id}` and the plan as its
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}`.
 
 ### `POST /paths/{pathId}/work-units` — EnqueueWorkUnit
 
 Every `POST` in this API (`/work-units`, `/work-releases`,
-`/rebalance-decisions`, `/completions`, and the two always-`410` routes)
+`/rebalance-decisions`, `/completions`)
 requires an `Idempotency-Key` header (1-128 printable ASCII,
 ADR-0022 / ADR-0047 / ADR-0050). The key is global: a retry with the same key and the
 same request (method + path + body) returns the identical stored answer with

@@ -161,15 +161,16 @@ func waitForPoolLockWaiter(t *testing.T, pool *pgxpool.Pool) {
 }
 
 // TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetries
-// drives the real router through the fleet's lock-and-bump shape. The
-// release's pool save retries internally (retryOnPoolConflict, 12 attempts
-// of full-jitter backoff), so the row lock is armed BEFORE the request
-// starts and every kill is ONE round trip: bump the version, commit, and
-// re-take the lock in a single multi-statement, so the next attempt of the
-// request always finds the lock held again and loses again. After the
-// budget is spent the route answers 409 concurrent-modification (RETRYABLE):
-// no key row is left. Once the contention stops, the retry under the SAME
-// key executes the release, its 200 is stored and replayed.
+// drives the real router through the fleet's lock-and-bump shape, hardened
+// for this service's internal retry loop: the release retries its pool save
+// twelve times (retryOnPoolConflict, full-jitter backoff), so every attempt
+// must be made to lose. Two killer connections alternate holding the pool's
+// row lock — the next holder queues for the lock BEFORE the current one
+// commits its version bump — so each of the request's attempts wakes, fails
+// its version guard, and retries into the next held lock until the budget is
+// spent and the route answers 409 concurrent-modification (RETRYABLE): no
+// key row is left. Once the contention stops, the retry under the SAME key
+// executes the release, its 200 is stored and replayed.
 func TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetries(t *testing.T) {
 	pool := idempotencyDB(t)
 	router := newIdempotencyRouter(t, pool)
@@ -182,30 +183,47 @@ func TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetr
 		}
 	}
 
-	// The killer connection: simple-protocol multi-statements, so a kill is
-	// one round trip (bump + commit + re-take). The request's next attempt
-	// cannot slip into the gap.
+	// Two killer connections alternate holding the pool's row lock. The
+	// release's pool save retries internally (retryOnPoolConflict, 12
+	// attempts of full-jitter backoff), so a single holder that commits and
+	// re-takes can lose the re-acquire race to an early retry. Instead the
+	// NEXT holder takes its place in the lock queue BEFORE the current one
+	// commits: when the commit frees the lock, the queued killer — not the
+	// request's next attempt — wakes up holding it, the blocked attempt
+	// re-checks its version guard against the just-committed bump, matches
+	// nothing, and the use case retries into the next holder's lock. Every
+	// attempt loses, deterministically, until the budget is spent.
 	ctx := context.Background()
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatal(err)
+	conns := make([]*pgxpool.Conn, 2)
+	for i := range conns {
+		c, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Release()
+		conns[i] = c
 	}
-	defer conn.Release()
-	arm := func() {
+	take := func(c *pgxpool.Conn) error {
 		sql := "BEGIN; SELECT path_id FROM work_pools WHERE path_id = '" + path + "' FOR UPDATE"
-		if _, err := conn.Conn().PgConn().Exec(ctx, sql).ReadAll(); err != nil {
-			t.Fatalf("arm the pool row lock: %v", err)
+		_, err := c.Conn().PgConn().Exec(ctx, sql).ReadAll()
+		return err
+	}
+	bumpCommit := func(c *pgxpool.Conn) {
+		sql := "UPDATE work_pools SET version = version + 1 WHERE path_id = '" + path + "'; COMMIT"
+		if _, err := c.Conn().PgConn().Exec(ctx, sql).ReadAll(); err != nil {
+			t.Fatalf("bump the pool version under the held lock: %v", err)
 		}
 	}
-	kill := func() {
-		sql := "UPDATE work_pools SET version = version + 1 WHERE path_id = '" + path +
-			"'; COMMIT; BEGIN; SELECT path_id FROM work_pools WHERE path_id = '" + path + "' FOR UPDATE"
-		if _, err := conn.Conn().PgConn().Exec(ctx, sql).ReadAll(); err != nil {
-			t.Fatalf("bump, commit and re-take the pool row lock: %v", err)
-		}
+	armNext := func(c *pgxpool.Conn) <-chan error {
+		ch := make(chan error, 1)
+		go func() { ch <- take(c) }()
+		return ch
 	}
 
-	arm()
+	if err := take(conns[0]); err != nil {
+		t.Fatalf("arm the pool row lock: %v", err)
+	}
+	holder := 0
 	type result struct {
 		rec  *httptest.ResponseRecorder
 		done chan struct{}
@@ -216,8 +234,8 @@ func TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetr
 		res.rec = replayPost(t, router, "/paths/"+path+"/work-releases", "k-conc-refused", "")
 	}()
 
-	// Kill every optimistic attempt the request makes, one lock-and-bump at
-	// a time, until it has exhausted retryOnPoolConflict's budget.
+	// Kill every optimistic attempt the request makes until it has exhausted
+	// retryOnPoolConflict's budget and surfaced the 409.
 loop:
 	for i := 0; ; i++ {
 		select {
@@ -226,13 +244,19 @@ loop:
 		default:
 		}
 		waitForPoolLockWaiter(t, pool)
-		kill()
+		next := 1 - holder
+		armed := armNext(conns[next]) // queues behind the holder's lock
+		bumpCommit(conns[holder])     // the blocked attempt loses; the queued killer takes over
+		if err := <-armed; err != nil {
+			t.Fatalf("the next holder could not take the lock: %v", err)
+		}
+		holder = next
 		select {
 		case <-res.done:
 			break loop // the request finally surfaced the 409
 		case <-time.After(150 * time.Millisecond):
-			// No waiter within 150ms: the request is between attempts
-			// (backoff) — loop and re-check.
+			// The request is between attempts (backoff) — the holder keeps
+			// the lock; loop and wait for its next attempt to block.
 			select {
 			case <-res.done:
 				break loop

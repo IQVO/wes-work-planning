@@ -153,7 +153,7 @@ func waitForPoolLockWaiter(t *testing.T, pool *pgxpool.Pool) {
 			  AND wait_event_type = 'Lock' AND query LIKE '%work_pools%' LIMIT 1`).
 			Scan(&pid, &waitEvent, &query)
 		if err == nil {
-			t.Logf("lock waiter: pid=%d wait=%s query=%.80s", pid, waitEvent, query)
+			t.Logf("lock waiter: pid=%d wait=%s query=%q", pid, waitEvent, query)
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -256,7 +256,8 @@ func TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetr
 		t.Fatalf("arm the pool row lock: %v", err)
 	}
 	holder := 0
-	t.Logf("armed; pool version=%d", poolVersion(t, pool, path))
+	t.Logf("armed killer pids=%d/%d; pool version=%d",
+		conns[0].Conn().PgConn().PID(), conns[1].Conn().PgConn().PID(), poolVersion(t, pool, path))
 	type result struct {
 		rec  *httptest.ResponseRecorder
 		done chan struct{}
@@ -306,6 +307,19 @@ loop:
 		if i > 40 {
 			t.Fatal("the request never surfaced concurrent-modification")
 		}
+	}
+
+	t.Logf("request finished: code=%d version=%d", res.rec.Code, poolVersion(t, pool, path))
+	for _, c := range conns {
+		var state, wait string
+		_ = pool.QueryRow(context.Background(),
+			`SELECT state, coalesce(wait_event_type,'')||'/'||coalesce(wait_event,'') FROM pg_stat_activity WHERE pid=$1`,
+			c.Conn().PgConn().PID()).Scan(&state, &wait)
+		var locks int
+		_ = pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM pg_locks WHERE pid=$1 AND relation='work_pools'::regclass AND granted`,
+			c.Conn().PgConn().PID()).Scan(&locks)
+		t.Logf("killer pid=%d state=%s wait=%s granted_work_pools_locks=%d", c.Conn().PgConn().PID(), state, wait, locks)
 	}
 
 	if res.rec.Code != http.StatusConflict || !strings.Contains(res.rec.Body.String(), "concurrent-modification") {

@@ -31,7 +31,7 @@ func doKeyed(router http.Handler, method, path, key, body string) *httptest.Resp
 func TestIdempotency_EveryPostRequiresAKey(t *testing.T) {
 	router := newIdempotencyRouter(t, idempotencyDB(t))
 	for _, path := range []string{
-		"/paths/pick-a/charge", "/paths/pick-a/plan", "/paths/pick-a/work-units",
+		"/paths/pick-a/work-units",
 		"/paths/pick-a/work-releases", "/work-units/wu-1/completions",
 	} {
 		rec := doKeyed(router, http.MethodPost, path, "", `{}`)

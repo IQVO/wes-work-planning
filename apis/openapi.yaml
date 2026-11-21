@@ -287,14 +287,23 @@ paths:
         level in the local copy and a whole number of cases.
 
 
-        **Idempotency (ADR-0022).** This resource-creating POST requires a
-        caller-supplied `Idempotency-Key` header. The first request with a
-        given key is processed and its response (status, headers, body — a
-        4xx included) is stored in the same database transaction as the
-        write; a retry with the same key and the same body replays that
-        stored response verbatim and does not enqueue again. A missing key is
-        `400 idempotency-key-required`; the same key with a different body
-        is `409 idempotency-key-reused`. Use a fresh key per logical action. A replay carries
+        **Idempotency (ADR-0022, replay classes ADR-0050).** This
+        resource-creating POST requires a caller-supplied
+        `Idempotency-Key` header. The first request with a given key is
+        processed and its final response (status, headers, body) is
+        stored in the same database transaction as the write; a retry
+        with the same key and the same body replays that stored response
+        verbatim and does not enqueue again. A refusal is stored only
+        when it is final for the request — a validation of the request's
+        own fields (FINAL). A refusal that depends on state that can
+        change (`work-unit-already-enqueued`, `unknown-path-id`,
+        `no-active-case-level`, `quantity-not-case-multiple`, any 5xx)
+        is not stored: the key is released, so the same key can be
+        retried and executes again (a different body under it is a new
+        request, not `idempotency-key-reused`). A missing key is
+        `400 idempotency-key-required`; the same key with a different
+        body after a stored answer is `409 idempotency-key-reused`. Use
+        a fresh key per logical action. A replay carries
         `Idempotency-Replayed: true`.
 
         Superseded by the K1 choreography (X3): order-management publishes

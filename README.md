@@ -274,11 +274,18 @@ published.
 Every `POST` in this API (`/work-units`, `/work-releases`,
 `/rebalance-decisions`, `/completions`, and the two always-`410` routes)
 requires an `Idempotency-Key` header (1-128 printable ASCII,
-ADR-0022 / ADR-0047). The key is global: a retry with the same key and the
+ADR-0022 / ADR-0047 / ADR-0050). The key is global: a retry with the same key and the
 same request (method + path + body) returns the identical stored answer with
-`Idempotency-Replayed: true` and has its effect once. The same key with a
-*different* request gets `409` (`idempotency-key-reused`); a missing header gets
-`400` (`idempotency-key-required`), a malformed one `400`
+`Idempotency-Replayed: true` and has its effect once. A refusal is stored only
+when it is final for the request (FINAL — e.g. a validation of the request's
+own fields); a refusal that depends on state that can change (RETRYABLE —
+`concurrent-modification`, `wip-limit-reached`, `work-pool-empty`,
+`work-unit-not-released`, the not-founds, a not-yet-known CASE pack level, any
+5xx) releases the key instead: nothing is stored and the same key executes
+again on retry (a different body under it is a new request). The same key with
+a *different* request after a stored answer gets `409`
+(`idempotency-key-reused`); a missing header gets `400`
+(`idempotency-key-required`), a malformed one `400`
 (`idempotency-key-invalid`). `PUT` takes no key.
 
 ```sh

@@ -90,52 +90,58 @@ func statusFor(err error) int {
 const problemBaseURI = "https://errors.wes-work-planning.warehouse-systems.dev/"
 
 // problemCategory pairs one sentinel error with the RFC 7807 type-URI
-// slug and human title problemFor answers for it. The catalog is walked in
-// order and the first errors.Is match wins, so the entry order below IS
-// the matching order — keep it stable when appending.
+// slug, human title and REPLAY CLASS problemFor answers for it. The
+// catalog is walked in order and the first errors.Is match wins, so the
+// entry order below IS the matching order — keep it stable when appending.
+// The class (ADR 0050, replay_class.go) says what the Idempotency-Key
+// middleware does with the answer when the request is retried under the
+// same key: FINAL stored, OUTCOME stored with its writes, RETRYABLE
+// released. A slug shared by several errors has ONE class.
 type problemCategory struct {
 	err   error
 	slug  string
 	title string
+	class replayClass
 }
 
 // problemCatalog lists every error category problemFor recognizes.
 // Categories mirror statusFor's grouping exactly — every sentinel error
-// statusFor recognizes has a corresponding entry here.
+// statusFor recognizes has a corresponding entry here, each with its
+// replay class (ADR 0050).
 var problemCatalog = []problemCategory{
-	{errMalformedBody, "malformed-request-body", "Malformed request body"},
-	{errMissingReference, "reference-required", "Reference query parameter is required"},
-	{errIdempotencyKeyRequired, "idempotency-key-required", "Idempotency-Key header is required"},
-	{errIdempotencyKeyInvalid, "idempotency-key-invalid", "Idempotency-Key header is invalid"},
-	{errUnknownQueryParameter, "unknown-query-parameter", "Unknown query parameter"},
-	{page.ErrInvalidLimit, "invalid-limit", "Invalid limit"},
-	{page.ErrInvalidCursor, "invalid-cursor", "Invalid cursor"},
-	{errIdempotencyKeyReused, "idempotency-key-reused", "Idempotency-Key was already used with a different request"},
-	{ports.ErrNotFound, "not-found", "Resource not found"},
-	{ports.ErrConcurrentModification, "concurrent-modification", "The work pool was modified concurrently; retry the request"},
-	{release.ErrWIPLimitReached, "wip-limit-reached", "Release-fed pool WIP limit reached"},
-	{release.ErrAlreadyReleased, "work-pool-entry-already-released", "Work pool entry already released"},
-	{release.ErrDuplicateEntry, "work-unit-already-enqueued", "Work unit already enqueued in this pool"},
-	{release.ErrEmptyPool, "work-pool-empty", "Work pool is empty"},
-	{workunit.ErrAlreadyReleased, "work-unit-already-released", "Work unit already released"},
-	{workunit.ErrAlreadyCompleted, "work-unit-already-completed", "Work unit already completed"},
-	{workunit.ErrNotReleased, "work-unit-not-released", "Work unit not released"},
-	{workunit.ErrCancelled, "work-unit-cancelled", "Work unit cancelled"},
-	{shared.ErrInvalidQuantity, "invalid-quantity", "Invalid quantity"},
-	{shared.ErrInvalidPathId, "invalid-path-id", "Invalid path id"},
-	{pathcatalog.ErrUnknownPath, "unknown-path-id", "Unrecognized process-path id"},
-	{workunit.ErrEmptyId, "work-unit-id-required", "Work unit id is required"},
-	{workunit.ErrEmptyReference, "work-unit-reference-required", "Work unit reference is required"},
-	{workunit.ErrInvalidLineNo, "invalid-line-no", "Invalid line number"},
-	{workunit.ErrUnknownPickUnit, "unknown-pick-unit", "Unknown pick unit"},
-	{workunit.ErrInvalidPickPlan, "invalid-pick-plan", "Invalid pick plan"},
-	{workunit.ErrInvalidCaseBreak, "invalid-case-break", "Invalid case break"},
-	{pickload.ErrInvalidQuantity, "invalid-pick-quantity", "Invalid pick quantity"},
-	{pickload.ErrNoActiveCaseLevel, "no-active-case-level", "The SKU has no active CASE pack level"},
-	{pickload.ErrNotCaseMultiple, "quantity-not-case-multiple", "Quantity is not a whole number of cases"},
-	{release.ErrUnknownEntry, "work-pool-entry-not-found", "Work unit not found in this pool"},
-	{release.ErrInvalidWIPLimit, "invalid-wip-limit", "Invalid WIP limit"},
-	{release.ErrUnknownFeedMode, "unknown-feed-mode", "Unknown work pool feed mode"},
+	{errMalformedBody, "malformed-request-body", "Malformed request body", classFinal},
+	{errMissingReference, "reference-required", "Reference query parameter is required", classFinal},
+	{errIdempotencyKeyRequired, "idempotency-key-required", "Idempotency-Key header is required", classFinal},
+	{errIdempotencyKeyInvalid, "idempotency-key-invalid", "Idempotency-Key header is invalid", classFinal},
+	{errUnknownQueryParameter, "unknown-query-parameter", "Unknown query parameter", classFinal},
+	{page.ErrInvalidLimit, "invalid-limit", "Invalid limit", classFinal},
+	{page.ErrInvalidCursor, "invalid-cursor", "Invalid cursor", classFinal},
+	{errIdempotencyKeyReused, "idempotency-key-reused", "Idempotency-Key was already used with a different request", classFinal},
+	{ports.ErrNotFound, "not-found", "Resource not found", classRetryable},
+	{ports.ErrConcurrentModification, "concurrent-modification", "The work pool was modified concurrently; retry the request", classRetryable},
+	{release.ErrWIPLimitReached, "wip-limit-reached", "Release-fed pool WIP limit reached", classRetryable},
+	{release.ErrAlreadyReleased, "work-pool-entry-already-released", "Work pool entry already released", classRetryable},
+	{release.ErrDuplicateEntry, "work-unit-already-enqueued", "Work unit already enqueued in this pool", classRetryable},
+	{release.ErrEmptyPool, "work-pool-empty", "Work pool is empty", classRetryable},
+	{workunit.ErrAlreadyReleased, "work-unit-already-released", "Work unit already released", classRetryable},
+	{workunit.ErrAlreadyCompleted, "work-unit-already-completed", "Work unit already completed", classRetryable},
+	{workunit.ErrNotReleased, "work-unit-not-released", "Work unit not released", classRetryable},
+	{workunit.ErrCancelled, "work-unit-cancelled", "Work unit cancelled", classRetryable},
+	{shared.ErrInvalidQuantity, "invalid-quantity", "Invalid quantity", classFinal},
+	{shared.ErrInvalidPathId, "invalid-path-id", "Invalid path id", classFinal},
+	{pathcatalog.ErrUnknownPath, "unknown-path-id", "Unrecognized process-path id", classRetryable},
+	{workunit.ErrEmptyId, "work-unit-id-required", "Work unit id is required", classFinal},
+	{workunit.ErrEmptyReference, "work-unit-reference-required", "Work unit reference is required", classFinal},
+	{workunit.ErrInvalidLineNo, "invalid-line-no", "Invalid line number", classFinal},
+	{workunit.ErrUnknownPickUnit, "unknown-pick-unit", "Unknown pick unit", classFinal},
+	{workunit.ErrInvalidPickPlan, "invalid-pick-plan", "Invalid pick plan", classFinal},
+	{workunit.ErrInvalidCaseBreak, "invalid-case-break", "Invalid case break", classFinal},
+	{pickload.ErrInvalidQuantity, "invalid-pick-quantity", "Invalid pick quantity", classFinal},
+	{pickload.ErrNoActiveCaseLevel, "no-active-case-level", "The SKU has no active CASE pack level", classRetryable},
+	{pickload.ErrNotCaseMultiple, "quantity-not-case-multiple", "Quantity is not a whole number of cases", classRetryable},
+	{release.ErrUnknownEntry, "work-pool-entry-not-found", "Work unit not found in this pool", classRetryable},
+	{release.ErrInvalidWIPLimit, "invalid-wip-limit", "Invalid WIP limit", classFinal},
+	{release.ErrUnknownFeedMode, "unknown-feed-mode", "Unknown work pool feed mode", classFinal},
 }
 
 // problemFor returns the RFC 7807 (type, title) pair for a category of

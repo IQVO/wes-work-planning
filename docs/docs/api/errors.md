@@ -69,15 +69,15 @@ All type URIs are prefixed
 | `invalid-case-break` | Invalid case break | `POST /paths/{pathId}/work-units` with an incomplete `caseBreak`, a `caseBreak` combined with `quantity`/`pickUnit`/`fromBin`, or a case break on a path other than the case-break path |
 | `invalid-pick-quantity` | Invalid pick quantity | the pick-load estimate (`pickload.Estimate`) asked for fewer than 1 each; `POST /paths/{pathId}/work-units` rejects such a quantity first, as `invalid-pick-plan` |
 
-### 410 Gone — the decision moved to another context
+### 410 Gone — retired
 
-| `type` suffix | `title` | Raised by |
-|---|---|---|
-| `charge-forecast-moved` | Charge forecast moved to warehouse-planning | `POST /paths/{pathId}/charge`, for any body. The detail names warehouse-planning's `PUT /workload-forecasts/{site_id}/{path_id}` ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)) |
-| `shift-plan-moved` | Shift plan moved to warehouse-planning | `POST /paths/{pathId}/plan`, for any body. The detail names warehouse-planning's `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` |
-
-Both routes are `deprecated` and stay for one release; nothing is recorded or
-published.
+`charge-forecast-moved` and `shift-plan-moved` were answered for one release
+(v2.0.3) by the two moved planning routes. Stage E of
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)
+removed `POST /paths/{pathId}/charge` and `POST /paths/{pathId}/plan`; a POST to
+either now answers `404`. Send the forecast as warehouse-planning's
+`PUT /workload-forecasts/{site_id}/{path_id}` and the plan as its
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}`.
 
 ### 422 Unprocessable Entity
 

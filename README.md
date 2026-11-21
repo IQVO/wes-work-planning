@@ -462,8 +462,8 @@ with real HTTP calls (`features_test.go` at the repo root).
 go test ./... -run TestFeatures -v
 ```
 
-Scenarios (`features/*.feature`) cover the two moved planning routes (always
-`410`, ADR-0049), CPT-priority Release with at-most-once handout, work-pool
+Scenarios (`features/*.feature`) cover the two removed planning routes (now
+`404`, ADR-0049 stage E), CPT-priority Release with at-most-once handout, work-pool
 capacity, RecordCompletion plus the backlog telemetry read model, the
 read-model views, and flow-balancing rebalance decisions. CI runs them in the
 `bdd` job.

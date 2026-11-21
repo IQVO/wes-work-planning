@@ -25,8 +25,8 @@ in the [ubiquitous language](../business-context/ubiquitous-language.md):
 
 | Tag | Concept |
 |---|---|
-| **Charge Forecast** | Moved: the route answers `410`, the forecast is warehouse-planning's `PUT /workload-forecasts/{site_id}/{path_id}` ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)) |
-| **Shift Plan** | Moved: the route answers `410`, the plan is warehouse-planning's `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` (ADR-0049) |
+| **Charge Forecast** | Moved: the route was removed in stage E (it answered `410` for one release), the forecast is warehouse-planning's `PUT /workload-forecasts/{site_id}/{path_id}` ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)) |
+| **Shift Plan** | Moved: the route was removed in stage E (it answered `410` for one release), the plan is warehouse-planning's `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` (ADR-0049) |
 | **Work Units** | Enqueue a releasable unit; read one by id or look units up by reference; record its completion |
 | **Release** | Continuous, priority-ordered admission (waveless) |
 | **Telemetry** | Live buffer read model — backlog depth, WIP, feed mode |

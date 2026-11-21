@@ -251,34 +251,31 @@ Source: `internal/adapters/inbound/kafka/consumer.go` (`handleSlottingEvent`),
 `internal/application/usecases/record_completion.go`,
 `internal/domain/relocation/plan.go` ([ADR-0040](../adr/0040-slot-plan-relocation-work.md)).
 
-## 4. Commit a shift plan — moved (always `410`)
+## 4. Commit a shift plan — removed (moved to warehouse-planning)
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Planner
-    participant HTTP as HTTP adapter
     participant WPL as warehouse-planning
 
-    Planner->>HTTP: POST /paths/{pathId}/plan with Idempotency-Key and any body
-    HTTP-->>Planner: 410 shift-plan-moved, detail names PUT /labour-plans/{site_id}/{shift_id}/{path_id}
     Planner->>WPL: PUT /labour-plans/{site_id}/{shift_id}/{path_id}
 ```
 
-Source: `internal/adapters/inbound/http/handlers_plan.go` (`postShiftPlan`),
-`internal/adapters/inbound/http/router.go`. No use case, repository or outbox
-is involved: nothing is decoded, recorded or published. The shift plan, its
-`plannedHeads ≤ installedStations` invariant and the plan-vs-labour drift
-check moved to warehouse-planning
+Source: `internal/adapters/inbound/http/router.go` (no planning route under
+`/paths/{pathId}`). The shift plan, its `plannedHeads ≤ installedStations`
+invariant and the plan-vs-labour drift check moved to warehouse-planning
 ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)),
-which publishes `LabourPlanDriftDetected`. The route is `deprecated` and goes
-in stage E.
+which publishes `LabourPlanDriftDetected`. No use case, repository or outbox
+of this context is involved. The old route answered `410 shift-plan-moved` for
+one release (v2.0.3); stage E removed `POST /paths/{pathId}/plan`, so a POST answers `404`.
 
-## 5. Receive a charge forecast — moved (always `410`)
+## 5. Receive a charge forecast — removed (moved to warehouse-planning)
 
-Same shape as section 4: `POST /paths/{pathId}/charge` answers `410`
-`charge-forecast-moved` (`postChargeForecast`), whose detail names
-warehouse-planning's `PUT /workload-forecasts/{site_id}/{path_id}`.
+Same shape as section 4: the planner sends warehouse-planning's
+`PUT /workload-forecasts/{site_id}/{path_id}`. The old route answered
+`410 charge-forecast-moved` for one release; stage E removed `POST /paths/{pathId}/charge`
+(a POST answers `404`).
 
 ## 6. Sample backlog and decide a rebalance (REST or MCP)
 

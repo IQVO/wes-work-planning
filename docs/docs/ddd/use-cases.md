@@ -73,9 +73,10 @@ Source: `cmd/wes/handlers.go`, `cmd/wes/serving.go`, `cmd/mcp/main.go`,
 `ReceiveChargeForecast` and `CommitShiftPlan` are gone: the charge forecast
 and the shift plan moved to warehouse-planning
 ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
-`POST /paths/{pathId}/charge` and `/plan` answer `410` (`charge-forecast-moved`,
-`shift-plan-moved`) naming `PUT /workload-forecasts/{site_id}/{path_id}` and
-`PUT /labour-plans/{site_id}/{shift_id}/{path_id}` there.
+The planner sends `PUT /workload-forecasts/{site_id}/{path_id}` and
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}` there. The old routes answered
+`410` (`charge-forecast-moved`, `shift-plan-moved`) for one release (v2.0.3) and were
+removed in stage E: `POST /paths/{pathId}/charge` and `POST /paths/{pathId}/plan` were removed (a POST answers `404`).
 
 ### EnqueueWorkUnit
 

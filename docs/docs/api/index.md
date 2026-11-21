@@ -34,8 +34,8 @@ not-ready first on graceful shutdown
 
 | # | Method | Path | Use case | OpenAPI `operationId` |
 |---:|---|---|---|---|
-| 1 | `POST` | `/paths/{pathId}/charge` | — (deprecated, always `410 charge-forecast-moved`, [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)) | `receiveChargeForecast` |
-| 2 | `POST` | `/paths/{pathId}/plan` | — (deprecated, always `410 shift-plan-moved`, ADR-0049) | `commitShiftPlan` |
+| 1 | `POST` | `/paths/{pathId}/charge` | — (removed in ADR-0049 stage E after one release of `410 charge-forecast-moved`; answers `404`, [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)) | — |
+| 2 | `POST` | `/paths/{pathId}/plan` | — (removed in ADR-0049 stage E after one release of `410 shift-plan-moved`; answers `404`) | — |
 | 3 | `POST` | `/paths/{pathId}/work-units` | EnqueueWorkUnit | `enqueueWorkUnit` |
 | 4 | `POST` | `/paths/{pathId}/work-releases` | ReleaseNextWork | `releaseNextWork` |
 | 5 | `POST` | `/work-units/{id}/completions` | RecordCompletion | `recordCompletion` |
@@ -73,4 +73,4 @@ Both return the affected representation with `200`, not `201` — there is no ne
 URI to point a `Location` header at.
 
 The creation endpoint (`/work-units`) does return `201` with a `Location`
-header. The two moved planning routes answer `410` (ADR-0049).
+header. The two moved planning routes answered `410` for one release and were removed in stage E (ADR-0049).

@@ -10,7 +10,8 @@ description: "ADR 0049 — ChargeForecast and ShiftPlan/PathPlan are handed over
 # 0049. The charge forecast and the shift plan move to warehouse-planning
 
 Date: 2026-11-18
-Status: Accepted
+Status: Accepted. Stages A-D implemented 2026-11-19 (PR #299, released as v2.0.3 with one
+release of the 410 tombstones); stage E — the routes' removal — implemented 2026-11-21.
 
 Amends [ADR-0006](./0006-labor-plan-view-not-shift-plan.md) (the `ShiftPlan` half; the
 `LaborPlanObserved` projection stays), supersedes

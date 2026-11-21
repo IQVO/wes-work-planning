@@ -130,14 +130,6 @@ for _ in $(seq 1 300); do
 done
 curl -sf "${BASE_URL}/readyz" >/dev/null # fail loudly if it never became ready
 
-# receiveChargeForecast and commitShiftPlan are excluded: since ADR-0049
-# (stage C) both answer 410 charge-forecast-moved / shift-plan-moved for
-# every body, so Schemathesis's positive phase would report each accepted
-# schema as "rejected". The 410s are tested by
-# TestPlanningRoutesAnswer410NamingTheNewOwner and
-# features/planning_moved.feature. STAGE E: both operations leave
-# apis/openapi.yaml; remove these two exclusions in the same change.
-#
 # Idempotency-Key (ADR-0022, enforced in every deployment now): the hooks
 # file gives every request that carries the header a fresh UUID, like a real
 # client sending one per logical submit (see scripts/contract_hooks.py).
@@ -153,6 +145,4 @@ st run apis/openapi.yaml \
   --max-examples "${MAX_EXAMPLES}" \
   --workers 4 \
   --generation-allow-x00 false \
-  --exclude-operation-id receiveChargeForecast \
-  --exclude-operation-id commitShiftPlan \
   "$@"

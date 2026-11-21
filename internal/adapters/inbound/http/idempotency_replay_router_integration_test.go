@@ -160,6 +160,26 @@ func waitForPoolLockWaiter(t *testing.T, pool *pgxpool.Pool) {
 	t.Fatal("no request ever blocked on a work_pools lock: the race never happened")
 }
 
+// waitForConnWaitingOnLock blocks until backend pid is itself waiting on a
+// lock — proof that the next holder's SELECT ... FOR UPDATE has queued
+// behind the current holder and will take the row the moment it is freed.
+func waitForConnWaitingOnLock(t *testing.T, pool *pgxpool.Pool, pid uint32) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock'`, pid).Scan(&n); err != nil {
+			t.Fatalf("pg_stat_activity: %v", err)
+		}
+		if n > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the next holder never queued for the pool row lock")
+}
+
 // TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetries
 // drives the real router through the fleet's lock-and-bump shape, hardened
 // for this service's internal retry loop: the release retries its pool save
@@ -246,7 +266,11 @@ loop:
 		waitForPoolLockWaiter(t, pool)
 		next := 1 - holder
 		armed := armNext(conns[next]) // queues behind the holder's lock
-		bumpCommit(conns[holder])     // the blocked attempt loses; the queued killer takes over
+		// Only commit once the next holder is OBSERVABLY queued: otherwise
+		// the commit can free the lock before the next killer's SELECT
+		// reaches the server, and the request's next attempt slips in.
+		waitForConnWaitingOnLock(t, pool, conns[next].Conn().PgConn().PID())
+		bumpCommit(conns[holder]) // the blocked attempt loses; the queued killer takes over
 		if err := <-armed; err != nil {
 			t.Fatalf("the next holder could not take the lock: %v", err)
 		}

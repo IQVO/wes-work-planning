@@ -161,13 +161,15 @@ func waitForPoolLockWaiter(t *testing.T, pool *pgxpool.Pool) {
 }
 
 // TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetries
-// drives the real router through the fleet's lock-and-bump shape: while a
-// release is in flight, its version-guarded pool save is made to lose again
-// and again (hold the pool's row lock until the request's UPDATE is blocked,
-// then commit a version bump it cannot match). After retryOnPoolConflict's
-// twelve attempts the route answers 409 concurrent-modification (RETRYABLE):
-// no key row is left. Once the contention stops, the retry under the SAME key
-// executes the release, its 200 is stored and replayed.
+// drives the real router through the fleet's lock-and-bump shape. The
+// release's pool save retries internally (retryOnPoolConflict, 12 attempts
+// of full-jitter backoff), so the row lock is armed BEFORE the request
+// starts and every kill is ONE round trip: bump the version, commit, and
+// re-take the lock in a single multi-statement, so the next attempt of the
+// request always finds the lock held again and loses again. After the
+// budget is spent the route answers 409 concurrent-modification (RETRYABLE):
+// no key row is left. Once the contention stops, the retry under the SAME
+// key executes the release, its 200 is stored and replayed.
 func TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetries(t *testing.T) {
 	pool := idempotencyDB(t)
 	router := newIdempotencyRouter(t, pool)
@@ -180,6 +182,30 @@ func TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetr
 		}
 	}
 
+	// The killer connection: simple-protocol multi-statements, so a kill is
+	// one round trip (bump + commit + re-take). The request's next attempt
+	// cannot slip into the gap.
+	ctx := context.Background()
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	arm := func() {
+		sql := "BEGIN; SELECT path_id FROM work_pools WHERE path_id = '" + path + "' FOR UPDATE"
+		if _, err := conn.Conn().PgConn().Exec(ctx, sql).ReadAll(); err != nil {
+			t.Fatalf("arm the pool row lock: %v", err)
+		}
+	}
+	kill := func() {
+		sql := "UPDATE work_pools SET version = version + 1 WHERE path_id = '" + path +
+			"'; COMMIT; BEGIN; SELECT path_id FROM work_pools WHERE path_id = '" + path + "' FOR UPDATE"
+		if _, err := conn.Conn().PgConn().Exec(ctx, sql).ReadAll(); err != nil {
+			t.Fatalf("bump, commit and re-take the pool row lock: %v", err)
+		}
+	}
+
+	arm()
 	type result struct {
 		rec  *httptest.ResponseRecorder
 		done chan struct{}
@@ -190,8 +216,8 @@ func TestReplayClasses_ConcurrentModificationRefusalIsNotStoredAndTheSameKeyRetr
 		res.rec = replayPost(t, router, "/paths/"+path+"/work-releases", "k-conc-refused", "")
 	}()
 
-	// Kill every optimistic attempt the request makes, one lock-and-bump at a
-	// time, until it has exhausted retryOnPoolConflict's budget.
+	// Kill every optimistic attempt the request makes, one lock-and-bump at
+	// a time, until it has exhausted retryOnPoolConflict's budget.
 loop:
 	for i := 0; ; i++ {
 		select {
@@ -199,35 +225,14 @@ loop:
 			t.Fatalf("the release won after %d killed attempts: the refusal never happened", i)
 		default:
 		}
-		func() {
-			ctx := context.Background()
-			conn, err := pool.Acquire(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer conn.Release()
-			tx, err := conn.Begin(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = tx.Rollback(ctx) }()
-			if _, err := tx.Exec(ctx, `SELECT path_id FROM work_pools WHERE path_id = $1 FOR UPDATE`, path); err != nil {
-				t.Fatal(err)
-			}
-			waitForPoolLockWaiter(t, pool)
-			if _, err := tx.Exec(ctx, `UPDATE work_pools SET version = version + 1 WHERE path_id = $1`, path); err != nil {
-				t.Fatal(err)
-			}
-			if err := tx.Commit(ctx); err != nil {
-				t.Fatal(err)
-			}
-		}()
+		waitForPoolLockWaiter(t, pool)
+		kill()
 		select {
 		case <-res.done:
 			break loop // the request finally surfaced the 409
 		case <-time.After(150 * time.Millisecond):
-			// No waiter within 150ms: either the request is between attempts
-			// (backoff) or it already finished — loop and re-check.
+			// No waiter within 150ms: the request is between attempts
+			// (backoff) — loop and re-check.
 			select {
 			case <-res.done:
 				break loop

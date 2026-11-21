@@ -29,8 +29,11 @@ func postShiftPlan(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeGone writes a 410 RFC 7807 problem for a route whose decision moved
-// to another context.
+// to another context. The answer is FINAL for every body of the gone route
+// (ADR 0049): behind the idempotency middleware it is marked so it is stored
+// and replayed (ADR 0050).
 func writeGone(w http.ResponseWriter, r *http.Request, slug, title, detail string) {
+	markReplayClass(w, classFinal)
 	writeProblem(w, http.StatusGone, problemDetails{
 		Type:     problemBaseURI + slug,
 		Title:    title,

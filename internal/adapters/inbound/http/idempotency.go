@@ -251,10 +251,13 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 // then fail with 25P02 and the client would see a 500. Releasing the
 // savepoint exposes the abort: the release fails, ROLLBACK TO SAVEPOINT
 // discards only the handler's partial writes (the key-row INSERT before the
-// savepoint survives) and heals the transaction, and the 4xx outcome is
+// savepoint survives) and heals the transaction, and a FINAL 4xx outcome is
 // recorded and committed like any other. A 2xx/3xx answer behind a failed
-// release is a lie (its writes are gone), so it rolls everything back and
-// fails the request instead, letting the same key retry the real work.
+// release is a lie (its writes are gone), and so is an OUTCOME refusal whose
+// writes are gone: both roll everything back and fail the request instead,
+// letting the same key retry the real work. A RETRYABLE or unclassified
+// refusal never reaches the release: it is rolled back whole, key row
+// included (ADR 0050).
 func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context, tx pgx.Tx, key string, next http.Handler) {
 	// A panic from the wrapped handler must roll back this transaction —
 	// so neither the idempotency row nor any domain write it made
@@ -279,42 +282,51 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 	}
 
 	txCtx := pgtx.WithTx(ctx, tx)
-	rec := httptest.NewRecorder()
+	rec := &keyCapture{ResponseRecorder: httptest.NewRecorder()}
 	next.ServeHTTP(rec, r.WithContext(txCtx))
 
-	// A 5xx is never stored (REST guideline 2.5): roll the whole
-	// transaction back (key row, aggregate change, outbox rows) and answer
-	// the 5xx, so the retry re-executes.
-	if rec.Code >= http.StatusInternalServerError {
+	// An answer that is not final for this request is RELEASED: roll the
+	// whole transaction back — the key row with it — and answer the
+	// client, so a retry with the same key executes again instead of
+	// replaying an answer that depends on state which may have changed.
+	// That is a 5xx (never stored, guideline 2.5), a refusal whose
+	// problem type declares RETRYABLE, and a refusal that declared no
+	// class at all — the safe fallback, released rather than pinned
+	// (ADR 0050).
+	if !rec.storable() {
 		_ = tx.Rollback(ctx)
-		copyRecorded(w, rec)
+		copyRecorded(w, rec.ResponseRecorder)
 		return
 	}
 
 	if _, err := tx.Exec(ctx, "RELEASE SAVEPOINT handler_run"); err != nil {
 		// A statement inside the handler failed on the server: the
-		// transaction is aborted. Roll back to the savepoint to discard the
-		// handler's partial writes and return the transaction to health.
+		// transaction is aborted. Rolling back to the savepoint discards the
+		// handler's partial writes (the right all-or-nothing semantics for
+		// an error answer) and returns the transaction to health.
 		if _, rerr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT handler_run"); rerr != nil {
 			_ = tx.Rollback(ctx)
 			writeProblem(w, http.StatusInternalServerError, internalErrorProblemDetails(r.URL.Path))
 			return
 		}
-		if rec.Code < http.StatusBadRequest {
-			// A success whose writes are gone must be neither returned nor
-			// cached: fail the request so the key retries.
+		if rec.Code < http.StatusBadRequest || rec.class == classOutcome {
+			// A success answer whose writes cannot be committed must
+			// neither be returned nor cached, and neither must an
+			// OUTCOME refusal, whose whole point is that its writes
+			// commit with it: fail so the key retries.
 			_ = tx.Rollback(ctx)
 			writeProblem(w, http.StatusInternalServerError, internalErrorProblemDetails(r.URL.Path))
 			return
 		}
 	}
 
-	// Every other NORMAL (non-panic) response is cached here, including a
-	// business-logic error response (4xx from validation, etc.) — a
-	// deliberate v1 simplification (see the ADR): a client retrying the
-	// exact same key+body deterministically gets the exact same answer,
-	// including a validation error. A caller wanting a different outcome
-	// must use a new Idempotency-Key.
+	// Every answer that is final for the request is cached here — a 2xx,
+	// and a refusal whose problem type declares FINAL or OUTCOME (ADR
+	// 0050): a client retrying the exact same key+body deterministically
+	// gets the exact same answer. An OUTCOME refusal's handler writes are
+	// committed by the same transaction (the savepoint above was
+	// released), which is what makes the stored answer true. A caller
+	// wanting a different outcome must use a new Idempotency-Key.
 	headersJSON, err := json.Marshal(rec.Header())
 	if err != nil {
 		_ = tx.Rollback(ctx)
@@ -339,7 +351,7 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 
 	// Only after a successful commit does the real client see anything —
 	// the recorder's headers, then status, then body, VERBATIM.
-	copyRecorded(w, rec)
+	copyRecorded(w, rec.ResponseRecorder)
 }
 
 // copyRecorded writes a captured response onto the real ResponseWriter.

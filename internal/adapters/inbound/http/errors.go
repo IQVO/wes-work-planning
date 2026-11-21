@@ -159,9 +159,13 @@ func problemFor(err error) (typeURI, title string) {
 // writeError writes a domain/application error as an RFC 7807
 // (https://www.rfc-editor.org/rfc/rfc7807) application/problem+json body.
 // statusFor's mapping is unchanged; this only shapes what gets written.
+// When the writer is the idempotency middleware's capture, the answer is
+// also marked with the replay class its catalogue entry declares (ADR 0050)
+// — the middleware reads the mark, not a slug list of its own.
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	status := statusFor(err)
 	typeURI, title := problemFor(err)
+	markReplayClass(w, classFor(err))
 	writeProblem(w, status, problemDetails{
 		Type:     typeURI,
 		Title:    title,

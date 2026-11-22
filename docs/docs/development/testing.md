@@ -18,7 +18,7 @@ flowchart TB
         MUT["Mutation (gremlins v0.6.0)<br/>efficacy and mutant-coverage thresholds 99 %"]
     end
     subgraph mid["Acceptance — in-process, no I/O"]
-        BDD["BDD (godog)<br/>17 features, 227 scenarios"]
+        BDD["BDD (godog)<br/>18 features, 217 scenarios"]
         EVAL["MCP evals<br/>17 godog scenarios + conformance/governance"]
         ARCH["Architecture fitness tests<br/>12 tests in internal/architecture"]
     end
@@ -102,7 +102,7 @@ pending step fails) against the real use cases wired to in-memory test doubles.
 | `work_pool_rules.feature` | 15 | 27 |
 | `work_release.feature` | 2 | 2 |
 | `work_unit_enqueue.feature` | 12 | 17 |
-| **15 files** | **123** | **179** (1143 steps) |
+| **18 files** | **152** | **217** (1413 steps) |
 
 `planning_moved.feature` pins that the two planning routes removed in stage E
 of [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)
@@ -112,7 +112,7 @@ went with the code.
 
 "Executed" counts Scenario Outline example rows; the totals are godog's own
 summary from `go test . -run TestFeatures -count=1 -v`:
-`179 scenarios (179 passed)`, `1143 steps (1143 passed)`. All 123 headings
+`217 scenarios (217 passed)`, `1413 steps (1413 passed)`. All 152 headings
 (`git grep -c -E "^[[:space:]]*Scenario" -- features`) run. The former
 `@known-bug` scenario in `relocation_rules.feature` (`completeWorkUnit` on a
 cancelled unit: the specification and [ADR-0040](../adr/0040-slot-plan-relocation-work.md)

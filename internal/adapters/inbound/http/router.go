@@ -52,8 +52,8 @@ func NewRouter(h *Handlers, serviceName string, logger *slog.Logger) *chi.Mux {
 	}
 
 	r.Route("/paths/{pathId}", func(r chi.Router) {
-		// Always 410: the charge forecast and the shift plan moved to
-		// warehouse-planning (ADR-0049, stage C); removed in stage E.
+		// No /charge or /plan: the charge forecast and the shift plan moved to
+		// warehouse-planning (ADR-0049); stage E removed both POSTs (404).
 		keyed(r).Post("/work-units", h.postWorkUnit)
 		keyed(r).Post("/work-releases", h.postRelease)
 		keyed(r).Post("/rebalance-decisions", h.postRebalanceDecision)

@@ -11,7 +11,8 @@
 #   - docs/docs/adr/0012 (catalogue prefix-family match) and the fleet REST
 #     guideline (page.go: limit 1..500, opaque cursor, unknown parameters).
 # The charge forecast and shift plan rules moved to warehouse-planning with
-# their aggregates (ADR-0049); features/planning_moved.feature pins the 410s.
+# their aggregates (ADR-0049); features/planning_moved.feature pins the 404s
+# of the removed routes (stage E).
 Feature: Work-unit rules from the documentation
   As the WES conductor
   I want the documented invariants, limits and error rows of the commands and queries pinned at their boundaries

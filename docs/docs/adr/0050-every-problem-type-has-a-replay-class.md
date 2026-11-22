@@ -80,8 +80,7 @@ executes the work fresh (no replay header). It never observes the released refus
 
 Every problem type of the service — the `problemCatalog` entries of
 `internal/adapters/inbound/http/errors.go` plus the standalone problems written through
-`writeProblem`/`writeGone` directly (the 410-moved routes, the readiness 503, the
-reports reader's own answers) — declares exactly one class, on its catalogue entry.
+`writeProblem` directly (the readiness 503, the reports reader's own answers) — declares exactly one class, on its catalogue entry.
 GET and PUT routes take no `Idempotency-Key`; their entries are classified anyway so no
 problem type of the package is unclassified, and their classes are nominal.
 
@@ -120,8 +119,6 @@ problem type of the package is unclassified, and their classes are nominal.
 | `work-pool-entry-not-found` | 400 | RETRYABLE | the entry may arrive later (an enqueue or an integration event) |
 | `invalid-wip-limit` | 400 | FINAL | the ConfigurePool body (a PUT: never behind the middleware) |
 | `unknown-feed-mode` | 400 | FINAL | the ConfigurePool body's enum (a PUT: never behind the middleware) |
-| `charge-forecast-moved` | 410 | FINAL | the route is gone for ANY body (ADR 0049): a function of the request alone |
-| `shift-plan-moved` | 410 | FINAL | the route is gone for ANY body (ADR 0049) |
 | `invalid-report-query` | 400 | FINAL | the reports query alone (a read-only binary, never behind the middleware) |
 | `dependency-unavailable` | 503 | RETRYABLE | a 5xx is never stored |
 | `report-store-error` | 500 | RETRYABLE | a 5xx is never stored |
@@ -161,9 +158,10 @@ problem type of the package is unclassified, and their classes are nominal.
    classified FINAL** even though they are answered outside the store: the catalogue is
    the one place every problem type of the package is classified, and the class
    documents the intent (the request alone / the store's own answer).
-6. **The 410-moved routes are FINAL** (`charge-forecast-moved`, `shift-plan-moved`): the
-   answer is the same for every body of the gone route (ADR 0049), written through
-   `writeGone`, which marks the capture FINAL like the shared error writer.
+6. **The 410-moved routes were FINAL** (`charge-forecast-moved`, `shift-plan-moved`): the
+   answer was the same for every body of the gone route (ADR 0049). ADR 0049 stage E
+   removed both routes (a POST answers `404`), so both problem types left the catalogue
+   and the table above.
 
 ## Consequences
 

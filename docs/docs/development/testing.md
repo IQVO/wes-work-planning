@@ -104,9 +104,9 @@ pending step fails) against the real use cases wired to in-memory test doubles.
 | `work_unit_enqueue.feature` | 12 | 17 |
 | **15 files** | **123** | **179** (1143 steps) |
 
-`planning_moved.feature` pins the two always-`410` planning routes and the
-pure labour-plan projection
-([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md));
+`planning_moved.feature` pins that the two planning routes removed in stage E
+of [ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)
+answer `404`;
 the former charge-forecast, shift-plan and labour-plan reconciliation features
 went with the code.
 
@@ -176,19 +176,18 @@ go test -tags=integration ./internal/adapters/outbound/postgres/... -run Outbox 
 service against a **real Postgres (`DATABASE_URL`) and a real Kafka
 (`KAFKA_BROKERS`)** on `127.0.0.1:18086` (`CONTRACT_PORT`), waits for
 `/readyz`, then runs
-`st run apis/openapi.yaml --max-examples 100 --workers 4 --generation-allow-x00 false --exclude-operation-id receiveChargeForecast --exclude-operation-id commitShiftPlan`
+`st run apis/openapi.yaml --max-examples 100 --workers 4 --generation-allow-x00 false`
 with the `scripts/contract_hooks.py` hook that gives every request a fresh
 `Idempotency-Key` (`CONTRACT_MAX_EXAMPLES` overrides 100). The CI `contract`
 job provides `postgres:16` and `confluentinc/confluent-local:7.6.1` service
 containers (the Kafka one advertises `PLAINTEXT_HOST://localhost:<port>`);
 locally start disposable ones (the commands are in the script header).
-`receiveChargeForecast` and `commitShiftPlan` are excluded because both answer
-`410` for every body since
-[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md),
-so the positive phase would report every accepted schema as rejected; the
-410s are covered by `TestPlanningRoutesAnswer410NamingTheNewOwner` and
-`features/planning_moved.feature`, and both exclusions go with the routes in
-stage E. The
+The run excludes no operation: `receiveChargeForecast` and `commitShiftPlan`
+were excluded while they answered `410` for every body, and both exclusions
+went with the routes in stage E of
+[ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)
+(`TestPlanningRoutesAreGone` and `features/planning_moved.feature` pin the
+`404`). The
 `/reports/*` routes of `cmd/wes-reports` are specified separately in
 `apis/openapi-reports.yaml` ([ADR-0038](../adr/0038-reports-api-openapi-contract.md))
 and contract-tested in Go, without Schemathesis or a database:

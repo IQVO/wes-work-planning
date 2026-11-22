@@ -25,9 +25,8 @@ func doKeyed(router http.Handler, method, path, key, body string) *httptest.Resp
 	return rec
 }
 
-// TestIdempotency_EveryPostRequiresAKey: every POST, the two always-410
-// planning routes of ADR-0049 included, answers 400 idempotency-key-required
-// without the header.
+// TestIdempotency_EveryPostRequiresAKey: every POST answers 400
+// idempotency-key-required without the header.
 func TestIdempotency_EveryPostRequiresAKey(t *testing.T) {
 	router := newIdempotencyRouter(t, idempotencyDB(t))
 	for _, path := range []string{

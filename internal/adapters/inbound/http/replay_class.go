@@ -46,7 +46,7 @@ type problemType struct {
 }
 
 // standaloneProblem is a problem type written outside problemCatalog: the
-// middlewares' and the 410-moved routes' own answers, the 5xx fallback, the
+// middlewares' own answers, the 5xx fallback, the
 // readiness 503 and the reports reader's own answers (a read-only binary,
 // never behind the middleware). Each still declares exactly one replay class
 // (ADR 0050) so no problem type of the service is unclassified. Several share
@@ -58,14 +58,12 @@ type standaloneProblem struct {
 	class  replayClass
 }
 
-// standaloneProblems are the problem types written through writeProblem (or
-// writeGone) directly rather than through a typed error of problemCatalog.
+// standaloneProblems are the problem types written through writeProblem
+// directly rather than through a typed error of problemCatalog.
 var standaloneProblems = []standaloneProblem{
 	{slug: "internal-error", status: http.StatusInternalServerError, class: classRetryable},
 	{slug: "not-found", status: http.StatusNotFound, class: classRetryable},
 	{slug: "malformed-request-body", status: http.StatusBadRequest, class: classFinal},
-	{slug: "charge-forecast-moved", status: http.StatusGone, class: classFinal},
-	{slug: "shift-plan-moved", status: http.StatusGone, class: classFinal},
 	{slug: "dependency-unavailable", status: http.StatusServiceUnavailable, class: classRetryable},
 	{slug: "invalid-report-query", status: http.StatusBadRequest, class: classFinal},
 	{slug: "report-store-error", status: http.StatusInternalServerError, class: classRetryable},

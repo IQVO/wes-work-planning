@@ -41,12 +41,6 @@ func RefuseForTest(w http.ResponseWriter, r *http.Request, slug string, status i
 	case "malformed-request-body":
 		markReplayClass(w, classFinal)
 		writeProblem(w, http.StatusBadRequest, nulProblem(http.StatusBadRequest, "malformed-request-body", "Malformed request body", "refused for the test", r.URL.Path))
-	case "charge-forecast-moved":
-		markReplayClass(w, classFinal)
-		writeProblem(w, http.StatusGone, problemDetails{Type: problemBaseURI + "charge-forecast-moved", Title: "Charge forecast moved to warehouse-planning", Status: http.StatusGone, Detail: "moved", Instance: r.URL.Path})
-	case "shift-plan-moved":
-		markReplayClass(w, classFinal)
-		writeProblem(w, http.StatusGone, problemDetails{Type: problemBaseURI + "shift-plan-moved", Title: "Shift plan moved to warehouse-planning", Status: http.StatusGone, Detail: "moved", Instance: r.URL.Path})
 	case "dependency-unavailable":
 		markReplayClass(w, classRetryable)
 		writeProblem(w, http.StatusServiceUnavailable, problemDetails{

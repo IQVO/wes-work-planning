@@ -558,7 +558,8 @@ Absent edges, on purpose:
 - **warehouse-planning**: it owns the charge forecast and the labour plan
   (`PUT /workload-forecasts/{site_id}/{path_id}`,
   `PUT /labour-plans/{site_id}/{shift_id}/{path_id}`); no message flows
-  between us, and our two old planning POSTs answer `410` naming those routes.
+  between us; our two old planning POSTs answered `410` naming those routes for
+  one release and were removed in stage E (a POST answers `404`).
 - **order-management → REST**: it no longer calls
   `POST /paths/{pathId}/work-units`; `OrderAllocated` choreography replaced it
   ([ADR-0031](../adr/0031-order-allocated-choreography.md)). There is no reply

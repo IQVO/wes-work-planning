@@ -16,8 +16,9 @@ info:
     process path — release-fed pools enforce a hard WIP limit, flow-fed pools
     only alarm) and `WorkUnit` (a releasable unit of work with at-most-once
     assignment and no double-complete). The charge forecast and the shift
-    plan moved to warehouse-planning (ADR-0049): their two POST routes answer
-    `410 Gone` for one release, naming warehouse-planning's routes.
+    plan moved to warehouse-planning (ADR-0049): their two POST routes
+    answered `410 Gone` for one release and were removed in stage E (a POST
+    to either answers `404`).
 
 
     This service does **not** own equipment control (WCS), inventory
@@ -38,11 +39,15 @@ tags:
   - name: Charge Forecast
     description: >
       Retired (ADR-0049): the volume due by CPT on a path is
-      warehouse-planning's workload forecast now. The route answers `410`.
+      warehouse-planning's workload forecast now (`PUT
+      /workload-forecasts/{site_id}/{path_id}`). `POST /paths/{pathId}/charge`
+      was removed in stage E and answers `404`.
   - name: Shift Plan
     description: >
       Retired (ADR-0049): rate × heads × hours on a path is
-      warehouse-planning's labour plan now. The route answers `410`. Distinct
+      warehouse-planning's labour plan now (`PUT
+      /labour-plans/{site_id}/{shift_id}/{path_id}`). `POST
+      /paths/{pathId}/plan` was removed in stage E and answers `404`. Distinct
       from Workforce Management's reported labor plan — see the Labor Plan
       View tag for that.
   - name: Work Units

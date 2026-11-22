@@ -7,7 +7,7 @@
 #     liveness never flips; readiness flips to not-ready first on shutdown
 # The shift plan and charge forecast validation moved to warehouse-planning
 # with their aggregates (ADR-0049); features/planning_moved.feature pins the
-# 410 both routes answer now.
+# 404 both removed routes answer since stage E.
 
 Feature: Rebalancing without an invented labor plan, and reporting health
   As the WES conductor

@@ -25,8 +25,9 @@ func newReadiness(repos repositories, kafkaBrokers string) *inboundhttp.Readines
 }
 
 // newHandlers wires every use case into the inbound HTTP handlers,
-// including the idempotency pool and readiness gate of their ADRs. The two
-// retired planning POSTs (ADR-0049) need no use case: they always answer 410.
+// including the idempotency pool and readiness gate of their ADRs. The
+// planning POSTs moved to warehouse-planning (ADR-0049) and were removed in
+// stage E, so no planning use case is wired.
 func newHandlers(repos repositories, publisher ports.EventPublisher, clock ports.Clock, catalogue ports.PathCatalogue, packs ports.ProductClassificationLookup, kafkaBrokers string) *inboundhttp.Handlers {
 	uow := repos.uow
 	return &inboundhttp.Handlers{

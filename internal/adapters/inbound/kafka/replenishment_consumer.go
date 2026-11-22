@@ -153,7 +153,7 @@ func (c *ReplenishmentConsumer) settle(ctx context.Context, msg kafkago.Message)
 		return ctx.Err()
 	}
 	c.logger.ErrorContext(ctx, "replenishment event failed, sending to dead-letter topic",
-		"topic", c.topic, "partition", msg.Partition, "offset", msg.Offset, "dlq_topic", c.topic+dlqTopicSuffix, "error", err)
+		"topic", c.topic, "partition", msg.Partition, "offset", msg.Offset, "dlq_topic", c.topic+dlqTopicSuffix, "error", sanitizeErr(err))
 	if dlqErr := c.sendToDeadLetter(ctx, msg, err); dlqErr != nil {
 		return fmt.Errorf("replenishment consumer: publish to dead-letter topic: %w", dlqErr)
 	}
@@ -173,7 +173,7 @@ func (c *ReplenishmentConsumer) handle(ctx context.Context, msg kafkago.Message)
 	env, err := cloudevents.Decode(msg.Value)
 	if err != nil {
 		c.logger.WarnContext(msgCtx, "skipping a message that is not a valid CloudEvent on the pick-face-replenishment topic",
-			"topic", c.topic, "partition", msg.Partition, "offset", msg.Offset, "error", err)
+			"topic", c.topic, "partition", msg.Partition, "offset", msg.Offset, "error", sanitizeErr(err))
 		return nil
 	}
 	span.SetAttributes(attribute.String("messaging.message.id", env.ID()), attribute.String("cloudevents.event_type", env.Type()))
@@ -249,7 +249,7 @@ func (c *ReplenishmentConsumer) applyRequested(ctx context.Context, env ce.Event
 		return err
 	}
 	c.logger.InfoContext(ctx, "ReplenishmentRequested handled",
-		"event_id", env.ID(), "request_id", data.RequestId, "priority", data.Priority, "outcome", outcome.String())
+		"event_id", sanitizeLog(env.ID()), "request_id", sanitizeLog(data.RequestId), "priority", sanitizeLog(data.Priority), "outcome", sanitizeLog(outcome.String()))
 	return nil
 }
 
@@ -268,7 +268,7 @@ func (c *ReplenishmentConsumer) applyCancelled(ctx context.Context, env ce.Event
 		return err
 	}
 	c.logger.InfoContext(ctx, "ReplenishmentCancelled handled",
-		"event_id", env.ID(), "request_id", data.RequestId, "reason", data.Reason, "outcome", outcome.String())
+		"event_id", sanitizeLog(env.ID()), "request_id", sanitizeLog(data.RequestId), "reason", sanitizeLog(data.Reason), "outcome", sanitizeLog(outcome.String()))
 	return nil
 }
 

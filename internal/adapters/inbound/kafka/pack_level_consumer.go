@@ -236,7 +236,7 @@ func (c *PackLevelConsumer) settle(ctx context.Context, msg kafkago.Message) err
 		return ctx.Err()
 	}
 	c.logger.ErrorContext(ctx, "pack level event is poison, sending to dead-letter topic",
-		"topic", c.topic, "partition", msg.Partition, "offset", msg.Offset, "dlq_topic", c.topic+dlqTopicSuffix, "error", err)
+		"topic", c.topic, "partition", msg.Partition, "offset", msg.Offset, "dlq_topic", c.topic+dlqTopicSuffix, "error", sanitizeErr(err))
 	headers := append([]kafkago.Header{}, msg.Headers...)
 	headers = append(headers,
 		kafkago.Header{Key: hdrDLQSourceTopic, Value: []byte(c.topic)},
@@ -265,7 +265,7 @@ func (c *PackLevelConsumer) handle(ctx context.Context, msg kafkago.Message) err
 	env, err := cloudevents.Decode(msg.Value)
 	if err != nil {
 		c.logger.WarnContext(msgCtx, "skipping a message that is not a valid CloudEvent on the product-master topic",
-			"topic", c.topic, "partition", msg.Partition, "offset", msg.Offset, "error", err)
+			"topic", c.topic, "partition", msg.Partition, "offset", msg.Offset, "error", sanitizeErr(err))
 		return nil
 	}
 	span.SetAttributes(attribute.String("messaging.message.id", env.ID()), attribute.String("cloudevents.event_type", env.Type()))
@@ -348,11 +348,11 @@ func (c *PackLevelConsumer) applyWithRetry(ctx context.Context, req usecases.Obs
 		outcome, err := c.observe.Execute(ctx, req)
 		if err == nil {
 			c.logger.DebugContext(ctx, "pack level event handled",
-				"id", req.EventId, "gtin", req.Record.GTIN, "outcome", outcome.String())
+				"id", sanitizeLog(req.EventId), "gtin", sanitizeLog(req.Record.GTIN), "outcome", sanitizeLog(outcome.String()))
 			return nil
 		}
 		c.logger.ErrorContext(ctx, "applying a pack level event failed; retrying the same message",
-			"id", req.EventId, "gtin", req.Record.GTIN, "attempt", attempt, "retry_in", delay.String(), "error", err)
+			"id", sanitizeLog(req.EventId), "gtin", sanitizeLog(req.Record.GTIN), "attempt", attempt, "retry_in", delay.String(), "error", sanitizeErr(err))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

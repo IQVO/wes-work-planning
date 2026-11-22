@@ -149,7 +149,7 @@ func (h *Housekeeper) Run(ctx context.Context) error {
 		res, err := h.SweepOnce(ctx)
 		switch {
 		case err != nil && !errors.Is(err, context.Canceled):
-			h.logger.ErrorContext(ctx, "housekeeping sweep failed", "error", err)
+			h.logger.ErrorContext(ctx, "housekeeping sweep failed", "error", sanitizeErr(err))
 		case res.IdempotencyKeys > 0 || res.OutboxEvents > 0:
 			h.logger.InfoContext(ctx, "housekeeping sweep removed rows",
 				"idempotency_keys", res.IdempotencyKeys, "outbox_events", res.OutboxEvents)

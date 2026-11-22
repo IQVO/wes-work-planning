@@ -84,7 +84,7 @@ func (uc *ApplyTaskCompleted) Execute(ctx context.Context, req ApplyTaskComplete
 		if errors.Is(err, workunit.ErrAlreadyCompleted) {
 			outcome = TaskCompletedAlreadyCompleted
 			slog.InfoContext(ctx, "TaskCompleted for a work unit that is already completed; skipping",
-				"event_id", req.EventId, "work_unit_id", req.WorkUnitId)
+				"event_id", sanitizeLog(req.EventId), "work_unit_id", sanitizeLog(req.WorkUnitId))
 			return nil
 		}
 		return err

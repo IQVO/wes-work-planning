@@ -93,7 +93,7 @@ func (r *OutboxRelay) Run(ctx context.Context) error {
 	for {
 		n, err := r.RelayOnce(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			r.logger.ErrorContext(ctx, "outbox relay pass failed", "error", err)
+			r.logger.ErrorContext(ctx, "outbox relay pass failed", "error", sanitizeErr(err))
 		}
 		if n == r.batchSize && err == nil {
 			continue
@@ -223,8 +223,8 @@ func (r *OutboxRelay) abortSend(ctx context.Context, tx pgx.Tx, p outboxRow, err
 		err = errors.Join(err, fmt.Errorf("postgres: commit relay pass: %w", cerr))
 	} else if r.maxAttempts > 0 && attempts >= r.maxAttempts {
 		r.logger.ErrorContext(ctx, "outbox relay: row reached the attempt cap and is no longer claimed",
-			"outbox_id", p.id, "topic", p.msg.Topic, "event_type", p.msg.EventType, "key", string(p.msg.Key),
-			"attempts", attempts, "max_attempts", r.maxAttempts, "error", err,
+			"outbox_id", p.id, "topic", p.msg.Topic, "event_type", sanitizeLog(p.msg.EventType), "key", sanitizeLog(string(p.msg.Key)),
+			"attempts", attempts, "max_attempts", r.maxAttempts, "error", sanitizeErr(err),
 			"rearm", "UPDATE outbox_events SET attempts = 0 WHERE id = <outbox_id>")
 	}
 	return fmt.Errorf("outbox relay: send %s to %s (row %d): %w", p.msg.EventType, p.msg.Topic, p.id, err)

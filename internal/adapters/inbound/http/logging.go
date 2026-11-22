@@ -35,13 +35,13 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(ww, r)
 
 			attrs := []any{
-				"method", r.Method,
+				"method", sanitizeForLog(r.Method),
 				"path", sanitizeForLog(r.URL.Path),
 				"route", routePattern(r),
 				statusKey, ww.Status(),
 				"duration_ms", time.Since(start).Milliseconds(),
 				"bytes", ww.BytesWritten(),
-				"request_id", middleware.GetReqID(r.Context()),
+				"request_id", sanitizeForLog(middleware.GetReqID(r.Context())),
 			}
 
 			if ww.Status() >= http.StatusInternalServerError {

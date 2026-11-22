@@ -186,7 +186,7 @@ func problemFromUseCase(err error) *problem {
 	case errors.Is(err, shared.ErrInvalidPathId):
 		return problemInvalidPathId(err)
 	default:
-		slog.Error("a2a skill failed", "error", err)
+		slog.Error("a2a skill failed", "error", logReplacer.Replace(err.Error()))
 		return &problem{Type: problemTypeBase + "/internal", Title: "Unexpected failure executing the skill", Detail: "the skill failed; see server logs (trace id in the response metadata)", Status: 500}
 	}
 }

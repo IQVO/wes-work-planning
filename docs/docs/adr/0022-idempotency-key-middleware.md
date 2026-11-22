@@ -254,3 +254,18 @@ idempotent by construction (natural-key upsert on the caller-supplied
 `path_id` — see Context) — adding the middleware there would add
 mandatory-header friction to every caller of those two routes for zero
 additional safety.
+
+---
+
+## Update (2026-11-20): replay classes
+
+The "store every answer below 500" behaviour described above — including the
+deliberate v1 simplification of caching a business-logic 4xx — was replaced by
+[ADR 0050](./0050-every-problem-type-has-a-replay-class.md): each problem type
+declares FINAL, OUTCOME or RETRYABLE on its catalogue entry. A RETRYABLE
+refusal rolls the whole request transaction back — key row included — exactly
+like the 5xx branch below, so the same key executes again (a different body
+under it afterwards is a new request, not `idempotency-key-reused`). FINAL
+answers are stored as described; an OUTCOME refusal (none today) would commit
+its writes with the stored answer. The savepoint design, the concurrency
+argument and the no-null-status-code invariant are unchanged.

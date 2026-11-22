@@ -202,3 +202,12 @@ Fully qualified name of the A2A agent Deployment/Service (<release>-a2a).
 {{- define "wes-work-planning.a2aFullname" -}}
 {{- include "wes-work-planning.fullname" . }}-a2a
 {{- end }}
+
+{{/* agents.colocate (warehouse-infra ADR 0012): "true" iff colocate, mcp and a2a are all on; else empty. */}}
+{{- define "wes-work-planning.agentsColocated" -}}
+{{- if and (.Values.agents | default dict).colocate .Values.mcp.enabled .Values.a2a.enabled }}true{{ end -}}
+{{- end }}
+
+{{- define "wes-work-planning.agentsFullname" -}}
+{{- printf "%s-agents" (include "wes-work-planning.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}

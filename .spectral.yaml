@@ -14,12 +14,3 @@ rules:
     given: "$"
     then:
       function: restGuideline
-# ADR-0049 stage C: the two planning POSTs moved to warehouse-planning and
-# always answer 410 Gone, so they have no 2xx/3xx response by design.
-# STAGE E removes both operations, and with them this override.
-overrides:
-  - files:
-      - "apis/openapi.yaml#/paths/~1paths~1%7BpathId%7D~1charge/post"
-      - "apis/openapi.yaml#/paths/~1paths~1%7BpathId%7D~1plan/post"
-    rules:
-      operation-success-response: "off"

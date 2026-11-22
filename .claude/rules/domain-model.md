@@ -12,7 +12,7 @@ paths:
 ## Ubiquitous Language (use these exact names)
 
 - **Charge** — moved to warehouse-planning as its *workload forecast* (ADR-0049);
-  `POST /paths/{pathId}/charge` answers 410.
+  `POST /paths/{pathId}/charge` was removed at stage E (answers 404); warehouse-planning owns `PUT /workload-forecasts/{site_id}/{path_id}`.
 - **Remaining admission capacity** — ours, live per path and CPT
   (`PathCapacityChanged`). Not warehouse-planning's *planned capacity* (per window).
 - **CPT (Critical Pull Time)** — last moment a parcel can be manifested and
@@ -25,7 +25,7 @@ paths:
 - **WorkUnit** — a releasable unit of work (e.g. a pick task). Assigned at
   most once at a time; cannot complete twice.
 - **ShiftPlan / PathPlan** — moved to warehouse-planning as its *labour plan*
-  (ADR-0049); `POST /paths/{pathId}/plan` answers 410.
+  (ADR-0049); `POST /paths/{pathId}/plan` was removed at stage E (answers 404); warehouse-planning owns `PUT /labour-plans/{site_id}/{shift_id}/{path_id}`.
 - **Release** — continuous, priority-ordered admission of work into a pool
   (waveless). The release decision is a POLICY object, not a schedule.
 - **Flow balancing** — on telemetry (backlog vs plan): throttle upstream
@@ -106,7 +106,7 @@ observability/future subscribers.
 ## Use cases (application layer)
 
 1. (retired, ADR-0049) `ReceiveChargeForecast` and `CommitShiftPlan` moved to
-   warehouse-planning; their routes answer 410.
+   warehouse-planning; their routes were removed at stage E (answer 404).
 3. `EnqueueWorkUnit(path, cpt, ref, lineNo?)` → WorkUnit added to pool. The
    optional `lineNo` (>= 1, else 400 `invalid-line-no`) is stored on the unit
    (nullable `line_no`, ADR-0036); `ApplyOrderAllocated` passes the line it

@@ -259,26 +259,32 @@ real page), `title` is a fixed category summary, `status` duplicates the HTTP
 status code, `detail` is the specific error message for this occurrence, and
 `instance` is the request path that produced it.
 
-### `POST /paths/{pathId}/charge` and `POST /paths/{pathId}/plan` — moved (always `410`)
+### `POST /paths/{pathId}/charge` and `POST /paths/{pathId}/plan` — removed
 
 The charge forecast and the shift plan moved to warehouse-planning
 ([ADR-0049](docs/docs/adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)).
-Both routes stay for one release, marked `deprecated`, and answer `410 Gone`
-for any body: `charge-forecast-moved` names warehouse-planning's
-`PUT /workload-forecasts/{site_id}/{path_id}`, `shift-plan-moved` names
-`PUT /labour-plans/{site_id}/{shift_id}/{path_id}`. Nothing is recorded or
-published.
+The routes answered `410 Gone` for one release (v2.0.3) and are now gone
+(stage E): a POST answers `404`. Send the forecast as warehouse-planning's
+`PUT /workload-forecasts/{site_id}/{path_id}` and the plan as its
+`PUT /labour-plans/{site_id}/{shift_id}/{path_id}`.
 
 ### `POST /paths/{pathId}/work-units` — EnqueueWorkUnit
 
 Every `POST` in this API (`/work-units`, `/work-releases`,
-`/rebalance-decisions`, `/completions`, and the two always-`410` routes)
+`/rebalance-decisions`, `/completions`)
 requires an `Idempotency-Key` header (1-128 printable ASCII,
-ADR-0022 / ADR-0047). The key is global: a retry with the same key and the
+ADR-0022 / ADR-0047 / ADR-0050). The key is global: a retry with the same key and the
 same request (method + path + body) returns the identical stored answer with
-`Idempotency-Replayed: true` and has its effect once. The same key with a
-*different* request gets `409` (`idempotency-key-reused`); a missing header gets
-`400` (`idempotency-key-required`), a malformed one `400`
+`Idempotency-Replayed: true` and has its effect once. A refusal is stored only
+when it is final for the request (FINAL — e.g. a validation of the request's
+own fields); a refusal that depends on state that can change (RETRYABLE —
+`concurrent-modification`, `wip-limit-reached`, `work-pool-empty`,
+`work-unit-not-released`, the not-founds, a not-yet-known CASE pack level, any
+5xx) releases the key instead: nothing is stored and the same key executes
+again on retry (a different body under it is a new request). The same key with
+a *different* request after a stored answer gets `409`
+(`idempotency-key-reused`); a missing header gets `400`
+(`idempotency-key-required`), a malformed one `400`
 (`idempotency-key-invalid`). `PUT` takes no key.
 
 ```sh
@@ -456,8 +462,8 @@ with real HTTP calls (`features_test.go` at the repo root).
 go test ./... -run TestFeatures -v
 ```
 
-Scenarios (`features/*.feature`) cover the two moved planning routes (always
-`410`, ADR-0049), CPT-priority Release with at-most-once handout, work-pool
+Scenarios (`features/*.feature`) cover the two removed planning routes (now
+`404`, ADR-0049 stage E), CPT-priority Release with at-most-once handout, work-pool
 capacity, RecordCompletion plus the backlog telemetry read model, the
 read-model views, and flow-balancing rebalance decisions. CI runs them in the
 `bdd` job.

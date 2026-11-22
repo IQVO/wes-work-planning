@@ -78,3 +78,17 @@ operationId `rebalanceDecision` unchanged):
 ## Consequences
 
 Breaking by design; deploys together with the rest of the fleet's REST cutover set.
+
+---
+
+## Update (2026-11-20): which refusals are replayed
+
+The sentence "2xx and 4xx answers are stored" in the Decision above is refined
+by [ADR 0050](./0050-every-problem-type-has-a-replay-class.md): a refusal is
+stored and replayed only when its problem type declares FINAL (or OUTCOME,
+which this service has none of today). A RETRYABLE refusal —
+`concurrent-modification`, `wip-limit-reached`, `work-pool-empty`, the
+not-founds of caller- or event-supplied ids, a not-yet-known CASE pack level,
+any 5xx — releases the key: nothing is stored and the same key may be retried
+(it executes again; a different body under it afterwards is a new request).
+The wire contract — slugs, titles, statuses — is unchanged.

@@ -10,8 +10,8 @@ paths:
 ## REST API (inbound adapter, 14 operationIds in apis/openapi.yaml)
 
 - `GET  /healthz`                          → healthCheck
-- `POST /paths/{pathId}/charge`            → receiveChargeForecast — always 410 `charge-forecast-moved` (ADR-0049; removed at stage E)
-- `POST /paths/{pathId}/plan`              → commitShiftPlan — always 410 `shift-plan-moved` (ADR-0049; removed at stage E)
+- `POST /paths/{pathId}/charge` — REMOVED at ADR-0049 stage E (404); replaced by warehouse-planning `PUT /workload-forecasts/{site_id}/{path_id}`
+- `POST /paths/{pathId}/plan` — REMOVED at ADR-0049 stage E (404); replaced by warehouse-planning `PUT /labour-plans/{site_id}/{shift_id}/{path_id}`
 - `POST /paths/{pathId}/work-units`        → enqueueWorkUnit (optional `lineNo`, ADR-0036)
 - `POST /paths/{pathId}/work-releases`      → releaseNextWork (keyed)
 - `PUT  /paths/{pathId}/pool`              → configurePool (ADR-0034)

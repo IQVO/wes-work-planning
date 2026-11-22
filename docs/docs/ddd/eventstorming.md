@@ -68,7 +68,8 @@ labour plan to warehouse-planning
 (`PUT /workload-forecasts/{site_id}/{path_id}`,
 `PUT /labour-plans/{site_id}/{shift_id}/{path_id}`), which also checks the
 plan against labour and publishes `LabourPlanDriftDetected`. This context's
-old `POST /paths/{pathId}/charge` and `/plan` answer `410`.
+old planning routes are removed (stage E, after one release of `410`):
+`POST /paths/{pathId}/charge` and `POST /paths/{pathId}/plan` were removed and answer `404`.
 
 ## Process 2 — The release loop
 

@@ -84,6 +84,7 @@ no scheduler).
 | [0047](./0047-fleet-rest-api-guideline.md) | Adopt the fleet REST API guideline: noun routes, idempotent POST on a global `Idempotency-Key` (409 on reuse, `Idempotency-Replayed`), keyset-paged collections, Spectral-enforced | Accepted |
 | [0048](./0048-site-and-forward-pick-face-on-released-work.md) | `WorkReleased` publishes top-level `site_id` for every work kind that has one (order work's site from OrderAllocated/OrderPartiallyAllocated's additive `site_id`); pick plans gain `from_bin` derived from the local slot-plan forward-pick face | Accepted |
 | [0049](./0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md) | `ChargeForecast` and `ShiftPlan`/`PathPlan` move to warehouse-planning (its ADR 0023): the two POST routes answer 410, the use cases, drift reconciliation and travel-distance lookup go, `ChargeForecastReceived`, `plan.ShiftPlanCommitted` and `PathPlanDriftDetected` retire; release, balancing, `LaborPlanObserved` and `PathCapacityChanged` stay | Accepted; amends 0006 and 0017, supersedes 0019 on cutover |
+| [0050](./0050-every-problem-type-has-a-replay-class.md) | Every problem type declares exactly one idempotency replay class on its catalogue entry (FINAL, OUTCOME, RETRYABLE); a RETRYABLE refusal (concurrent-modification, wip-limit-reached, work-pool-empty, the not-founds, a not-yet-known CASE pack level, any 5xx) rolls the request transaction back, key row included, so the same key executes again | Accepted; amends 0022 and 0047 |
 
 ## The template
 

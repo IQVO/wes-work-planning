@@ -58,25 +58,28 @@ every event on `warehouse.wes.analytics`, and REST enqueue
 sequenceDiagram
     autonumber
     actor Planner
+    participant WPL as warehouse-planning
     participant WP as wes-work-planning
     participant WM as workforce-management
     participant K as Kafka
 
-    Planner->>WP: cmd: POST /paths/{pathId}/charge or /plan
-    WP-->>Planner: 410 charge-forecast-moved or shift-plan-moved
+    Planner->>WPL: cmd: PUT /workload-forecasts/{site_id}/{path_id}
+    Planner->>WPL: cmd: PUT /labour-plans/{site_id}/{shift_id}/{path_id}
     WM->>K: evt: com.warehouse.wes.workforce-management.shiftplan.ShiftPlanCommitted
     K->>WP: evt: workforce ShiftPlanCommitted
     Note over WP: ObserveLaborPlan upserts LaborPlanObserved and publishes nothing
     Planner->>WP: qry: GET /paths/{pathId}/labor-plan-view
 ```
 
-Source: `internal/adapters/inbound/http/handlers_plan.go`,
-`internal/application/usecases/observe_labor_plan.go`. The charge forecast,
-the shift plan and the plan-vs-labour drift check moved to warehouse-planning
+Source: `internal/application/usecases/observe_labor_plan.go`,
+`internal/adapters/inbound/http/router.go`. The charge forecast, the shift
+plan and the plan-vs-labour drift check moved to warehouse-planning
 ([ADR-0049](../adr/0049-charge-forecast-and-shift-plan-move-to-warehouse-planning.md)):
 the planner sends `PUT /workload-forecasts/{site_id}/{path_id}` and
 `PUT /labour-plans/{site_id}/{shift_id}/{path_id}` there, and it publishes
-`LabourPlanDriftDetected`. The 410 detail names the route to call.
+`LabourPlanDriftDetected`. This context's old planning POSTs answered `410` for
+one release (v2.0.3) and were removed in stage E: `POST /paths/{pathId}/charge` (removed)
+and `POST /paths/{pathId}/plan` (removed) are no longer routes, so a POST answers `404`.
 
 ## Scenario 3 — Publishing remaining path capacity for promising
 

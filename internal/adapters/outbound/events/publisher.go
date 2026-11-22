@@ -39,7 +39,7 @@ func (p *LogPublisher) Publish(ctx context.Context, events ...shared.DomainEvent
 	for _, e := range events {
 		if p.logger != nil {
 			p.logger.InfoContext(ctx, "domain event published",
-				"event", e.EventName(),
+				"event", sanitizeLog(e.EventName()),
 				"occurred_at", e.OccurredAt(),
 			)
 		}

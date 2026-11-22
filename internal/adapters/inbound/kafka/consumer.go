@@ -337,7 +337,7 @@ func recordSpanError(span trace.Span, err error) {
 // trace_id/span_id via ctx. A nil logger silences output, as the tests rely on.
 func (c *Consumer) logError(ctx context.Context, msg string, args ...any) {
 	if c.logger != nil {
-		c.logger.ErrorContext(ctx, msg, args...)
+		c.logger.ErrorContext(ctx, msg, sanitizeArgs(args)...)
 	}
 }
 
@@ -346,6 +346,6 @@ func (c *Consumer) logError(ctx context.Context, msg string, args ...any) {
 // planned).
 func (c *Consumer) logInfo(ctx context.Context, msg string, args ...any) {
 	if c.logger != nil {
-		c.logger.InfoContext(ctx, msg, args...)
+		c.logger.InfoContext(ctx, msg, sanitizeArgs(args)...)
 	}
 }

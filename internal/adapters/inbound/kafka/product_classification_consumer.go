@@ -177,7 +177,7 @@ func (c *ProductClassificationConsumer) decode(ctx context.Context, msg kafkago.
 	env, err := cloudevents.Decode(msg.Value)
 	if err != nil {
 		c.logger.WarnContext(ctx, "skipping invalid CloudEvent on product-master topic",
-			"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", err)
+			"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", sanitizeErr(err))
 		return usecases.ObserveProductClassificationRequest{}, false
 	}
 	if env.Type() != cloudevents.TypeProductClassified {
@@ -190,7 +190,7 @@ func (c *ProductClassificationConsumer) decode(ctx context.Context, msg kafkago.
 	}
 	if err != nil {
 		c.logger.WarnContext(ctx, "skipping invalid ProductClassified payload",
-			"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "id", env.ID(), "error", err)
+			"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "id", sanitizeLog(env.ID()), "error", sanitizeErr(err))
 		return usecases.ObserveProductClassificationRequest{}, false
 	}
 	observedAt := env.Time()
@@ -216,11 +216,11 @@ func (c *ProductClassificationConsumer) applyWithRetry(ctx context.Context, req 
 		outcome, err := c.observe.Execute(ctx, req)
 		if err == nil {
 			c.logger.DebugContext(ctx, "ProductClassified handled",
-				"id", req.EventId, "sku", req.SKU, "version", req.Version, "outcome", outcome.String())
+				"id", sanitizeLog(req.EventId), "sku", sanitizeLog(req.SKU), "version", req.Version, "outcome", sanitizeLog(outcome.String()))
 			return nil
 		}
 		c.logger.ErrorContext(ctx, "applying ProductClassified failed; retrying the same message",
-			"id", req.EventId, "sku", req.SKU, "attempt", attempt, "retry_in", delay.String(), "error", err)
+			"id", sanitizeLog(req.EventId), "sku", sanitizeLog(req.SKU), "attempt", attempt, "retry_in", delay.String(), "error", sanitizeErr(err))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

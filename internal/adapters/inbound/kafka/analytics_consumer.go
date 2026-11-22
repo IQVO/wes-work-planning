@@ -92,10 +92,10 @@ func (c *AnalyticsConsumer) Run(ctx context.Context) error {
 				// Deterministic poison message (e.g. the retired flat
 				// envelope): skip it — ReadMessage already committed.
 				c.Logger.WarnContext(ctx, "skipping invalid CloudEvent on analytics topic",
-					"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", err)
+					"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", sanitizeErr(err))
 				continue
 			}
-			c.Logger.ErrorContext(ctx, "analytics message handling failed", "error", err)
+			c.Logger.ErrorContext(ctx, "analytics message handling failed", "error", sanitizeErr(err))
 		}
 	}
 }

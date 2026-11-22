@@ -309,10 +309,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 			// Deterministic poison message (e.g. the retired flat
 			// envelope): WARN and move past it, never parse a legacy shape.
 			c.Logger.WarnContext(ctx, "skipping invalid CloudEvent on process-path catalogue topic",
-				"topic", msg.Topic, "offset", msg.Offset, "partition", msg.Partition, "error", err)
+				"topic", msg.Topic, "offset", msg.Offset, "partition", msg.Partition, "error", sanitizeErr(err))
 		} else if err != nil {
 			c.Logger.ErrorContext(ctx, "process-path catalogue message handling failed",
-				"topic", msg.Topic, "offset", msg.Offset, "partition", msg.Partition, "error", err)
+				"topic", msg.Topic, "offset", msg.Offset, "partition", msg.Partition, "error", sanitizeErr(err))
 		}
 		c.checkReady(msg)
 	}

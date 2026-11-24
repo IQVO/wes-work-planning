@@ -97,13 +97,13 @@ problem type of the package is unclassified, and their classes are nominal.
 | `not-found` | 404 | RETRYABLE | caller/event-supplied ids (the K1 consumer creates units from order-management events); the slug is shared with the router's own NUL-path 404 — mixed causes |
 | `concurrent-modification` | 409 | RETRYABLE | the optimistic-lock race after `retryOnPoolConflict`'s budget; nothing of this request was written |
 | `wip-limit-reached` | 409 | RETRYABLE | the WIP drains as completions land; raised before any write of this request |
-| `work-pool-entry-already-released` | 409 | RETRYABLE | the pool entry's state, not the request alone |
-| `work-unit-already-enqueued` | 409 | RETRYABLE | the pool's contents are state written by other requests and events; when unsure, RETRYABLE |
+| `work-pool-entry-already-released` | 409 | FINAL | a pool entry never un-releases (`Release`/`ReleaseNext` are at-most-once; `reconciledState` is a forward-only merge) — flipped from RETRYABLE on 2026-11-23 (addendum below) |
+| `work-unit-already-enqueued` | 409 | FINAL | the pool never removes a released or completed entry (`Withdraw` refuses both), and the duplicate is the caller-supplied id already present — flipped from RETRYABLE on 2026-11-23 |
 | `work-pool-empty` | 409 | RETRYABLE | work arrives: a later enqueue or an integration event |
-| `work-unit-already-released` | 409 | RETRYABLE | the unit's state machine; state-dependent, FINAL arguable (judgement call 1) |
-| `work-unit-already-completed` | 409 | RETRYABLE | terminal state, FINAL arguable (judgement call 1) |
+| `work-unit-already-released` | 409 | FINAL | `WorkUnit.Release` is one-way and a released unit never returns to a releasable state — flipped from RETRYABLE on 2026-11-23 |
+| `work-unit-already-completed` | 409 | FINAL | `WorkUnit.Complete` is terminal — flipped from RETRYABLE on 2026-11-23 |
 | `work-unit-not-released` | 409 | RETRYABLE | the release happens later (an operator or a release request): state not reached yet |
-| `work-unit-cancelled` | 409 | RETRYABLE | terminal state, FINAL arguable (judgement call 1) |
+| `work-unit-cancelled` | 409 | FINAL | `WorkUnit.Cancel` is terminal and blocks every later transition — flipped from RETRYABLE on 2026-11-23 |
 | `invalid-quantity` | 400 | FINAL | a request field |
 | `invalid-path-id` | 400 | FINAL | a request field's format |
 | `unknown-path-id` | 400 | RETRYABLE | the process-path catalogue may be Kafka-fed (ADR 0030): a path declared later is a referenced fact not known yet |
@@ -180,3 +180,15 @@ problem type of the package is unclassified, and their classes are nominal.
   shipped chi router.
 - Retention is unchanged and enforced: the housekeeper (ADR 0022, 24h TTL) purges
   expired `idempotency_keys` rows in batches.
+
+## Addendum 2026-11-23: the terminal-state refusals are FINAL
+
+Owner decision of 2026-11-23, resolving judgement call 1. The five terminal-state refusals
+(`work-unit-already-released`, `work-unit-already-completed`, `work-unit-cancelled`,
+`work-pool-entry-already-released`, `work-unit-already-enqueued`) moved from RETRYABLE to FINAL after code
+verification: `WorkUnit.Cancel/Release/Complete` are one-way and a Cancelled or Completed unit blocks every later
+transition (`work_unit.go`), `reconciledState` is a forward-only merge, and `WorkPool.Release`/`ReleaseNext` are
+at-most-once with `Withdraw` refusing released and completed entries. A retry under the same key can therefore never
+pass, so the stored FINAL answer is never wrong, and it spares a doomed re-execution of the command. The unsure-rule
+that kept them RETRYABLE no longer applies, because the irreversibility is proven, not guessed.
+`work-unit-not-released` stays RETRYABLE: a later release clears it.

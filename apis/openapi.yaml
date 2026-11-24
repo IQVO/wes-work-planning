@@ -194,7 +194,7 @@ paths:
         verbatim and does not enqueue again. A refusal is stored only
         when it is final for the request — a validation of the request's
         own fields (FINAL). A refusal that depends on state that can
-        change (`work-unit-already-enqueued`, `unknown-path-id`,
+        change (`unknown-path-id`, `wip-limit-reached`,
         `no-active-case-level`, `quantity-not-case-multiple`, any 5xx)
         is not stored: the key is released, so the same key can be
         retried and executes again (a different body under it is a new
